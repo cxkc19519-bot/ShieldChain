@@ -140,7 +140,7 @@ def test_phase_two_tables_and_exact_columns_are_registered() -> None:
 def test_named_unique_and_check_constraints_exist() -> None:
     expected_unique = {
         "simulation_instances": {"uq_simulation_scenario_generation"},
-        "incidents": {"uq_incident_external_id", "uq_incident_simulation_instance"},
+        "incidents": {"uq_incident_simulation_instance"},
         "investigation_steps": {"uq_investigation_step_run_key"},
         "evidence_records": {"uq_evidence_run_integrity"},
         "simulation_tool_calls": {"uq_tool_call_idempotency_key"},
@@ -168,7 +168,7 @@ def test_named_unique_and_check_constraints_exist() -> None:
     }
 
     for table_name, names in expected_unique.items():
-        assert names <= _named_constraints(table_name, UniqueConstraint)
+        assert names == _named_constraints(table_name, UniqueConstraint)
     for table_name, names in expected_checks.items():
         assert names <= _named_constraints(table_name, CheckConstraint)
 
@@ -210,7 +210,7 @@ def test_foreign_keys_have_exact_targets_and_are_not_cascading() -> None:
         ("audit_events", "run_id"): ("investigation_runs.id", "fk_audit_run"),
     }
 
-    actual: dict[tuple[str, str], str] = {}
+    actual: dict[tuple[str, str], tuple[str, str | None]] = {}
     for table_name in PHASE_TWO_TABLES:
         table = Base.metadata.tables[table_name]
         for constraint in table.constraints:
@@ -357,6 +357,144 @@ def test_sqlite_rejects_a_second_active_run_for_one_simulation() -> None:
                     "mode": "normal",
                     "created_at": now,
                     "updated_at": now,
+                },
+            )
+
+
+def test_sqlite_allows_one_external_id_across_different_simulations() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    simulation = Base.metadata.tables["simulation_instances"]
+    incident = Base.metadata.tables["incidents"]
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(simulation),
+            [
+                {
+                    "id": "00000000-0000-0000-0000-000000000011",
+                    "scenario_key": "phishing",
+                    "generation": 1,
+                    "environment": "simulation",
+                    "connection_status": "active",
+                    "firewall_status": "not_blocked",
+                    "fail_block_consumed": False,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "id": "00000000-0000-0000-0000-000000000012",
+                    "scenario_key": "phishing",
+                    "generation": 2,
+                    "environment": "simulation",
+                    "connection_status": "active",
+                    "firewall_status": "not_blocked",
+                    "fail_block_consumed": False,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ],
+        )
+        connection.execute(
+            insert(incident),
+            [
+                {
+                    "id": "00000000-0000-0000-0000-000000000013",
+                    "external_id": "INC-2026-0001",
+                    "simulation_instance_id": "00000000-0000-0000-0000-000000000011",
+                    "alert_id": "ALT-1",
+                    "endpoint": "workstation-1",
+                    "username": "analyst",
+                    "source_ip": "10.0.0.1",
+                    "remote_ip": "203.0.113.1",
+                    "remote_port": 443,
+                    "process_name": "powershell.exe",
+                    "parent_process_name": "outlook.exe",
+                    "command_summary": "download payload",
+                    "threat_label": "phishing",
+                    "created_at": now,
+                },
+                {
+                    "id": "00000000-0000-0000-0000-000000000014",
+                    "external_id": "INC-2026-0001",
+                    "simulation_instance_id": "00000000-0000-0000-0000-000000000012",
+                    "alert_id": "ALT-1",
+                    "endpoint": "workstation-1",
+                    "username": "analyst",
+                    "source_ip": "10.0.0.1",
+                    "remote_ip": "203.0.113.1",
+                    "remote_port": 443,
+                    "process_name": "powershell.exe",
+                    "parent_process_name": "outlook.exe",
+                    "command_summary": "download payload",
+                    "threat_label": "phishing",
+                    "created_at": now,
+                },
+            ],
+        )
+
+
+def test_sqlite_rejects_two_incidents_for_one_simulation() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    simulation = Base.metadata.tables["simulation_instances"]
+    incident = Base.metadata.tables["incidents"]
+    simulation_id = "00000000-0000-0000-0000-000000000021"
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(simulation),
+            {
+                "id": simulation_id,
+                "scenario_key": "phishing",
+                "generation": 1,
+                "environment": "simulation",
+                "connection_status": "active",
+                "firewall_status": "not_blocked",
+                "fail_block_consumed": False,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.execute(
+            insert(incident),
+            {
+                "id": "00000000-0000-0000-0000-000000000022",
+                "external_id": "INC-2026-0001",
+                "simulation_instance_id": simulation_id,
+                "alert_id": "ALT-1",
+                "endpoint": "workstation-1",
+                "username": "analyst",
+                "source_ip": "10.0.0.1",
+                "remote_ip": "203.0.113.1",
+                "remote_port": 443,
+                "process_name": "powershell.exe",
+                "parent_process_name": "outlook.exe",
+                "command_summary": "download payload",
+                "threat_label": "phishing",
+                "created_at": now,
+            },
+        )
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                insert(incident),
+                {
+                    "id": "00000000-0000-0000-0000-000000000023",
+                    "external_id": "INC-2026-0002",
+                    "simulation_instance_id": simulation_id,
+                    "alert_id": "ALT-2",
+                    "endpoint": "workstation-1",
+                    "username": "analyst",
+                    "source_ip": "10.0.0.1",
+                    "remote_ip": "203.0.113.2",
+                    "remote_port": 443,
+                    "process_name": "powershell.exe",
+                    "parent_process_name": "outlook.exe",
+                    "command_summary": "download another payload",
+                    "threat_label": "phishing",
+                    "created_at": now,
                 },
             )
 

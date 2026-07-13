@@ -62,7 +62,6 @@ def upgrade() -> None:
             name="fk_incident_simulation_instance",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("external_id", name="uq_incident_external_id"),
         sa.UniqueConstraint("simulation_instance_id", name="uq_incident_simulation_instance"),
     )
     op.create_table(

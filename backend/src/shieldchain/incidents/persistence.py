@@ -59,7 +59,6 @@ class SimulationInstanceRow(Base):
 class IncidentRow(Base):
     __tablename__ = "incidents"
     __table_args__ = (
-        UniqueConstraint("external_id", name="uq_incident_external_id"),
         UniqueConstraint("simulation_instance_id", name="uq_incident_simulation_instance"),
         CheckConstraint("remote_port BETWEEN 1 AND 65535", name="ck_incident_remote_port"),
     )
