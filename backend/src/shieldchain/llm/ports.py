@@ -46,6 +46,11 @@ class ChatRequest:
     max_tokens: int = 1024
 
     def __post_init__(self) -> None:
+        try:
+            messages = tuple(self.messages)
+        except TypeError:
+            raise ValueError("messages must be iterable") from None
+        object.__setattr__(self, "messages", messages)
         if not self.messages:
             raise ValueError("at least one message is required")
         if not all(isinstance(message, ChatMessage) for message in self.messages):

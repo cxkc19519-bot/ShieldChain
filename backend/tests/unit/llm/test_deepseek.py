@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import FrozenInstanceError
 from typing import Any, cast
 
@@ -119,6 +121,25 @@ def test_transport_types_are_frozen() -> None:
         chat_request.max_tokens = 2  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         response.content = "changed"  # type: ignore[misc]
+
+
+def test_chat_request_normalizes_message_list_to_tuple() -> None:
+    source = [ChatMessage(role="user", content="hello")]
+
+    chat_request = ChatRequest(messages=cast(Any, source))
+
+    assert isinstance(chat_request.messages, tuple)
+    assert chat_request.messages == tuple(source)
+
+
+def test_chat_request_does_not_retain_caller_message_list() -> None:
+    message = ChatMessage(role="user", content="hello")
+    source = [message]
+    chat_request = ChatRequest(messages=cast(Any, source))
+
+    source.clear()
+
+    assert chat_request.messages == (message,)
 
 
 @pytest.mark.parametrize(
@@ -275,6 +296,56 @@ async def test_timeout_retries_twice_then_raises(
 
     assert calls == 3
     assert delays == [0.5, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_overall_deadline_cuts_off_retry_backoff_without_real_sleep(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backoff_started = asyncio.Event()
+    never_finishes = asyncio.Event()
+    calls = 0
+    delays: list[float] = []
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429)
+
+    async def hanging_sleep(delay: float) -> None:
+        delays.append(delay)
+        backoff_started.set()
+        await never_finishes.wait()
+
+    async def expiring_deadline(
+        operation: Awaitable[ChatResponse], timeout: float
+    ) -> ChatResponse:
+        assert timeout == 30.0
+        task = asyncio.create_task(operation)
+        await backoff_started.wait()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        raise TimeoutError
+
+    configure_logging("test")
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = DeepSeekClient(
+        settings(),
+        http_client,
+        sleep=hanging_sleep,
+        deadline=expiring_deadline,
+    )
+    async with http_client:
+        with pytest.raises(LlmUnavailableError) as error:
+            await client.chat(request())
+
+    assert calls == 1
+    assert delays == [0.5]
+    assert str(error.value) == "LLM request deadline exceeded"
+    output = capsys.readouterr().out
+    for forbidden in ("unit-test-key", "sensitive prompt", "private response"):
+        assert forbidden not in output
 
 
 @pytest.mark.asyncio

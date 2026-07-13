@@ -19,6 +19,7 @@ from shieldchain.llm.ports import (
 )
 
 type AsyncSleep = Callable[[float], Awaitable[None]]
+type AsyncDeadline = Callable[[Awaitable[ChatResponse], float], Awaitable[ChatResponse]]
 RETRY_DELAYS = (0.5, 1.0)
 TOTAL_TIMEOUT_SECONDS = 30.0
 
@@ -29,15 +30,25 @@ class DeepSeekClient:
         settings: Settings,
         http_client: httpx.AsyncClient,
         sleep: AsyncSleep = asyncio.sleep,
+        deadline: AsyncDeadline = asyncio.wait_for,
     ) -> None:
         self._base_url = str(settings.deepseek_base_url).rstrip("/")
         self._model = settings.deepseek_model
         self._api_key = settings.deepseek_api_key.get_secret_value()
         self._http_client = http_client
         self._sleep = sleep
+        self._deadline = deadline
         self._logger = structlog.get_logger(__name__)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        try:
+            return await self._deadline(
+                self._chat_with_retries(request), TOTAL_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            raise LlmUnavailableError("LLM request deadline exceeded") from None
+
+    async def _chat_with_retries(self, request: ChatRequest) -> ChatResponse:
         payload = {
             "model": self._model,
             "messages": [

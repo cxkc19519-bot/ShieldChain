@@ -43,3 +43,27 @@ Complete. Task 5 adds the transport-independent LLM boundary and a bounded DeepS
 
 - The paid live smoke test was intentionally not run, so real DeepSeek availability and account configuration remain unverified.
 - The inherited narrowly scoped Starlette `TestClient` warning filter remains unchanged.
+
+## Review Fix: Overall Deadline and Defensive Request Immutability
+
+### Changes
+
+- Wrapped the complete DeepSeek operation, including every HTTP attempt and injected retry backoff, in an injectable `asyncio.wait_for` deadline of exactly 30.0 seconds.
+- Mapped overall deadline expiry to the fixed `LlmUnavailableError("LLM request deadline exceeded")` without logging or returning request/response content.
+- Normalized every supplied `ChatRequest.messages` iterable to a tuple in frozen-dataclass initialization before validation, preventing later caller-list mutation from altering the request.
+
+### TDD and Verification
+
+- Deadline RED: `.\.venv\Scripts\python.exe -m pytest backend\tests\unit\llm\test_deepseek.py::test_overall_deadline_cuts_off_retry_backoff_without_real_sleep -v` failed with `TypeError: DeepSeekClient.__init__() got an unexpected keyword argument 'deadline'`.
+- Deadline GREEN: the same targeted command passed 1 test. Its deterministic boundary cancelled a retry blocked in injected backoff without real sleeping and asserted the fixed safe error and absence of secret/prompt content.
+- Immutability RED: `.\.venv\Scripts\python.exe -m pytest backend\tests\unit\llm\test_deepseek.py::test_chat_request_normalizes_message_list_to_tuple backend\tests\unit\llm\test_deepseek.py::test_chat_request_does_not_retain_caller_message_list -v` failed 2 tests because the request retained the source list.
+- Immutability GREEN: the same targeted command passed 2 tests after tuple normalization.
+- Focused regression: `.\.venv\Scripts\python.exe -m pytest backend\tests\unit\llm\test_deepseek.py -v` passed 24 tests.
+- Full regression: `.\.venv\Scripts\python.exe -m pytest backend\tests -q` passed 50 tests and skipped 1 guarded live test; the live test was not run and no network request was made.
+- Ruff: `.\.venv\Scripts\python.exe -m ruff check backend` completed with `All checks passed!`.
+- Whitespace: `git diff --check` found no whitespace errors.
+
+### Review-Fix Concerns
+
+- Real DeepSeek connectivity remains intentionally unverified because the paid live smoke test stayed disabled.
+- No additional concerns identified within the two requested review fixes.
