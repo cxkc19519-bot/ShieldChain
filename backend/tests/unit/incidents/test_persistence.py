@@ -49,6 +49,7 @@ EXPECTED_COLUMNS = {
         "external_id",
         "simulation_instance_id",
         "alert_id",
+        "alert_status",
         "endpoint",
         "username",
         "source_ip",
@@ -58,6 +59,7 @@ EXPECTED_COLUMNS = {
         "parent_process_name",
         "command_summary",
         "threat_label",
+        "next_audit_sequence",
         "created_at",
     },
     "investigation_runs": {
@@ -153,7 +155,10 @@ def test_named_unique_and_check_constraints_exist() -> None:
             "ck_simulation_connection_status",
             "ck_simulation_firewall_status",
         },
-        "incidents": {"ck_incident_remote_port"},
+        "incidents": {
+            "ck_incident_remote_port",
+            "ck_incident_next_audit_sequence",
+        },
         "investigation_runs": {
             "ck_investigation_run_status",
             "ck_investigation_run_mode",
@@ -276,6 +281,13 @@ def test_uuid_json_and_timestamp_column_contracts() -> None:
                 assert column.nullable is ((table_name, column.name) in nullable_columns)
 
 
+def test_incident_audit_counter_has_python_and_server_defaults() -> None:
+    column = Base.metadata.tables["incidents"].c.next_audit_sequence
+    assert column.default is not None and column.default.arg == 1
+    assert column.server_default is not None
+    assert str(column.server_default.arg) == "1"
+
+
 def test_active_run_partial_unique_sqlite_index_has_exact_predicate() -> None:
     table = Base.metadata.tables["investigation_runs"]
     index = next(index for index in table.indexes if index.name == "uq_active_run_per_simulation")
@@ -322,6 +334,7 @@ def test_sqlite_rejects_a_second_active_run_for_one_simulation() -> None:
                 "external_id": "INC-1",
                 "simulation_instance_id": simulation_id,
                 "alert_id": "ALT-1",
+                "alert_status": "open",
                 "endpoint": "workstation-1",
                 "username": "analyst",
                 "source_ip": "10.0.0.1",
@@ -404,6 +417,7 @@ def test_sqlite_allows_one_external_id_across_different_simulations() -> None:
                     "external_id": "INC-2026-0001",
                     "simulation_instance_id": "00000000-0000-0000-0000-000000000011",
                     "alert_id": "ALT-1",
+                    "alert_status": "open",
                     "endpoint": "workstation-1",
                     "username": "analyst",
                     "source_ip": "10.0.0.1",
@@ -420,6 +434,7 @@ def test_sqlite_allows_one_external_id_across_different_simulations() -> None:
                     "external_id": "INC-2026-0001",
                     "simulation_instance_id": "00000000-0000-0000-0000-000000000012",
                     "alert_id": "ALT-1",
+                    "alert_status": "open",
                     "endpoint": "workstation-1",
                     "username": "analyst",
                     "source_ip": "10.0.0.1",
@@ -465,6 +480,7 @@ def test_sqlite_rejects_two_incidents_for_one_simulation() -> None:
                 "external_id": "INC-2026-0001",
                 "simulation_instance_id": simulation_id,
                 "alert_id": "ALT-1",
+                "alert_status": "open",
                 "endpoint": "workstation-1",
                 "username": "analyst",
                 "source_ip": "10.0.0.1",
@@ -485,6 +501,7 @@ def test_sqlite_rejects_two_incidents_for_one_simulation() -> None:
                     "external_id": "INC-2026-0002",
                     "simulation_instance_id": simulation_id,
                     "alert_id": "ALT-2",
+                    "alert_status": "open",
                     "endpoint": "workstation-1",
                     "username": "analyst",
                     "source_ip": "10.0.0.1",
@@ -525,7 +542,13 @@ def test_migration_upgrade_and_downgrade_round_trip(tmp_path: Path) -> None:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
+        incident_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info(incidents)")
+        }
     assert PHASE_TWO_TABLES <= upgraded_tables
+    assert incident_columns["alert_status"][3] == 1
+    assert incident_columns["next_audit_sequence"][3] == 1
+    assert incident_columns["next_audit_sequence"][4] == "1"
 
     subprocess.run(
         [*command, "downgrade", "-1"],

@@ -15,16 +15,12 @@ def create_engine_from_url(database_url: str) -> Engine:
 
         @event.listens_for(engine, "connect")
         def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
-            dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA busy_timeout=5000")
             finally:
                 cursor.close()
-
-        @event.listens_for(engine, "begin")
-        def _begin_sqlite_transaction(connection) -> None:
-            connection.exec_driver_sql("BEGIN IMMEDIATE")
 
     return engine
 

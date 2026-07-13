@@ -45,6 +45,7 @@ def upgrade() -> None:
         sa.Column("external_id", sa.String(length=64), nullable=False),
         sa.Column("simulation_instance_id", sa.String(length=36), nullable=False),
         sa.Column("alert_id", sa.String(length=64), nullable=False),
+        sa.Column("alert_status", sa.String(length=32), nullable=False),
         sa.Column("endpoint", sa.String(length=128), nullable=False),
         sa.Column("username", sa.String(length=128), nullable=False),
         sa.Column("source_ip", sa.String(length=45), nullable=False),
@@ -54,8 +55,17 @@ def upgrade() -> None:
         sa.Column("parent_process_name", sa.String(length=128), nullable=False),
         sa.Column("command_summary", sa.String(length=512), nullable=False),
         sa.Column("threat_label", sa.String(length=128), nullable=False),
+        sa.Column(
+            "next_audit_sequence",
+            sa.Integer(),
+            server_default=sa.text("1"),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint("remote_port BETWEEN 1 AND 65535", name="ck_incident_remote_port"),
+        sa.CheckConstraint(
+            "next_audit_sequence >= 1", name="ck_incident_next_audit_sequence"
+        ),
         sa.ForeignKeyConstraint(
             ["simulation_instance_id"],
             ["simulation_instances.id"],

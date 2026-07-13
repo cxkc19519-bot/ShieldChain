@@ -58,6 +58,13 @@ class DuplicateIdempotencyKey(RuntimeError):
         super().__init__(f"duplicate idempotency key: {idempotency_key}")
 
 
+class RunSimulationMismatch(RuntimeError):
+    def __init__(self, run_id: UUID, simulation_id: UUID) -> None:
+        self.run_id = run_id
+        self.simulation_id = simulation_id
+        super().__init__(f"run simulation mismatch: {run_id} {simulation_id}")
+
+
 ScenarioFactory = Callable[[datetime], PhishingScenarioState]
 
 

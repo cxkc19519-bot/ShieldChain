@@ -9,7 +9,8 @@ from threading import Barrier
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from shieldchain.db.base import Base
@@ -27,10 +28,13 @@ from shieldchain.incidents.domain import (
     ToolResult,
     VerificationResult,
 )
+from shieldchain.incidents.persistence import AuditEventRow
 from shieldchain.incidents.ports import (
     ActiveInvestigationExists,
     DuplicateEvidence,
+    DuplicateIdempotencyKey,
     IncidentRepository,
+    RunSimulationMismatch,
     SimulationNotFound,
 )
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
@@ -55,7 +59,7 @@ class ScenarioFactory:
             endpoint="workstation-23",
             username="alice",
             source_ip=IPv4Address("10.0.0.23"),
-            alert_status="open",
+            alert_status=f"triaged-{suffix}",
             remote_ip=IPv4Address("203.0.113.44"),
             remote_port=443,
             process_name="powershell.exe",
@@ -150,6 +154,15 @@ def test_repository_implements_protocol(repository: SqlAlchemyIncidentRepository
 
 def test_sqlite_engine_enables_foreign_keys(session: Session) -> None:
     assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+
+
+def test_sqlite_allows_two_simultaneous_read_transactions(tmp_path: Path) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'readers.db'}")
+    session_factory = create_session_factory(engine)
+    with session_factory() as first, session_factory() as second:
+        assert first.execute(text("SELECT 1")).scalar_one() == 1
+        assert second.execute(text("SELECT 1")).scalar_one() == 1
+    engine.dispose()
 
 
 def test_reset_persists_generations_and_fixed_incident_number(
@@ -278,6 +291,7 @@ def test_concurrent_active_run_attempts_have_exactly_one_winner(tmp_path: Path) 
                 )
                 worker_session.commit()
             except ActiveInvestigationExists:
+                assert worker_session.execute(text("SELECT 1")).scalar_one() == 1
                 return "rejected"
             return "created"
 
@@ -288,6 +302,50 @@ def test_concurrent_active_run_attempts_have_exactly_one_winner(tmp_path: Path) 
     assert results == ["created", "rejected"]
 
 
+def test_concurrent_evidence_appends_allocate_distinct_audit_sequences(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'audit-concurrent.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    repository = SqlAlchemyIncidentRepository(ScenarioFactory())
+    with session_factory() as setup_session:
+        state = repository.reset_phishing_scenario(setup_session, now=NOW)
+        run = _create_run(setup_session, repository, state.simulation_id)
+        setup_session.commit()
+
+    barrier = Barrier(2)
+
+    def append(item: Evidence, request_id: str) -> None:
+        with session_factory() as worker_session:
+            barrier.wait()
+            repository.append_evidence(
+                worker_session, run.id, [item], request_id=request_id
+            )
+            worker_session.commit()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(append, _evidence(401, "b" * 64), "audit-1"),
+            executor.submit(append, _evidence(402, "c" * 64), "audit-2"),
+        ]
+        for future in futures:
+            future.result()
+
+    with session_factory() as verify_session:
+        sequences = tuple(
+            verify_session.execute(
+                select(AuditEventRow.sequence)
+                .where(AuditEventRow.incident_id == str(run.incident_id))
+                .order_by(AuditEventRow.sequence)
+            ).scalars()
+        )
+    engine.dispose()
+
+    assert sequences == tuple(range(1, len(sequences) + 1))
+    assert len(sequences) == len(set(sequences)) == 4
+
+
 def test_missing_simulation_uses_safe_domain_exception(
     session: Session, repository: SqlAlchemyIncidentRepository
 ) -> None:
@@ -296,6 +354,20 @@ def test_missing_simulation_uses_safe_domain_exception(
         _create_run(session, repository, missing)
     assert caught.value.simulation_id == missing
     assert str(missing) in str(caught.value)
+
+
+def test_create_run_does_not_mislabel_unrelated_integrity_error(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_audit(*_args, **_kwargs) -> None:
+        raise IntegrityError("audit insert", {}, Exception("unrelated audit constraint"))
+
+    monkeypatch.setattr(repository, "_append_audit", fail_audit)
+    with pytest.raises(IntegrityError):
+        _create_run(session, repository, simulation.simulation_id)
 
 
 def test_duplicate_evidence_rolls_back_savepoint_and_keeps_session_usable(
@@ -322,6 +394,52 @@ def test_duplicate_evidence_rolls_back_savepoint_and_keeps_session_usable(
     )
     session.commit()
     assert repository.get_run(session, run.id).status is InvestigationStatus.COLLECTING
+
+
+@pytest.mark.parametrize("conflict", ["batch_id", "batch_digest", "stored_id", "stored_digest"])
+def test_duplicate_evidence_reports_the_actual_offending_uuid(
+    conflict: str,
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    first = _evidence(501, "d" * 64)
+    if conflict.startswith("stored"):
+        repository.append_evidence(session, run.id, [first], request_id="seed-evidence")
+        session.commit()
+
+    expected = UUID(int=501 if conflict in {"batch_id", "stored_id"} else 502)
+    batches = {
+        "batch_id": [first, replace(first, integrity_sha256="e" * 64)],
+        "batch_digest": [first, _evidence(502, "d" * 64)],
+        "stored_id": [_evidence(503, "f" * 64), replace(first, integrity_sha256="0" * 64)],
+        "stored_digest": [_evidence(503, "f" * 64), _evidence(502, "d" * 64)],
+    }
+    with pytest.raises(DuplicateEvidence) as caught:
+        repository.append_evidence(
+            session, run.id, batches[conflict], request_id=f"duplicate-{conflict}"
+        )
+
+    assert caught.value.evidence_id == expected
+
+
+def test_evidence_does_not_mislabel_unrelated_integrity_error(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+
+    def fail_audit(*_args, **_kwargs) -> None:
+        raise IntegrityError("audit insert", {}, Exception("unrelated audit constraint"))
+
+    monkeypatch.setattr(repository, "_append_audit", fail_audit)
+    with pytest.raises(IntegrityError):
+        repository.append_evidence(
+            session, run.id, [_evidence(504, "1" * 64)], request_id="unrelated"
+        )
 
 
 def test_evidence_audit_contains_only_ids_and_count(
@@ -410,6 +528,93 @@ def test_tool_outcome_is_idempotent_and_does_not_add_a_second_audit(
     assert [event.event_type for event in repository.list_audit(session, run.incident_id)].count(
         "tool_called"
     ) == 1
+
+
+@pytest.mark.parametrize(
+    "mismatched_state",
+    [
+        lambda state: replace(state, simulation_id=UUID(int=900)),
+        lambda state: replace(state, incident_id=UUID(int=901)),
+    ],
+)
+def test_tool_outcome_rejects_run_ownership_mismatch_without_side_effects(
+    mismatched_state,
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    session.commit()
+    audit_before = repository.list_audit(session, run.incident_id)
+    outcome = _tool_outcome(simulation)
+    outcome = replace(outcome, state=mismatched_state(outcome.state))
+
+    with pytest.raises(RunSimulationMismatch) as caught:
+        repository.apply_tool_outcome(
+            session, run.id, outcome, request_id="mismatch", now=NOW
+        )
+
+    assert caught.value.run_id == run.id
+    assert caught.value.simulation_id == outcome.state.simulation_id
+    assert repository.get_simulation(session, simulation.simulation_id) == simulation
+    assert repository.get_tool_result(session, outcome.result.idempotency_key) is None
+    assert repository.list_audit(session, run.incident_id) == audit_before
+
+
+def test_concurrent_tool_key_collision_is_safe_and_loser_session_is_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'tool-concurrent.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    repository = SqlAlchemyIncidentRepository(ScenarioFactory())
+    with session_factory() as setup_session:
+        state = repository.reset_phishing_scenario(setup_session, now=NOW)
+        run = _create_run(setup_session, repository, state.simulation_id)
+        setup_session.commit()
+    outcome = _tool_outcome(state, "concurrent-tool-key")
+    query_barrier = Barrier(2)
+    original_get = repository.get_tool_result
+
+    def synchronized_get(worker_session: Session, key: str):
+        result = original_get(worker_session, key)
+        query_barrier.wait()
+        return result
+
+    monkeypatch.setattr(repository, "get_tool_result", synchronized_get)
+
+    def attempt(request_id: str) -> str:
+        with session_factory() as worker_session:
+            try:
+                repository.apply_tool_outcome(
+                    worker_session, run.id, outcome, request_id=request_id, now=NOW
+                )
+                worker_session.commit()
+            except DuplicateIdempotencyKey:
+                assert worker_session.execute(text("SELECT 1")).scalar_one() == 1
+                return "rejected"
+            return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = sorted(executor.map(attempt, ("tool-1", "tool-2")))
+    engine.dispose()
+
+    assert results == ["created", "rejected"]
+
+
+def test_tool_does_not_mislabel_unrelated_integrity_error(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    invalid = _tool_outcome(simulation, "invalid-tool")
+    invalid = replace(invalid, result=replace(invalid.result, tool_name="not_allowed"))
+
+    with pytest.raises(IntegrityError):
+        repository.apply_tool_outcome(
+            session, run.id, invalid, request_id="invalid-tool", now=NOW
+        )
 
 
 def test_tool_state_and_result_roll_back_together(

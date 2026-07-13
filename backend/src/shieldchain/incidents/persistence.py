@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +62,9 @@ class IncidentRow(Base):
     __table_args__ = (
         UniqueConstraint("simulation_instance_id", name="uq_incident_simulation_instance"),
         CheckConstraint("remote_port BETWEEN 1 AND 65535", name="ck_incident_remote_port"),
+        CheckConstraint(
+            "next_audit_sequence >= 1", name="ck_incident_next_audit_sequence"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -71,6 +75,7 @@ class IncidentRow(Base):
         nullable=False,
     )
     alert_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    alert_status: Mapped[str] = mapped_column(String(32), nullable=False)
     endpoint: Mapped[str] = mapped_column(String(128), nullable=False)
     username: Mapped[str] = mapped_column(String(128), nullable=False)
     source_ip: Mapped[str] = mapped_column(String(45), nullable=False)
@@ -80,6 +85,9 @@ class IncidentRow(Base):
     parent_process_name: Mapped[str] = mapped_column(String(128), nullable=False)
     command_summary: Mapped[str] = mapped_column(String(512), nullable=False)
     threat_label: Mapped[str] = mapped_column(String(128), nullable=False)
+    next_audit_sequence: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

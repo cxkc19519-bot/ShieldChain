@@ -7,7 +7,7 @@ from ipaddress import IPv4Address
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +42,7 @@ from shieldchain.incidents.ports import (
     DuplicateIdempotencyKey,
     IncidentNotFound,
     InvestigationNotFound,
+    RunSimulationMismatch,
     ScenarioFactory,
     SimulationNotFound,
 )
@@ -151,6 +152,7 @@ class SqlAlchemyIncidentRepository:
             external_id=state.external_incident_id,
             simulation_instance_id=str(state.simulation_id),
             alert_id=state.alert_id,
+            alert_status=state.alert_status,
             endpoint=state.endpoint,
             username=state.username,
             source_ip=str(state.source_ip),
@@ -162,6 +164,7 @@ class SqlAlchemyIncidentRepository:
             threat_label=state.threat_label,
             created_at=state.created_at,
         )
+        self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             session.add(simulation)
             session.flush()
@@ -198,15 +201,6 @@ class SqlAlchemyIncidentRepository:
         ).scalar_one_or_none()
         if incident_id is None:
             raise SimulationNotFound(simulation_id)
-        active = session.execute(
-            select(InvestigationRunRow.id).where(
-                InvestigationRunRow.simulation_instance_id == str(simulation_id),
-                InvestigationRunRow.status.in_(ACTIVE_VALUES),
-            )
-        ).scalar_one_or_none()
-        if active is not None:
-            raise ActiveInvestigationExists(simulation_id)
-
         row = InvestigationRunRow(
             id=str(uuid4()),
             incident_id=incident_id,
@@ -216,6 +210,7 @@ class SqlAlchemyIncidentRepository:
             created_at=now,
             updated_at=now,
         )
+        self._ensure_sqlite_outer_transaction(session)
         try:
             with session.begin_nested():
                 session.add(row)
@@ -229,7 +224,13 @@ class SqlAlchemyIncidentRepository:
                     payload={"run_id": row.id, "status": InvestigationStatus.PENDING.value},
                 )
                 session.flush()
-        except IntegrityError:
+        except IntegrityError as error:
+            if not self._matches_integrity_error(
+                error,
+                constraint_name="uq_active_run_per_simulation",
+                sqlite_signature="investigation_runs.simulation_instance_id",
+            ):
+                raise
             raise ActiveInvestigationExists(simulation_id) from None
         return _run_from_row(row)
 
@@ -261,7 +262,7 @@ class SqlAlchemyIncidentRepository:
             endpoint=incident.endpoint,
             username=incident.username,
             source_ip=IPv4Address(incident.source_ip),
-            alert_status="open",
+            alert_status=incident.alert_status,
             remote_ip=IPv4Address(incident.remote_ip),
             remote_port=incident.remote_port,
             process_name=incident.process_name,
@@ -287,6 +288,7 @@ class SqlAlchemyIncidentRepository:
         row = self._require_run(session, run_id, lock=True)
         current = InvestigationStatus(row.status)
         transition(current, target)
+        self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             row.status = target.value
             row.updated_at = now
@@ -314,6 +316,9 @@ class SqlAlchemyIncidentRepository:
         run = self._require_run(session, run_id)
         if not evidence:
             return
+        duplicate = self._find_duplicate_evidence(session, run_id, evidence)
+        if duplicate is not None:
+            raise DuplicateEvidence(duplicate)
         rows = [
             EvidenceRecordRow(
                 id=str(item.id),
@@ -331,6 +336,7 @@ class SqlAlchemyIncidentRepository:
             )
             for item in evidence
         ]
+        self._ensure_sqlite_outer_transaction(session)
         try:
             with session.begin_nested():
                 session.add_all(rows)
@@ -347,8 +353,25 @@ class SqlAlchemyIncidentRepository:
                     },
                 )
                 session.flush()
-        except IntegrityError:
-            raise DuplicateEvidence(evidence[0].id) from None
+        except IntegrityError as error:
+            is_id_conflict = self._matches_integrity_error(
+                error,
+                constraint_name="evidence_records_pkey",
+                sqlite_signature="evidence_records.id",
+            )
+            is_digest_conflict = self._matches_integrity_error(
+                error,
+                constraint_name="uq_evidence_run_integrity",
+                sqlite_signature=(
+                    "evidence_records.run_id, evidence_records.integrity_sha256"
+                ),
+            )
+            if not is_id_conflict and not is_digest_conflict:
+                raise
+            duplicate = self._find_duplicate_evidence(session, run_id, evidence)
+            if duplicate is None:
+                raise
+            raise DuplicateEvidence(duplicate) from None
 
     def save_assessment(
         self,
@@ -360,6 +383,7 @@ class SqlAlchemyIncidentRepository:
         now: datetime,
     ) -> None:
         row = self._require_run(session, run_id, lock=True)
+        self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             row.assessment_json = {
                 "conclusion": assessment.conclusion.value,
@@ -408,6 +432,11 @@ class SqlAlchemyIncidentRepository:
         if stored is not None:
             return stored
         run = self._require_run(session, run_id)
+        if (
+            outcome.state.simulation_id != UUID(run.simulation_instance_id)
+            or outcome.state.incident_id != UUID(run.incident_id)
+        ):
+            raise RunSimulationMismatch(run_id, outcome.state.simulation_id)
         simulation = session.execute(
             select(SimulationInstanceRow)
             .where(SimulationInstanceRow.id == str(outcome.state.simulation_id))
@@ -429,6 +458,7 @@ class SqlAlchemyIncidentRepository:
             requested_at=now,
             completed_at=now,
         )
+        self._ensure_sqlite_outer_transaction(session)
         try:
             with session.begin_nested():
                 simulation.connection_status = outcome.state.connection_status
@@ -451,7 +481,13 @@ class SqlAlchemyIncidentRepository:
                     },
                 )
                 session.flush()
-        except IntegrityError:
+        except IntegrityError as error:
+            if not self._matches_integrity_error(
+                error,
+                constraint_name="uq_tool_call_idempotency_key",
+                sqlite_signature="simulation_tool_calls.idempotency_key",
+            ):
+                raise
             raise DuplicateIdempotencyKey(outcome.result.idempotency_key) from None
         return outcome.result
 
@@ -464,6 +500,7 @@ class SqlAlchemyIncidentRepository:
         request_id: str,
     ) -> None:
         row = self._require_run(session, run_id, lock=True)
+        self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             row.verification_json = {
                 "blocked": result.blocked,
@@ -530,6 +567,7 @@ class SqlAlchemyIncidentRepository:
                 .with_for_update()
             ).scalars()
         )
+        self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             for row in rows:
                 current = row.status
@@ -576,23 +614,83 @@ class SqlAlchemyIncidentRepository:
         occurred_at: datetime,
         payload: dict[str, Any],
     ) -> None:
-        sequence = (
-            session.execute(
-                select(func.max(AuditEventRow.sequence))
-                .where(AuditEventRow.incident_id == str(incident_id))
-                .with_for_update()
-            ).scalar_one()
-            or 0
-        ) + 1
+        next_sequence = session.execute(
+            update(IncidentRow)
+            .where(IncidentRow.id == str(incident_id))
+            .values(next_audit_sequence=IncidentRow.next_audit_sequence + 1)
+            .returning(IncidentRow.next_audit_sequence)
+            .execution_options(synchronize_session=False)
+        ).scalar_one_or_none()
+        if next_sequence is None:
+            raise IncidentNotFound(incident_id)
         session.add(
             AuditEventRow(
                 id=str(uuid4()),
                 incident_id=str(incident_id),
                 run_id=str(run_id) if run_id is not None else None,
-                sequence=sequence,
+                sequence=next_sequence - 1,
                 event_type=event_type,
                 request_id=request_id,
                 occurred_at=occurred_at,
                 payload_json=payload,
             )
         )
+
+    @staticmethod
+    def _ensure_sqlite_outer_transaction(session: Session) -> None:
+        connection = session.connection()
+        if connection.dialect.name != "sqlite":
+            return
+        driver_connection = connection.connection.driver_connection
+        if not driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+
+    @staticmethod
+    def _matches_integrity_error(
+        error: IntegrityError,
+        *,
+        constraint_name: str | None,
+        sqlite_signature: str,
+    ) -> bool:
+        diagnostic = getattr(error.orig, "diag", None)
+        actual_name = getattr(diagnostic, "constraint_name", None)
+        if constraint_name is not None and actual_name == constraint_name:
+            return True
+        return (
+            "UNIQUE constraint failed:" in str(error.orig)
+            and sqlite_signature in str(error.orig)
+        )
+
+    @staticmethod
+    def _find_duplicate_evidence(
+        session: Session, run_id: UUID, evidence: Sequence[Evidence]
+    ) -> UUID | None:
+        seen_ids: set[UUID] = set()
+        seen_digests: set[str] = set()
+        for item in evidence:
+            if item.id in seen_ids or item.integrity_sha256 in seen_digests:
+                return item.id
+            seen_ids.add(item.id)
+            seen_digests.add(item.integrity_sha256)
+
+        stored = tuple(
+            session.execute(
+                select(EvidenceRecordRow.id, EvidenceRecordRow.integrity_sha256).where(
+                    or_(
+                        EvidenceRecordRow.id.in_([str(item.id) for item in evidence]),
+                        (
+                            (EvidenceRecordRow.run_id == str(run_id))
+                            & EvidenceRecordRow.integrity_sha256.in_(
+                                [item.integrity_sha256 for item in evidence]
+                            )
+                        ),
+                    )
+                )
+            )
+        )
+        stored_ids = {UUID(row.id) for row in stored}
+        stored_digests = {row.integrity_sha256 for row in stored}
+        for item in evidence:
+            if item.id in stored_ids or item.integrity_sha256 in stored_digests:
+                return item.id
+        return None
