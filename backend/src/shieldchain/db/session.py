@@ -1,5 +1,5 @@
 import structlog
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -8,12 +8,25 @@ logger = structlog.get_logger()
 
 
 def create_engine_from_url(database_url: str) -> Engine:
-    connect_args = (
-        {"check_same_thread": False}
-        if make_url(database_url).get_backend_name() == "sqlite"
-        else {}
-    )
-    return create_engine(database_url, connect_args=connect_args)
+    is_sqlite = make_url(database_url).get_backend_name() == "sqlite"
+    connect_args = {"check_same_thread": False} if is_sqlite else {}
+    engine = create_engine(database_url, connect_args=connect_args)
+    if is_sqlite:
+
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+            dbapi_connection.isolation_level = None
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
+
+        @event.listens_for(engine, "begin")
+        def _begin_sqlite_transaction(connection) -> None:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+    return engine
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
