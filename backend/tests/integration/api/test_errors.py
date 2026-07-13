@@ -2,7 +2,7 @@ import re
 from collections.abc import Iterator
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from shieldchain.core.errors import ApiError
@@ -24,6 +24,14 @@ def error_client() -> Iterator[TestClient]:
     @app.get("/api/v1/test-support/api-error")
     async def raise_api_error() -> None:
         raise ApiError(code="invalid_input", message="Input is invalid", status_code=422)
+
+    @app.get("/api/v1/test-support/validate")
+    async def validate_limit(limit: int) -> dict[str, int]:
+        return {"limit": limit}
+
+    @app.get("/api/v1/test-support/non-string-http-error")
+    async def raise_non_string_http_error() -> None:
+        raise HTTPException(status_code=409, detail={"reason": "conflict"})
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
@@ -98,5 +106,73 @@ def test_api_error_returns_exact_public_contract(error_client: TestClient) -> No
             "code": "invalid_input",
             "message": "Input is invalid",
             "request_id": "req.api_123",
+        }
+    }
+
+
+def test_not_found_error_returns_stable_public_contract(error_client: TestClient) -> None:
+    response = error_client.get(
+        "/api/v1/does-not-exist",
+        headers={"X-Request-ID": "req-404"},
+    )
+
+    assert response.status_code == 404
+    assert response.headers["X-Request-ID"] == "req-404"
+    assert response.json() == {
+        "error": {
+            "code": "http_error",
+            "message": "Not Found",
+            "request_id": "req-404",
+        }
+    }
+
+
+def test_method_not_allowed_returns_stable_public_contract(error_client: TestClient) -> None:
+    response = error_client.post(
+        "/api/v1/test-support/request-id",
+        headers={"X-Request-ID": "req-405"},
+    )
+
+    assert response.status_code == 405
+    assert response.headers["X-Request-ID"] == "req-405"
+    assert response.json() == {
+        "error": {
+            "code": "http_error",
+            "message": "Method Not Allowed",
+            "request_id": "req-405",
+        }
+    }
+
+
+def test_validation_error_returns_stable_public_contract(error_client: TestClient) -> None:
+    response = error_client.get(
+        "/api/v1/test-support/validate?limit=not-an-integer",
+        headers={"X-Request-ID": "req-422"},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["X-Request-ID"] == "req-422"
+    assert response.json() == {
+        "error": {
+            "code": "validation_error",
+            "message": "Request validation failed",
+            "request_id": "req-422",
+        }
+    }
+
+
+def test_non_string_http_error_detail_uses_safe_fallback(error_client: TestClient) -> None:
+    response = error_client.get(
+        "/api/v1/test-support/non-string-http-error",
+        headers={"X-Request-ID": "req-409"},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["X-Request-ID"] == "req-409"
+    assert response.json() == {
+        "error": {
+            "code": "http_error",
+            "message": "Request failed",
+            "request_id": "req-409",
         }
     }
