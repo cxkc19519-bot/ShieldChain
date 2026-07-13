@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+. (Join-Path $PSScriptRoot "contract-safety.ps1")
 $failures = [System.Collections.Generic.List[string]]::new()
 $passed = 0
 
@@ -40,23 +41,23 @@ $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("shieldchain-script-
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 
 try {
-    $secret = "contract-secret-must-not-appear"
-    Set-Content -LiteralPath (Join-Path $fixtureRoot ".env") -Value "DEEPSEEK_API_KEY=$secret"
-    $missingResult = Invoke-CapturedPowerShell -Arguments @(
-        "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
-        "-CheckOnly", "-ProjectRoot", $fixtureRoot
-    )
-    Assert-True ($missingResult.ExitCode -eq 1) "dev check-only exits 1 when prerequisites are missing"
-    Assert-True ($missingResult.Output -match [regex]::Escape(".venv\Scripts\python.exe")) "dev reports the missing Python path"
-    Assert-True ($missingResult.Output -match [regex]::Escape("frontend\node_modules")) "dev reports the missing Node modules path"
-
-    Remove-Item -LiteralPath (Join-Path $fixtureRoot ".env")
     $allMissingResult = Invoke-CapturedPowerShell -Arguments @(
         "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
         "-CheckOnly", "-ProjectRoot", $fixtureRoot
     )
-    Assert-True ($allMissingResult.Output -match [regex]::Escape(".env")) "dev reports the missing environment file"
-    Assert-True ($missingResult.Output -notmatch [regex]::Escape($secret)) "dev never prints environment secret values"
+    Assert-True ($allMissingResult.ExitCode -eq 1) "one dev check-only invocation exits 1 when all prerequisites are missing"
+    Assert-True ($allMissingResult.Output -match [regex]::Escape(".venv\Scripts\python.exe")) "the same dev output reports the missing Python path"
+    Assert-True ($allMissingResult.Output -match [regex]::Escape("frontend\node_modules")) "the same dev output reports the missing Node modules path"
+    Assert-True ($allMissingResult.Output -match [regex]::Escape(".env")) "the same dev output reports the missing environment file"
+
+    $secret = "contract-secret-must-not-appear"
+    Set-Content -LiteralPath (Join-Path $fixtureRoot ".env") -Value "DEEPSEEK_API_KEY=$secret"
+    $secretSafetyResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
+        "-CheckOnly", "-ProjectRoot", $fixtureRoot
+    )
+    Assert-True ($secretSafetyResult.Output -notmatch [regex]::Escape($secret)) "dev never prints environment secret values"
+    Remove-Item -LiteralPath (Join-Path $fixtureRoot ".env") -Force
 
     $realEnvPath = Join-Path $repositoryRoot ".env"
     $createdRealEnv = -not (Test-Path -LiteralPath $realEnvPath)
@@ -76,14 +77,31 @@ try {
         }
     }
 
-    $devScriptText = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "scripts\dev.ps1")
-    $allScriptText = Get-Content -Raw -LiteralPath @(
+    $productionScripts = @(
         (Join-Path $repositoryRoot "scripts\dev.ps1"),
         (Join-Path $repositoryRoot "scripts\test.ps1"),
         (Join-Path $repositoryRoot "scripts\verify.ps1")
-    ) | Out-String
+    )
+    $devScriptText = Get-Content -Raw -LiteralPath $productionScripts[0]
+    $allScriptText = Get-Content -Raw -LiteralPath $productionScripts | Out-String
     Assert-True ($allScriptText -notmatch "Invoke-Expression") "developer scripts do not use Invoke-Expression"
-    Assert-True ($allScriptText -notmatch "Get-Content\s+[^\r\n]*\.env") "developer scripts do not read or print the environment file"
+    foreach ($productionScript in $productionScripts) {
+        Assert-True (Test-ScriptHasNoFileContentReads -Path $productionScript) "$([IO.Path]::GetFileName($productionScript)) has no file-content read command or API"
+    }
+
+    $unsafeSamples = @{
+        "literal Get-Content" = 'Get-Content -LiteralPath ".env"'
+        "indirect gc alias" = '$path = Join-Path $PWD ".env"; gc $path'
+        "type alias" = 'type .env'
+        "indirect File ReadAllText" = '$path = Join-Path $PWD ".env"; [IO.File]::ReadAllText($path)'
+        "File OpenText" = '[System.IO.File]::OpenText(".env")'
+        "StreamReader" = '$reader = [System.IO.StreamReader]::new(".env")'
+    }
+    foreach ($sample in $unsafeSamples.GetEnumerator()) {
+        $samplePath = Join-Path $fixtureRoot (($sample.Key -replace "[^A-Za-z]", "-") + ".ps1")
+        Set-Content -LiteralPath $samplePath -Value $sample.Value
+        Assert-True (-not (Test-ScriptHasNoFileContentReads -Path $samplePath)) "AST safety rejects $($sample.Key)"
+    }
     Assert-True ($devScriptText -match "127\.0\.0\.1" -and $devScriptText -match "8000" -and $devScriptText -match "5173") "dev binds the documented local ports"
 
     $wrapperRoot = Join-Path $fixtureRoot "wrappers"

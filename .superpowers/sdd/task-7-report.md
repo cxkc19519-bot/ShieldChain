@@ -38,3 +38,17 @@ Implemented and verified the Phase 1 Windows developer commands and documentatio
 - The paid live smoke test was intentionally skipped, so real-provider connectivity is not claimed.
 - Runtime job cleanup is smoke-tested; a physical Ctrl+C keystroke remains a manual terminal observation.
 - Prior minor Task 3/6 findings were not changed in this scoped task.
+
+## Review Hardening: Script Contract Quality
+
+### Findings Addressed
+
+- The missing-prerequisite fixture now leaves Python, `frontend/node_modules`, and `.env` absent, invokes `dev.ps1 -CheckOnly` once, and asserts exit 1 plus all three actionable paths from that same captured output.
+- Static secret-file safety now parses production scripts with the PowerShell AST and rejects file-content reads regardless of whether a path is literal or indirect. Denied constructs include `Get-Content` and aliases `gc`, `type`, and `cat`; `Select-String` aliases; `System.IO.File` read/open methods; and `StreamReader` construction.
+- Unsafe-sample self-tests cover literal `.env`, variable-held `.env`, aliases, `ReadAllText`, `OpenText`, and `StreamReader`. No production scripts required changes.
+
+### Review RED / GREEN Evidence
+
+- RED: the hardened contract suite exited 1 because the not-yet-implemented `tests/scripts/contract-safety.ps1` AST helper could not be loaded.
+- GREEN: after the minimal AST helper was added, the suite passed all 24 assertions; the retained dynamic secret non-disclosure assertion increases the final suite to 25 assertions.
+- Required review-fix commit message: `test: harden developer script contracts`.
