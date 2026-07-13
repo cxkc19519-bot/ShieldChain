@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shieldchain"
+version = "0.1.0"
+description = "ShieldChain backend"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "alembic>=1.14",
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "pydantic-settings>=2.7",
+    "sqlalchemy>=2.0",
+    "structlog>=25.1",
+    "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shieldchain"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    'ignore:Using `httpx` with `starlette\.testclient` is deprecated; install `httpx2` instead\.:starlette.exceptions.StarletteDeprecationWarning',
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
