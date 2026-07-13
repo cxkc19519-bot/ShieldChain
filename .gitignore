@@ -19,6 +19,8 @@ htmlcov/
 
 # Node and frontend builds
 node_modules/
+.npm-cache/
+*.tsbuildinfo
 build/
 dist/
 coverage/
