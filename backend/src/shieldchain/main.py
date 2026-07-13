@@ -3,6 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 
 from shieldchain.api.health import router as health_router
+from shieldchain.core.config import get_settings
 from shieldchain.core.errors import (
     ApiError,
     api_error_handler,
@@ -10,10 +11,12 @@ from shieldchain.core.errors import (
     unhandled_error_handler,
     validation_error_handler,
 )
+from shieldchain.core.logging import configure_logging
 from shieldchain.core.request_id import RequestIdMiddleware
 
 
 def create_app() -> FastAPI:
+    configure_logging(get_settings().environment)
     app = FastAPI()
     app.add_middleware(RequestIdMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
