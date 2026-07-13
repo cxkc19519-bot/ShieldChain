@@ -43,3 +43,15 @@ Complete. Task 6 adds the accessible React/TypeScript application shell, dashboa
 
 - The dashboard requires the existing backend liveness endpoint to be running at the same origin (or supplied through a development proxy) to show healthy in a live browser; automated tests use local test doubles and make no network calls.
 - No RAG, agent, tool, incident data, or other future feature was implemented.
+
+## Accessibility Contrast Review Fix
+
+- RED: `npm.cmd test --prefix frontend -- --run src/styles/tokens.test.ts` completed with 2 failed and 2 passed. The focus rule still used `#f0a23b` instead of the theme accent, and the active navigation combination measured 4.493944609994795:1, below the required 4.5:1.
+- GREEN: the same focused command completed with 4 passed and 0 failed after using the semantic accent for focus and darkening it slightly from `#176fa8` to `#166ea6`.
+- The deterministic test-only WCAG relative-luminance helper verifies the focus accent has at least 3:1 contrast against both `#f8fcff` and `#eef7ff`, and active navigation text has at least 4.5:1 contrast against `#d6edff`. It also verifies the relevant CSS selectors consume the tested token.
+- Full regression: `npm.cmd test --prefix frontend -- --run` completed with 21 passed and 0 failed across 3 test files.
+- Lint: `npm.cmd run lint --prefix frontend` exited 0 with no findings.
+- Typecheck: `npm.cmd run typecheck --prefix frontend` exited 0.
+- Production build: `npm.cmd run build --prefix frontend` exited 0; Vite 7.3.6 transformed 45 modules and emitted `frontend/dist`.
+- Whitespace: `git diff --check` exited 0 with no whitespace errors.
+- Commit: `fix: improve navigation focus contrast` (this accessibility review-fix commit).

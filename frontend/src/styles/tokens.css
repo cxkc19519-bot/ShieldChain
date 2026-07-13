@@ -10,7 +10,7 @@
   --color-border: #bfdcf2;
   --color-text: #16283d;
   --color-text-muted: #587089;
-  --color-accent: #176fa8;
+  --color-accent: #166ea6;
   --color-accent-soft: #d6edff;
   --color-warning: #9a6200;
   --color-danger: #a13f3f;
@@ -39,7 +39,7 @@ a {
 
 a:focus-visible,
 button:focus-visible {
-  outline: 3px solid #f0a23b;
+  outline: 3px solid var(--color-accent);
   outline-offset: 3px;
 }
 
