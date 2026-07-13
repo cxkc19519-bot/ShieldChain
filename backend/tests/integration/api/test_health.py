@@ -1,4 +1,9 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
+
+from shieldchain.db.session import create_engine_from_url
+from shieldchain.main import create_app
 
 
 def test_live_health_check_returns_exact_contract(client: TestClient) -> None:
@@ -9,7 +14,27 @@ def test_live_health_check_returns_exact_contract(client: TestClient) -> None:
 
 
 def test_ready_health_check_returns_exact_contract(client: TestClient) -> None:
-    response = client.get("/api/v1/health/ready")
+    engine = create_engine_from_url("sqlite:///:memory:")
+    with TestClient(create_app(database_engine=engine)) as ready_client:
+        response = ready_client.get("/api/v1/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
+    assert response.json() == {"status": "ready", "checks": {"database": "ok"}}
+
+
+def test_ready_health_check_returns_exact_failure_contract() -> None:
+    engine = create_engine("sqlite:///:memory:")
+
+    def fail_connect():
+        raise OperationalError("SELECT 1", {}, Exception("controlled failure"))
+
+    engine.connect = fail_connect  # type: ignore[method-assign]
+
+    with TestClient(create_app(database_engine=engine)) as client:
+        response = client.get("/api/v1/health/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"database": "failed"},
+    }
