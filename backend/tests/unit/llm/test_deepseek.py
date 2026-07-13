@@ -274,9 +274,18 @@ async def test_server_error_exhaustion_raises_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("exception_type", [httpx.ConnectTimeout, httpx.ReadTimeout])
+@pytest.mark.parametrize(
+    "exception_type",
+    [
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.WriteTimeout,
+        httpx.PoolTimeout,
+    ],
+)
 async def test_timeout_retries_twice_then_raises(
     exception_type: type[httpx.TimeoutException],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     calls = 0
     delays: list[float] = []
@@ -296,6 +305,9 @@ async def test_timeout_retries_twice_then_raises(
 
     assert calls == 3
     assert delays == [0.5, 1.0]
+    output = capsys.readouterr().out
+    for forbidden in ("unit-test-key", "sensitive prompt", "private timeout detail"):
+        assert forbidden not in output
 
 
 @pytest.mark.asyncio

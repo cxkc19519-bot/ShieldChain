@@ -64,6 +64,7 @@ describe('application styles', () => {
     const accent = readHexToken('--color-accent')
 
     expect(activeRule).toContain('color: var(--color-accent)')
+    expect(activeRule).toContain('background: var(--color-accent-soft)')
     expect(contrastRatio(accent, readHexToken('--color-accent-soft'))).toBeGreaterThanOrEqual(4.5)
   })
 })

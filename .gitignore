@@ -26,7 +26,8 @@ dist/
 coverage/
 
 # Runtime data and logs
-data/
+data/*
+!data/.gitkeep
 *.db
 *.sqlite*
 *.log

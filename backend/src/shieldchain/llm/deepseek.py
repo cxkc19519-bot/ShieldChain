@@ -72,7 +72,7 @@ class DeepSeekClient:
                     json=payload,
                     timeout=httpx.Timeout(TOTAL_TIMEOUT_SECONDS),
                 )
-            except (httpx.ConnectTimeout, httpx.ReadTimeout):
+            except httpx.TimeoutException:
                 self._log_attempt(started_at, attempt, "timeout")
                 if attempt > len(RETRY_DELAYS):
                     raise LlmUnavailableError("LLM request timed out") from None
