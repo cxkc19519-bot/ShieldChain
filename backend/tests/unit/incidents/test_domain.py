@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from shieldchain.incidents.domain import (
+    ALLOWED_TRANSITIONS,
     Assessment,
     AuditEvent,
     BlockOutcome,
@@ -161,6 +162,33 @@ def test_closed_cannot_transition_back_to_executing() -> None:
     assert exc_info.value.current is InvestigationStatus.CLOSED
     assert exc_info.value.target is InvestigationStatus.EXECUTING
     assert str(exc_info.value) == "invalid investigation transition: closed -> executing"
+
+
+def test_transition_mapping_entries_cannot_be_replaced() -> None:
+    try:
+        with pytest.raises(TypeError):
+            ALLOWED_TRANSITIONS[InvestigationStatus.CLOSED] = {
+                InvestigationStatus.EXECUTING
+            }
+    finally:
+        if InvestigationStatus.CLOSED in ALLOWED_TRANSITIONS:
+            ALLOWED_TRANSITIONS.pop(InvestigationStatus.CLOSED)
+
+    with pytest.raises(InvalidInvestigationTransition):
+        transition(InvestigationStatus.CLOSED, InvestigationStatus.EXECUTING)
+
+
+def test_transition_target_sets_cannot_be_extended() -> None:
+    targets = ALLOWED_TRANSITIONS[InvestigationStatus.PENDING]
+    try:
+        with pytest.raises(AttributeError):
+            targets.add(InvestigationStatus.CLOSED)
+    finally:
+        if InvestigationStatus.CLOSED in targets:
+            targets.discard(InvestigationStatus.CLOSED)
+
+    with pytest.raises(InvalidInvestigationTransition):
+        transition(InvestigationStatus.PENDING, InvestigationStatus.CLOSED)
 
 
 @pytest.mark.parametrize("status", list(InvestigationStatus))

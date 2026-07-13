@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from ipaddress import IPv4Address
+from types import MappingProxyType
 from typing import Literal
 from uuid import UUID
 
@@ -50,33 +51,47 @@ class RunMode(StrEnum):
     FAIL_BLOCK_ONCE = "fail_block_once"
 
 
-ALLOWED_TRANSITIONS = {
-    InvestigationStatus.PENDING: {InvestigationStatus.COLLECTING},
-    InvestigationStatus.COLLECTING: {
-        InvestigationStatus.ANALYZING,
-        InvestigationStatus.NEEDS_REVIEW,
-        InvestigationStatus.INTERRUPTED,
-    },
-    InvestigationStatus.ANALYZING: {
-        InvestigationStatus.ACTION_PLANNED,
-        InvestigationStatus.NEEDS_REVIEW,
-        InvestigationStatus.INTERRUPTED,
-    },
-    InvestigationStatus.ACTION_PLANNED: {
-        InvestigationStatus.EXECUTING,
-        InvestigationStatus.INTERRUPTED,
-    },
-    InvestigationStatus.EXECUTING: {
-        InvestigationStatus.VERIFYING,
-        InvestigationStatus.FAILED,
-        InvestigationStatus.INTERRUPTED,
-    },
-    InvestigationStatus.VERIFYING: {
-        InvestigationStatus.CLOSED,
-        InvestigationStatus.FAILED,
-        InvestigationStatus.INTERRUPTED,
-    },
-}
+ALLOWED_TRANSITIONS: Mapping[
+    InvestigationStatus, frozenset[InvestigationStatus]
+] = MappingProxyType(
+    {
+        InvestigationStatus.PENDING: frozenset({InvestigationStatus.COLLECTING}),
+        InvestigationStatus.COLLECTING: frozenset(
+            {
+                InvestigationStatus.ANALYZING,
+                InvestigationStatus.NEEDS_REVIEW,
+                InvestigationStatus.INTERRUPTED,
+            }
+        ),
+        InvestigationStatus.ANALYZING: frozenset(
+            {
+                InvestigationStatus.ACTION_PLANNED,
+                InvestigationStatus.NEEDS_REVIEW,
+                InvestigationStatus.INTERRUPTED,
+            }
+        ),
+        InvestigationStatus.ACTION_PLANNED: frozenset(
+            {
+                InvestigationStatus.EXECUTING,
+                InvestigationStatus.INTERRUPTED,
+            }
+        ),
+        InvestigationStatus.EXECUTING: frozenset(
+            {
+                InvestigationStatus.VERIFYING,
+                InvestigationStatus.FAILED,
+                InvestigationStatus.INTERRUPTED,
+            }
+        ),
+        InvestigationStatus.VERIFYING: frozenset(
+            {
+                InvestigationStatus.CLOSED,
+                InvestigationStatus.FAILED,
+                InvestigationStatus.INTERRUPTED,
+            }
+        ),
+    }
+)
 
 _TERMINAL_STATUSES = frozenset(
     {
@@ -100,7 +115,7 @@ class InvalidInvestigationTransition(ValueError):
 def transition(
     current: InvestigationStatus, target: InvestigationStatus
 ) -> InvestigationStatus:
-    if target not in ALLOWED_TRANSITIONS.get(current, set()):
+    if target not in ALLOWED_TRANSITIONS.get(current, frozenset()):
         raise InvalidInvestigationTransition(current, target)
     return target
 
