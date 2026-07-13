@@ -134,6 +134,7 @@ def test_method_not_allowed_returns_stable_public_contract(error_client: TestCli
     )
 
     assert response.status_code == 405
+    assert response.headers["Allow"] == "GET"
     assert response.headers["X-Request-ID"] == "req-405"
     assert response.json() == {
         "error": {

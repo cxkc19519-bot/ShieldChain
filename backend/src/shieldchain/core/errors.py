@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -20,7 +22,10 @@ def _error_response(
     message: str,
     status_code: int,
     request_id: str,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
+    response_headers = dict(headers or {})
+    response_headers[REQUEST_ID_HEADER] = request_id
     return JSONResponse(
         status_code=status_code,
         content={
@@ -30,7 +35,7 @@ def _error_response(
                 "request_id": request_id,
             }
         },
-        headers={REQUEST_ID_HEADER: request_id},
+        headers=response_headers,
     )
 
 
@@ -50,6 +55,7 @@ async def http_error_handler(request: Request, error: HTTPException) -> JSONResp
         message=message,
         status_code=error.status_code,
         request_id=request.state.request_id,
+        headers=error.headers,
     )
 
 
