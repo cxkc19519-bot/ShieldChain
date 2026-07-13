@@ -1,0 +1,35 @@
+# Local agent and worktree state
+.agents/
+.superpowers/
+.worktrees/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node and frontend builds
+node_modules/
+dist/
+coverage/
+
+# Runtime data and logs
+data/
+*.db
+*.sqlite*
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
