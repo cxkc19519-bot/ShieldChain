@@ -104,6 +104,8 @@ class InvestigationWorkflow:
                 return execution
             self._pause()
             return self._verify(session_factory, run_id, request_id=request_id)
+        except InvalidInvestigationState as error:
+            return self._resolve_invalid_state(session_factory, run_id, error)
         except Exception as error:
             return self._record_unexpected_failure(
                 session_factory,
@@ -126,9 +128,9 @@ class InvestigationWorkflow:
         *,
         request_id: str,
     ) -> tuple[Evidence, ...]:
-        started_at = self._clock()
         with session_factory.begin() as session:
             self._require_status(session, run_id, InvestigationStatus.PENDING)
+            started_at = self._clock()
             self._repository.transition_run(
                 session,
                 run_id,
@@ -147,11 +149,11 @@ class InvestigationWorkflow:
                 completed_at=None,
             )
 
-        completed_at = self._clock()
         with session_factory.begin() as session:
             run = self._require_status(
                 session, run_id, InvestigationStatus.COLLECTING
             )
+            completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             evidence = self._evidence_collector(state, completed_at)
             self._repository.append_evidence(session, run_id, evidence, request_id=request_id)
@@ -184,9 +186,9 @@ class InvestigationWorkflow:
         *,
         request_id: str,
     ) -> Assessment:
-        started_at = self._clock()
         with session_factory.begin() as session:
             self._require_status(session, run_id, InvestigationStatus.ANALYZING)
+            started_at = self._clock()
             self._repository.record_step(
                 session,
                 run_id,
@@ -198,9 +200,9 @@ class InvestigationWorkflow:
                 completed_at=None,
             )
 
-        completed_at = self._clock()
         with session_factory.begin() as session:
             self._require_status(session, run_id, InvestigationStatus.ANALYZING)
+            completed_at = self._clock()
             evidence = self._load_evidence(session, run_id)
             assessment = self._assessor(evidence)
             self._repository.save_assessment(
@@ -246,11 +248,11 @@ class InvestigationWorkflow:
         request_id: str,
         fail_block_once: bool,
     ) -> InvestigationStatus:
-        started_at = self._clock()
         with session_factory.begin() as session:
             self._require_status(
                 session, run_id, InvestigationStatus.ACTION_PLANNED
             )
+            started_at = self._clock()
             self._repository.transition_run(
                 session,
                 run_id,
@@ -269,11 +271,11 @@ class InvestigationWorkflow:
                 completed_at=None,
             )
 
-        completed_at = self._clock()
         with session_factory.begin() as session:
             run = self._require_status(
                 session, run_id, InvestigationStatus.EXECUTING
             )
+            completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             idempotency_key = f"block-ip:{run_id}:{state.remote_ip}"
             result = self._repository.get_tool_result(session, idempotency_key)
@@ -327,9 +329,9 @@ class InvestigationWorkflow:
         *,
         request_id: str,
     ) -> InvestigationStatus:
-        started_at = self._clock()
         with session_factory.begin() as session:
             self._require_status(session, run_id, InvestigationStatus.VERIFYING)
+            started_at = self._clock()
             self._repository.record_step(
                 session,
                 run_id,
@@ -341,11 +343,11 @@ class InvestigationWorkflow:
                 completed_at=None,
             )
 
-        completed_at = self._clock()
         with session_factory.begin() as session:
             run = self._require_status(
                 session, run_id, InvestigationStatus.VERIFYING
             )
+            completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             result = self._verifier(state, state.remote_ip, completed_at)
             self._repository.save_verification(session, run_id, result, request_id=request_id)
@@ -386,9 +388,10 @@ class InvestigationWorkflow:
         request_id: str,
         original_error: Exception,
     ) -> InvestigationStatus:
-        now = self._clock()
         with session_factory.begin() as session:
             run = self._require_run(session, run_id)
+            if is_terminal(run.status):
+                return run.status
             step_keys = {
                 InvestigationStatus.COLLECTING: "collect",
                 InvestigationStatus.ANALYZING: "analyze",
@@ -399,6 +402,7 @@ class InvestigationWorkflow:
             step_key = step_keys.get(run.status)
             if step_key is None:
                 raise original_error
+            now = self._clock()
             target = (
                 InvestigationStatus.FAILED
                 if run.status
@@ -426,6 +430,17 @@ class InvestigationWorkflow:
                 now=now,
             )
         return target
+
+    def _resolve_invalid_state(
+        self,
+        session_factory: sessionmaker[Session],
+        run_id: UUID,
+        original_error: InvalidInvestigationState,
+    ) -> InvestigationStatus:
+        run = self._load_run(session_factory, run_id)
+        if is_terminal(run.status):
+            return run.status
+        raise original_error
 
     def _require_run(self, session: Session, run_id: UUID) -> InvestigationRun:
         run = self._repository.get_run(session, run_id)

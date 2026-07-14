@@ -415,39 +415,101 @@ def test_non_pending_active_run_is_rejected_without_mutation(environment) -> Non
     assert len(after[2]) == len(before[2])
 
 
-def test_phase_result_revalidates_status_before_calling_dependency(environment) -> None:
+def test_terminal_race_after_pause_returns_without_next_phase_side_effects(
+    environment,
+) -> None:
     _engine, factory, repository, _state, run = environment
+    clock = RecordingClock()
+    firewall = RecordingFirewall()
     collector_calls: list[object] = []
+    assessor_calls: list[object] = []
+    snapshots: list[tuple[int, int]] = []
 
-    class MutatingClock:
-        def __init__(self) -> None:
-            self.calls = 0
+    def collecting(state, now):
+        collector_calls.append(state)
+        return collect_evidence(state, now)
 
-        def __call__(self) -> datetime:
-            self.calls += 1
-            if self.calls == 2:
-                with factory.begin() as session:
-                    session.execute(
-                        update(InvestigationRunRow)
-                        .where(InvestigationRunRow.id == str(run.id))
-                        .values(status=InvestigationStatus.FAILED.value)
-                    )
-            return NOW + timedelta(milliseconds=self.calls)
+    def analyzing(evidence):
+        assessor_calls.append(evidence)
+        return assess(evidence)
+
+    def mutate_to_terminal(_delay: float) -> None:
+        with factory.begin() as session:
+            session.execute(
+                update(InvestigationRunRow)
+                .where(InvestigationRunRow.id == str(run.id))
+                .values(status=InvestigationStatus.FAILED.value)
+            )
+        _stored, steps, audits = _run_rows(factory, run.id)
+        snapshots.append((len(steps), len(audits)))
 
     workflow = _workflow(
         repository,
-        clock=MutatingClock(),
-        evidence_collector=lambda *args: collector_calls.append(args),
+        firewall=firewall,
+        clock=clock,
+        sleeper=mutate_to_terminal,
+        evidence_collector=collecting,
+        assessor=analyzing,
+    )
+
+    assert workflow.run(factory, run.id, request_id="workflow") is InvestigationStatus.FAILED
+
+    stored, steps, audits = _run_rows(factory, run.id)
+    assert stored.status == "failed"
+    assert (len(steps), len(audits)) == snapshots[0]
+    assert len(collector_calls) == 1
+    assert assessor_calls == []
+    assert firewall.calls == 0
+    assert clock.calls == 2
+    assert len(snapshots) == 1
+
+
+def test_active_race_after_pause_raises_original_state_without_rewrite(
+    environment,
+) -> None:
+    _engine, factory, repository, _state, run = environment
+    clock = RecordingClock()
+    firewall = RecordingFirewall()
+    collector_calls: list[object] = []
+    assessor_calls: list[object] = []
+    snapshots: list[tuple[int, int]] = []
+
+    def mutate_to_other_active(_delay: float) -> None:
+        with factory.begin() as session:
+            session.execute(
+                update(InvestigationRunRow)
+                .where(InvestigationRunRow.id == str(run.id))
+                .values(status=InvestigationStatus.EXECUTING.value)
+            )
+        _stored, steps, audits = _run_rows(factory, run.id)
+        snapshots.append((len(steps), len(audits)))
+
+    def collecting(state, now):
+        collector_calls.append(state)
+        return collect_evidence(state, now)
+
+    workflow = _workflow(
+        repository,
+        firewall=firewall,
+        clock=clock,
+        sleeper=mutate_to_other_active,
+        evidence_collector=collecting,
+        assessor=lambda evidence: assessor_calls.append(evidence),
     )
 
     with pytest.raises(InvalidInvestigationState) as caught:
-        workflow._collect(factory, run.id, request_id="workflow")
+        workflow.run(factory, run.id, request_id="workflow")
 
-    stored, steps, _audits = _run_rows(factory, run.id)
-    assert caught.value.status is InvestigationStatus.FAILED
-    assert collector_calls == []
-    assert stored.status == "failed"
-    assert [(step.step_key, step.status) for step in steps] == [("collect", "running")]
+    stored, steps, audits = _run_rows(factory, run.id)
+    assert caught.value.run_id == run.id
+    assert caught.value.status is InvestigationStatus.EXECUTING
+    assert stored.status == "executing"
+    assert (len(steps), len(audits)) == snapshots[0]
+    assert len(collector_calls) == 1
+    assert assessor_calls == []
+    assert firewall.calls == 0
+    assert clock.calls == 2
+    assert len(snapshots) == 1
 
 
 def test_initial_missing_run_propagates_safe_not_found(environment) -> None:
