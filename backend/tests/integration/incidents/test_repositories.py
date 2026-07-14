@@ -424,6 +424,32 @@ def test_duplicate_evidence_reports_the_actual_offending_uuid(
     assert caught.value.evidence_id == expected
 
 
+def test_cross_run_id_conflict_does_not_create_a_false_digest_conflict(
+    session: Session, repository: SqlAlchemyIncidentRepository
+) -> None:
+    state_a = repository.reset_phishing_scenario(session, now=NOW)
+    state_b = repository.reset_phishing_scenario(session, now=NOW + timedelta(minutes=1))
+    run_a = _create_run(session, repository, state_a.simulation_id, request_id="run-a")
+    run_b = _create_run(session, repository, state_b.simulation_id, request_id="run-b")
+    evidence_x = _evidence(601, "6" * 64)
+    repository.append_evidence(
+        session, run_a.id, [evidence_x], request_id="evidence-run-a"
+    )
+    session.commit()
+
+    evidence_y_same_digest = _evidence(602, "6" * 64)
+    evidence_x_new_digest = _evidence(601, "7" * 64)
+    with pytest.raises(DuplicateEvidence) as caught:
+        repository.append_evidence(
+            session,
+            run_b.id,
+            [evidence_y_same_digest, evidence_x_new_digest],
+            request_id="evidence-run-b",
+        )
+
+    assert caught.value.evidence_id == evidence_x.id
+
+
 def test_evidence_does_not_mislabel_unrelated_integrity_error(
     session: Session,
     repository: SqlAlchemyIncidentRepository,

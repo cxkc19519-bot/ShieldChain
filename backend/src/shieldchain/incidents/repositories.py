@@ -7,7 +7,7 @@ from ipaddress import IPv4Address
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -673,23 +673,24 @@ class SqlAlchemyIncidentRepository:
             seen_ids.add(item.id)
             seen_digests.add(item.integrity_sha256)
 
-        stored = tuple(
-            session.execute(
-                select(EvidenceRecordRow.id, EvidenceRecordRow.integrity_sha256).where(
-                    or_(
-                        EvidenceRecordRow.id.in_([str(item.id) for item in evidence]),
-                        (
-                            (EvidenceRecordRow.run_id == str(run_id))
-                            & EvidenceRecordRow.integrity_sha256.in_(
-                                [item.integrity_sha256 for item in evidence]
-                            )
-                        ),
-                    )
+        stored_ids = {
+            UUID(value)
+            for value in session.execute(
+                select(EvidenceRecordRow.id).where(
+                    EvidenceRecordRow.id.in_([str(item.id) for item in evidence])
                 )
-            )
+            ).scalars()
+        }
+        stored_digests = set(
+            session.execute(
+                select(EvidenceRecordRow.integrity_sha256).where(
+                    EvidenceRecordRow.run_id == str(run_id),
+                    EvidenceRecordRow.integrity_sha256.in_(
+                        [item.integrity_sha256 for item in evidence]
+                    ),
+                )
+            ).scalars()
         )
-        stored_ids = {UUID(row.id) for row in stored}
-        stored_digests = {row.integrity_sha256 for row in stored}
         for item in evidence:
             if item.id in stored_ids or item.integrity_sha256 in stored_digests:
                 return item.id
