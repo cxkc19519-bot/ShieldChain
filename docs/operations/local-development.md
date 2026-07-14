@@ -1,6 +1,6 @@
 # Windows 本地开发
 
-阶段 1 在 Windows 上直接运行 FastAPI 后端和 React 前端，不要求 Docker。本地不运行大模型或 Milvus；默认测试也不会访问 DeepSeek。
+阶段 2 在 Windows 上直接运行 FastAPI 后端和 React 前端，不要求 Docker。本阶段只是使用固定钓鱼场景、SQLite 和模拟防火墙的确定性仿真，不是真实保护设备，也不会连接真实 SIEM、EDR、防火墙或终端。本地不运行大模型或 Milvus；默认测试不会访问 DeepSeek。
 
 ## 1. 检查工具版本
 
@@ -38,6 +38,15 @@ Copy-Item .env.example .env
 
 ## 4. 启动开发服务
 
+首次启动或迁移版本变化后，先在仓库根目录升级本地数据库：
+
+```powershell
+$env:DATABASE_URL = "sqlite:///./data/shieldchain.db"
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini upgrade head
+```
+
+如需验证迁移可逆性，可在专用的临时 SQLite 上运行 `downgrade base`，再运行 `upgrade head`；不要对需要保留的本地数据库做降级测试。
+
 先检查三个本地前置项：
 
 ```powershell
@@ -57,16 +66,41 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 
 按 Ctrl+C 时脚本会停止两个子进程。如果任何子进程意外退出，脚本会返回非零状态。
 
-## 5. 离线测试与完整验证
+## 5. 阶段 2 调查闭环
+
+浏览器调查页和 API 都执行相同流程：重置固定钓鱼场景，启动调查，轮询至终态，然后读取事件和有序审计。手工调用也应始终通过 Vite 来源 `http://127.0.0.1:5173/api/v1`，以覆盖真实代理路径：
+
+```powershell
+$root = "http://127.0.0.1:5173/api/v1"
+$reset = Invoke-RestMethod -Method Post -Uri "$root/simulations/phishing/reset" -ContentType "application/json" -Body "{}"
+$body = @{ simulation_instance_id = $reset.simulation.id; mode = "normal" } | ConvertTo-Json
+$run = Invoke-RestMethod -Method Post -Uri "$root/investigations" -ContentType "application/json" -Body $body
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
+do {
+    $final = Invoke-RestMethod -Uri "$root/investigations/$($run.run_id)"
+    if ($final.status -notin @("closed", "needs_review", "failed", "interrupted")) {
+        Start-Sleep -Milliseconds 500
+    }
+} while ($final.status -notin @("closed", "needs_review", "failed", "interrupted") -and [DateTime]::UtcNow -lt $deadline)
+$incident = Invoke-RestMethod -Uri "$root/incidents/$($run.incident_id)"
+$audit = Invoke-RestMethod -Uri "$root/incidents/$($run.incident_id)/audit"
+```
+
+`normal` 模式应依次收集固定证据、规则研判、模拟封禁和验证，最终达到 `closed`，连接和防火墙状态均为 `blocked`。开发环境还支持 `fail_block_once` 故障注入：它应达到 `failed`，保留活动连接且不得报告成功；该模式用于验证失败语义，不属于正常 smoke。生产环境明确拒绝 `fail_block_once`。
+
+## 6. 离线测试、阶段 smoke 与完整验证
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-`test.ps1` 依次运行后端 Pytest 和前端 Vitest。`verify.ps1` 严格按 Ruff、Pytest、ESLint、TypeScript、Vitest、前端生产构建的顺序执行，并在首个失败处停止。两个脚本都会移除继承的 `RUN_LIVE_DEEPSEEK_TEST`，因此不会意外产生付费调用。
+`test.ps1` 依次运行后端 Pytest 和前端 Vitest。独立 smoke 使用仓库已有 `.venv` 和 `frontend\node_modules`，在系统临时目录创建唯一 SQLite 和日志，运行 Alembic，启动真实后端及带 `--strictPort` 的 Vite，并只经 5173 执行 readiness/reset/start/poll/incident/audit；轮询使用 30 秒单调截止时间。`verify.ps1` 严格按 Ruff、Pytest、ESLint、TypeScript、Vitest、前端生产构建、阶段 2 smoke 的顺序执行，并在首个失败处停止且返回该退出码。脚本会移除继承的 `RUN_LIVE_DEEPSEEK_TEST`，因此不会意外产生付费调用。
 
-## 6. 可选实时 DeepSeek 冒烟测试
+smoke 不读取或覆盖已有 `.env`。若 `.env` 不存在，它只创建一个空密钥文件并在 `finally` 删除；它还会恢复调用者环境、停止仅由自己直接跟踪的 PID、删除自己的临时目录，并确认 8000/5173 不再监听。
+
+## 7. 可选实时 DeepSeek 冒烟测试
 
 只有获得明确批准并确认费用后，才可以在当前 PowerShell 会话中显式设置真实密钥并单独运行实时测试：
 
@@ -80,13 +114,16 @@ Remove-Item Env:\DEEPSEEK_API_KEY
 
 不得把真实密钥写进 `.env.example`、命令历史、截图、日志或测试报告。本阶段验收不要求运行此付费测试。
 
-## 7. 故障排查
+## 8. 故障排查
 
 - 缺少 `.venv\Scripts\python.exe`：重新创建虚拟环境并安装 `backend[test]`。
 - 缺少 `frontend\node_modules`：运行 `npm ci --prefix frontend`，不要使用未锁定的安装方式。
 - 缺少 `.env`：运行 `Copy-Item .env.example .env`，不要打印文件内容。
 - `npm.cmd` 不可用：安装当前 Node.js LTS 后重新打开 PowerShell。
-- 端口被占用：停止占用 `127.0.0.1:8000` 或 `127.0.0.1:5173` 的本地进程后重试。
-- 就绪检查返回 503：检查 `DATABASE_URL` 指向的目录是否可写。
+- 端口被占用：smoke 会安全失败且绝不会停止未知 owner。确认该进程属于自己后手工关闭，再重试；不要用宽泛的进程清理命令。
+- Alembic 迁移失败：确认 `DATABASE_URL` 使用可写的 SQLite 路径，并单独运行 `upgrade head` 查看迁移错误；smoke 仍会执行清理。
+- 后端或 Vite 启动失败：检查 smoke 输出中的阶段和退出码；脚本只在系统临时目录保留运行期日志，并在结束时删除整个自有目录。
+- 就绪检查返回 503：检查 `DATABASE_URL` 指向的目录是否可写且已经迁移到 head。
+- 调查未在 30 秒内结束或返回畸形数据：smoke 会非零退出、停止自有进程、删除自有文件并检查端口；修复根因后重新运行完整命令。
 
-Docker 不是阶段 1 本地开发的前置条件。
+当前持久化只支持本机 SQLite，启动和 smoke 只面向单机开发；这不是并发生产数据库或部署方案。Docker 不是阶段 2 本地开发的前置条件，阶段 3 RAG 也尚未实现。

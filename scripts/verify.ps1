@@ -18,6 +18,8 @@ if ($ContractTest) {
     }
     $pythonCommand = Join-Path $TestCommandDirectory "python.cmd"
     $npmCommand = Join-Path $TestCommandDirectory "npm.cmd"
+    $smokeCommand = Join-Path $TestCommandDirectory "smoke.cmd"
+    $smokeArguments = @()
 }
 else {
     $pythonCommand = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
@@ -27,6 +29,11 @@ else {
         exit 1
     }
     $npmCommand = $npm.Source
+    $smokeCommand = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $smokeArguments = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        (Join-Path $ProjectRoot "tests\scripts\run-phase2-smoke.ps1")
+    )
 }
 
 $inheritedLiveFlag = $env:RUN_LIVE_DEEPSEEK_TEST
@@ -38,7 +45,8 @@ try {
         @{ File = $npmCommand; Arguments = @("run", "lint", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("run", "typecheck", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("test", "--prefix", (Join-Path $ProjectRoot "frontend"), "--", "--run") },
-        @{ File = $npmCommand; Arguments = @("run", "build", "--prefix", (Join-Path $ProjectRoot "frontend")) }
+        @{ File = $npmCommand; Arguments = @("run", "build", "--prefix", (Join-Path $ProjectRoot "frontend")) },
+        @{ File = $smokeCommand; Arguments = $smokeArguments }
     )
 
     foreach ($command in $commands) {

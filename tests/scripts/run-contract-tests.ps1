@@ -37,59 +37,6 @@ function Invoke-CapturedPowerShell {
     }
 }
 
-function Start-ContractProcess {
-    param(
-        [string]$FilePath,
-        [string[]]$ArgumentList,
-        [string]$WorkingDirectory
-    )
-
-    $quotedArguments = $ArgumentList | ForEach-Object {
-        if ($_ -match '[\s"]') {
-            '"' + $_.Replace('"', '\"') + '"'
-        }
-        else {
-            $_
-        }
-    }
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $FilePath
-    $startInfo.Arguments = $quotedArguments -join " "
-    $startInfo.WorkingDirectory = $WorkingDirectory
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
-        throw "Failed to start contract process: $FilePath"
-    }
-    return $process
-}
-
-function Wait-ForJsonResponse {
-    param(
-        [string]$Uri,
-        [string]$ExpectedJson,
-        [int]$Attempts = 100
-    )
-
-    foreach ($attempt in 1..$Attempts) {
-        try {
-            $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 2
-            if ($response.StatusCode -eq 200 -and $response.Content.Trim() -eq $ExpectedJson) {
-                return $true
-            }
-        }
-        catch {
-            if ($attempt -eq $Attempts) {
-                return $false
-            }
-        }
-        Start-Sleep -Milliseconds 200
-    }
-    return $false
-}
-
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("shieldchain-script-contract-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 
@@ -133,9 +80,11 @@ try {
     $productionScripts = @(
         (Join-Path $repositoryRoot "scripts\dev.ps1"),
         (Join-Path $repositoryRoot "scripts\test.ps1"),
-        (Join-Path $repositoryRoot "scripts\verify.ps1")
+        (Join-Path $repositoryRoot "scripts\verify.ps1"),
+        (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1")
     )
     $devScriptText = Get-Content -Raw -LiteralPath $productionScripts[0]
+    $smokeScriptText = Get-Content -Raw -LiteralPath $productionScripts[3]
     $allScriptText = Get-Content -Raw -LiteralPath $productionScripts | Out-String
     Assert-True ($allScriptText -notmatch "Invoke-Expression") "developer scripts do not use Invoke-Expression"
     foreach ($productionScript in $productionScripts) {
@@ -156,39 +105,28 @@ try {
         Assert-True (-not (Test-ScriptHasNoFileContentReads -Path $samplePath)) "AST safety rejects $($sample.Key)"
     }
     Assert-True ($devScriptText -match "127\.0\.0\.1" -and $devScriptText -match "8000" -and $devScriptText -match "5173") "dev binds the documented local ports"
+    Assert-True ($smokeScriptText -match "--strictPort" -and $smokeScriptText -match "http://127\.0\.0\.1:5173/api/v1") "smoke uses strict Vite and the frontend API origin"
+    Assert-True ($smokeScriptText -match "30000" -and $smokeScriptText -match "Stopwatch") "smoke uses bounded monotonic polling and migration waits"
+    Assert-True ($smokeScriptText -match '\$audit\.events' -and $smokeScriptText -match "request_id") "smoke checks the real audit events and request IDs"
 
     $smokeEnvironmentPath = Join-Path $repositoryRoot ".env"
-    $createdSmokeEnvironment = -not (Test-Path -LiteralPath $smokeEnvironmentPath)
-    $backendProcess = $null
-    $frontendProcess = $null
+    $environmentExistedBeforePortFixture = Test-Path -LiteralPath $smokeEnvironmentPath
+    $occupiedPort = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        8000
+    )
     try {
-        if ($createdSmokeEnvironment) {
-            Set-Content -LiteralPath $smokeEnvironmentPath -Value "DEEPSEEK_API_KEY="
-        }
-        $pythonPath = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
-        $nodeCommand = Get-Command node.exe -ErrorAction Stop
-        $viteEntry = Join-Path $repositoryRoot "frontend\node_modules\vite\bin\vite.js"
-        $backendProcess = Start-ContractProcess -FilePath $pythonPath -ArgumentList @(
-            "-m", "uvicorn", "shieldchain.main:create_app", "--factory",
-            "--host", "127.0.0.1", "--port", "8000"
-        ) -WorkingDirectory $repositoryRoot
-        $frontendProcess = Start-ContractProcess -FilePath $nodeCommand.Source -ArgumentList @(
-            $viteEntry, "--host", "127.0.0.1", "--port", "5173"
-        ) -WorkingDirectory (Join-Path $repositoryRoot "frontend")
-
-        $proxyReady = Wait-ForJsonResponse -Uri "http://127.0.0.1:5173/api/v1/health/live" -ExpectedJson '{"status":"ok"}'
-        Assert-True $proxyReady "frontend-origin /api smoke returns HTTP 200 with exact live JSON"
+        $occupiedPort.Start()
+        $occupiedResult = Invoke-CapturedPowerShell -Arguments @(
+            "-File", (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1")
+        )
+        Assert-True ($occupiedResult.ExitCode -ne 0) "smoke fails safely when port 8000 is occupied"
+        Assert-True ($occupiedResult.Output -match "Port 8000" -and $occupiedResult.Output -match "unknown process") "occupied-port failure is actionable"
+        Assert-True $occupiedPort.Server.IsBound "smoke never stops the controlled port owner"
+        Assert-True ((Test-Path -LiteralPath $smokeEnvironmentPath) -eq $environmentExistedBeforePortFixture) "occupied-port failure leaves .env existence unchanged"
     }
     finally {
-        foreach ($process in @($backendProcess, $frontendProcess)) {
-            if ($null -ne $process -and -not $process.HasExited) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                $process.WaitForExit(5000) | Out-Null
-            }
-        }
-        if ($createdSmokeEnvironment) {
-            Remove-Item -LiteralPath $smokeEnvironmentPath -Force -ErrorAction SilentlyContinue
-        }
+        $occupiedPort.Stop()
     }
 
     $wrapperRoot = Join-Path $fixtureRoot "wrappers"
@@ -212,6 +150,14 @@ exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $wrapperRoot "python.cmd") -Value $pythonWrapper
     Set-Content -LiteralPath (Join-Path $wrapperRoot "npm.cmd") -Value $npmWrapper
+    $smokeWrapper = @'
+@echo off
+if defined RUN_LIVE_DEEPSEEK_TEST exit /b 91
+echo smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="smoke" exit /b 42
+exit /b 0
+'@
+    Set-Content -LiteralPath (Join-Path $wrapperRoot "smoke.cmd") -Value $smokeWrapper
 
     $env:SHIELDCHAIN_CONTRACT_LOG = $callLog
     $env:RUN_LIVE_DEEPSEEK_TEST = "1"
@@ -231,7 +177,7 @@ exit /b 0
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($verifyResult.ExitCode -eq 0) "verify succeeds when every command succeeds"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck,vitest,build") "verify uses the required deterministic order"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck,vitest,build,smoke") "verify uses the required deterministic order with smoke last"
 
     Clear-Content -LiteralPath $callLog
     $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "typecheck"
@@ -242,6 +188,16 @@ exit /b 0
     )
     Assert-True ($failFastResult.ExitCode -eq 42) "verify returns the first failing command exit code"
     Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck") "verify stops immediately after the first failure"
+
+    Clear-Content -LiteralPath $callLog
+    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "smoke"
+    $smokeFailureResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
+        "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
+        "-ProjectRoot", $repositoryRoot
+    )
+    Assert-True ($smokeFailureResult.ExitCode -eq 42) "verify returns the smoke failure exit code"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck,vitest,build,smoke") "smoke failure occurs only after every earlier gate"
 
     $readme = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "README.md")
     $localDevelopment = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "docs\operations\local-development.md")
