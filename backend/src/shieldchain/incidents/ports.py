@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -17,6 +17,7 @@ from shieldchain.incidents.domain import (
     InvestigationStatus,
     PhishingScenarioState,
     RunMode,
+    StepStatus,
     ToolResult,
     VerificationResult,
 )
@@ -32,6 +33,13 @@ class InvestigationNotFound(RuntimeError):
     def __init__(self, run_id: UUID) -> None:
         self.run_id = run_id
         super().__init__(f"investigation not found: {run_id}")
+
+
+class InvalidInvestigationState(RuntimeError):
+    def __init__(self, run_id: UUID, status: InvestigationStatus) -> None:
+        self.run_id = run_id
+        self.status = status
+        super().__init__(f"invalid investigation state for {run_id}: {status.value}")
 
 
 class IncidentNotFound(RuntimeError):
@@ -89,6 +97,19 @@ class IncidentRepository(Protocol):
     def get_simulation(
         self, session: Session, simulation_id: UUID
     ) -> PhishingScenarioState | None: ...
+
+    def record_step(
+        self,
+        session: Session,
+        run_id: UUID,
+        *,
+        step_key: str,
+        status: StepStatus,
+        detail: Mapping[str, object],
+        error_code: str | None,
+        started_at: datetime,
+        completed_at: datetime | None,
+    ) -> None: ...
 
     def transition_run(
         self,

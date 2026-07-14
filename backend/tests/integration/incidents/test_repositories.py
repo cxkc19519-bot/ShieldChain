@@ -24,11 +24,16 @@ from shieldchain.incidents.domain import (
     PhishingScenarioState,
     RiskLevel,
     RunMode,
+    StepStatus,
     ToolCallStatus,
     ToolResult,
     VerificationResult,
 )
-from shieldchain.incidents.persistence import AuditEventRow, EvidenceRecordRow
+from shieldchain.incidents.persistence import (
+    AuditEventRow,
+    EvidenceRecordRow,
+    InvestigationStepRow,
+)
 from shieldchain.incidents.ports import (
     ActiveInvestigationExists,
     DuplicateEvidence,
@@ -151,6 +156,77 @@ def test_repository_implements_protocol(repository: SqlAlchemyIncidentRepository
     assert isinstance(repository, IncidentRepository)
     assert not hasattr(repository, "update_evidence")
     assert not hasattr(repository, "delete_evidence")
+
+
+def test_record_step_inserts_then_updates_the_same_row(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    started = NOW + timedelta(seconds=1)
+    repository.record_step(
+        session,
+        run.id,
+        step_key="collect",
+        status=StepStatus.RUNNING,
+        detail={"evidence_count": 0, "evidence_types": []},
+        error_code=None,
+        started_at=started,
+        completed_at=None,
+    )
+    repository.record_step(
+        session,
+        run.id,
+        step_key="collect",
+        status=StepStatus.SUCCEEDED,
+        detail={"evidence_count": 5, "evidence_types": ["alert"]},
+        error_code=None,
+        started_at=started,
+        completed_at=NOW + timedelta(seconds=2),
+    )
+
+    rows = tuple(
+        session.execute(
+            select(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run.id))
+        ).scalars()
+    )
+    assert len(rows) == 1
+    assert rows[0].status == "succeeded"
+    assert rows[0].detail_json == {
+        "evidence_count": 5,
+        "evidence_types": ["alert"],
+    }
+    assert rows[0].started_at == started.replace(tzinfo=None)
+    assert rows[0].completed_at == (NOW + timedelta(seconds=2)).replace(tzinfo=None)
+
+
+def test_record_step_only_flushes_and_leaves_rollback_to_caller(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    session.commit()
+
+    repository.record_step(
+        session,
+        run.id,
+        step_key="analyze",
+        status=StepStatus.FAILED,
+        detail={"error_code": "workflow_step_failed"},
+        error_code="workflow_step_failed",
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    session.rollback()
+
+    assert (
+        session.execute(
+            select(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run.id))
+        ).scalar_one_or_none()
+        is None
+    )
 
 
 def test_sqlite_engine_enables_foreign_keys(session: Session) -> None:

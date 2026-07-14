@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from ipaddress import IPv4Address
@@ -21,6 +21,7 @@ from shieldchain.incidents.domain import (
     InvestigationStatus,
     PhishingScenarioState,
     RunMode,
+    StepStatus,
     ToolCallStatus,
     ToolResult,
     VerificationResult,
@@ -33,6 +34,7 @@ from shieldchain.incidents.persistence import (
     EvidenceRecordRow,
     IncidentRow,
     InvestigationRunRow,
+    InvestigationStepRow,
     SimulationInstanceRow,
     SimulationToolCallRow,
 )
@@ -275,6 +277,45 @@ class SqlAlchemyIncidentRepository:
             created_at=_utc(simulation.created_at),
             updated_at=_utc(simulation.updated_at),
         )
+
+    def record_step(
+        self,
+        session: Session,
+        run_id: UUID,
+        *,
+        step_key: str,
+        status: StepStatus,
+        detail: Mapping[str, object],
+        error_code: str | None,
+        started_at: datetime,
+        completed_at: datetime | None,
+    ) -> None:
+        self._require_run(session, run_id)
+        row = session.execute(
+            select(InvestigationStepRow).where(
+                InvestigationStepRow.run_id == str(run_id),
+                InvestigationStepRow.step_key == step_key,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = InvestigationStepRow(
+                id=str(uuid4()),
+                run_id=str(run_id),
+                step_key=step_key,
+                status=status.value,
+                detail_json=dict(detail),
+                error_code=error_code,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            session.add(row)
+        else:
+            row.status = status.value
+            row.detail_json = dict(detail)
+            row.error_code = error_code
+            row.started_at = started_at
+            row.completed_at = completed_at
+        session.flush()
 
     def transition_run(
         self,
