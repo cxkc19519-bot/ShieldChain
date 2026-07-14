@@ -108,6 +108,15 @@ try {
     Assert-True ($smokeScriptText -match "--strictPort" -and $smokeScriptText -match "http://127\.0\.0\.1:5173/api/v1") "smoke uses strict Vite and the frontend API origin"
     Assert-True ($smokeScriptText -match "30000" -and $smokeScriptText -match "Stopwatch") "smoke uses bounded monotonic polling and migration waits"
     Assert-True ($smokeScriptText -match '\$audit\.events' -and $smokeScriptText -match "request_id") "smoke checks the real audit events and request IDs"
+    Assert-True ($smokeScriptText -notmatch '(?i)\.env' -and $smokeScriptText -notmatch 'environmentPath|createdEnvironment') "smoke never names or touches the repository dotenv file"
+    $temporaryWorkingDirectoryStarts = [regex]::Matches(
+        $smokeScriptText,
+        '(?s)Start-TrackedProcess.{0,500}-WorkingDirectory\s+\$temporaryRoot'
+    ).Count
+    Assert-True ($temporaryWorkingDirectoryStarts -ge 2) "migration and backend start from the isolated temporary working directory"
+    Assert-True ($smokeScriptText -notmatch 'ReadToEnd\s*\(' -and $smokeScriptText -notmatch 'RedirectStandard(Output|Error)\s*=\s*\$true') "tracked processes cannot block on undrained redirected pipes"
+    Assert-True ($smokeScriptText -match '\$trackedProcesses' -and $smokeScriptText -match '(?s)\.Start\(\).{0,500}\$script:trackedProcesses\.Add') "started migration and services immediately join the top-level tracked collection"
+    Assert-True ($smokeScriptText -notmatch '(?s)finally\s*\{\s*\$Process\.Dispose\(\)\s*\}') "tracked processes are not disposed before bounded exit confirmation"
 
     $smokeEnvironmentPath = Join-Path $repositoryRoot ".env"
     $environmentExistedBeforePortFixture = Test-Path -LiteralPath $smokeEnvironmentPath

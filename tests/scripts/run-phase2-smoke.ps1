@@ -7,15 +7,13 @@ Set-StrictMode -Version 2.0
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $pythonPath = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
 $viteEntry = Join-Path $repositoryRoot "frontend\node_modules\vite\bin\vite.js"
-$environmentPath = Join-Path $repositoryRoot ".env"
 $backendProcess = $null
 $frontendProcess = $null
 $httpClient = $null
 $temporaryRoot = $null
-$createdEnvironment = $false
 $failure = $null
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
-$processDiagnostics = @{}
+$trackedProcesses = [System.Collections.Generic.List[object]]::new()
 $preservedEnvironment = @{}
 foreach ($name in @("DATABASE_URL", "ENVIRONMENT", "RUN_LIVE_DEEPSEEK_TEST")) {
     $preservedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
@@ -58,51 +56,38 @@ function Start-TrackedProcess {
         [string]$FilePath,
         [string[]]$Arguments,
         [string]$WorkingDirectory,
-        [string]$LogPrefix
+        [string]$Label
     )
 
-    $stdoutPath = Join-Path $temporaryRoot ($LogPrefix + ".stdout.log")
-    $stderrPath = Join-Path $temporaryRoot ($LogPrefix + ".stderr.log")
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.Arguments = ConvertTo-ArgumentString -Arguments $Arguments
     $startInfo.WorkingDirectory = $WorkingDirectory
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     if (-not $process.Start()) {
         $process.Dispose()
         throw "Failed to start tracked process: $FilePath"
     }
-    Add-Member -InputObject $process -NotePropertyName SmokeStdoutPath -NotePropertyValue $stdoutPath
-    Add-Member -InputObject $process -NotePropertyName SmokeStderrPath -NotePropertyValue $stderrPath
+    $script:trackedProcesses.Add([pscustomobject]@{ Process = $process; Label = $Label })
     return $process
 }
 
-function Save-TrackedProcessLogs {
-    param([System.Diagnostics.Process]$Process, [string]$Label)
+function Dispose-ExitedTrackedProcess {
+    param([System.Diagnostics.Process]$Process)
 
-    try {
-        $stdout = $Process.StandardOutput.ReadToEnd()
-        $stderr = $Process.StandardError.ReadToEnd()
-        [System.IO.File]::WriteAllText(
-            [string]$Process.SmokeStdoutPath,
-            $stdout,
-            [System.Text.Encoding]::UTF8
-        )
-        [System.IO.File]::WriteAllText(
-            [string]$Process.SmokeStderrPath,
-            $stderr,
-            [System.Text.Encoding]::UTF8
-        )
-        $script:processDiagnostics[$Label] = "STDOUT:`n$stdout`nSTDERR:`n$stderr"
+    $Process.Refresh()
+    if (-not $Process.HasExited) { return $false }
+    for ($index = $trackedProcesses.Count - 1; $index -ge 0; $index--) {
+        if ([object]::ReferenceEquals($trackedProcesses[$index].Process, $Process)) {
+            $trackedProcesses.RemoveAt($index)
+            break
+        }
     }
-    catch {
-        $cleanupFailures.Add("Could not persist tracked process logs: $($_.Exception.Message)")
-    }
+    $Process.Dispose()
+    return $true
 }
 
 function Invoke-JsonRequest {
@@ -184,13 +169,13 @@ function Stop-TrackedProcess {
                 $cleanupFailures.Add("$Label process $($Process.Id) did not exit within 5 seconds.")
             }
         }
-        if ($Process.HasExited) { Save-TrackedProcessLogs -Process $Process -Label $Label }
     }
     catch {
         $cleanupFailures.Add("Could not stop tracked $Label process $($Process.Id): $($_.Exception.Message)")
     }
     finally {
-        $Process.Dispose()
+        try { [void](Dispose-ExitedTrackedProcess -Process $Process) }
+        catch { $cleanupFailures.Add("Could not dispose exited $Label process: $($_.Exception.Message)") }
     }
 }
 
@@ -216,35 +201,32 @@ try {
     $env:ENVIRONMENT = "development"
     Remove-Item Env:\RUN_LIVE_DEEPSEEK_TEST -ErrorAction SilentlyContinue
 
-    if (-not (Test-Path -LiteralPath $environmentPath)) {
-        Set-Content -LiteralPath $environmentPath -Value "DEEPSEEK_API_KEY=" -Encoding Ascii
-        $createdEnvironment = $true
-    }
-
     $migration = Start-TrackedProcess -FilePath $pythonPath -Arguments @(
         "-m", "alembic", "-c", (Join-Path $repositoryRoot "backend\alembic.ini"), "upgrade", "head"
-    ) -WorkingDirectory $repositoryRoot -LogPrefix "migration"
+    ) -WorkingDirectory $temporaryRoot -Label "migration"
     if (-not $migration.WaitForExit(30000)) {
         Stop-Process -Id $migration.Id -Force -ErrorAction SilentlyContinue
-        $migration.WaitForExit(5000) | Out-Null
-        Save-TrackedProcessLogs -Process $migration -Label "migration"
-        $migration.Dispose()
+        if (-not $migration.WaitForExit(5000)) {
+            $cleanupFailures.Add("Migration process $($migration.Id) did not exit within 5 seconds after timeout stop.")
+        }
+        else {
+            [void](Dispose-ExitedTrackedProcess -Process $migration)
+        }
         throw "Alembic upgrade did not finish within 30 seconds."
     }
     $migrationExitCode = $migration.ExitCode
-    Save-TrackedProcessLogs -Process $migration -Label "migration"
-    $migration.Dispose()
+    [void](Dispose-ExitedTrackedProcess -Process $migration)
     if ($migrationExitCode -ne 0) {
-        throw "Alembic upgrade failed with exit code $migrationExitCode. Logs are in the temporary smoke directory."
+        throw "Alembic upgrade failed with exit code $migrationExitCode; see inherited process output above."
     }
 
     $backendProcess = Start-TrackedProcess -FilePath $pythonPath -Arguments @(
         "-m", "uvicorn", "shieldchain.main:create_app", "--factory",
         "--host", "127.0.0.1", "--port", "8000"
-    ) -WorkingDirectory $repositoryRoot -LogPrefix "backend"
+    ) -WorkingDirectory $temporaryRoot -Label "backend"
     $frontendProcess = Start-TrackedProcess -FilePath $nodeCommand.Source -Arguments @(
         $viteEntry, "--host", "127.0.0.1", "--port", "5173", "--strictPort"
-    ) -WorkingDirectory (Join-Path $repositoryRoot "frontend") -LogPrefix "frontend"
+    ) -WorkingDirectory (Join-Path $repositoryRoot "frontend") -Label "frontend"
 
     Add-Type -AssemblyName System.Net.Http
     $httpClient = [System.Net.Http.HttpClient]::new()
@@ -338,12 +320,10 @@ catch {
 }
 finally {
     if ($null -ne $httpClient) { $httpClient.Dispose() }
-    Stop-TrackedProcess -Process $frontendProcess -Label "frontend"
-    Stop-TrackedProcess -Process $backendProcess -Label "backend"
-
-    if ($createdEnvironment) {
-        try { Remove-Item -LiteralPath $environmentPath -Force -ErrorAction Stop }
-        catch { $cleanupFailures.Add("Could not remove the smoke-created .env: $($_.Exception.Message)") }
+    $trackedSnapshot = @($trackedProcesses.ToArray())
+    [array]::Reverse($trackedSnapshot)
+    foreach ($tracked in $trackedSnapshot) {
+        Stop-TrackedProcess -Process $tracked.Process -Label $tracked.Label
     }
     if ($temporaryRoot -and (Test-Path -LiteralPath $temporaryRoot)) {
         try { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction Stop }
@@ -380,12 +360,6 @@ if ($cleanupFailures.Count -gt 0) {
     exit 1
 }
 if ($null -ne $failure) {
-    foreach ($label in @("migration", "backend", "frontend")) {
-        if ($processDiagnostics.ContainsKey($label)) {
-            Write-Host "--- $label diagnostic ---"
-            Write-Host $processDiagnostics[$label]
-        }
-    }
     Write-Error $failure.Exception.Message
     exit 1
 }

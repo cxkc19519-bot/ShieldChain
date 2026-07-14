@@ -98,7 +98,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 
 `test.ps1` 依次运行后端 Pytest 和前端 Vitest。独立 smoke 使用仓库已有 `.venv` 和 `frontend\node_modules`，在系统临时目录创建唯一 SQLite 和日志，运行 Alembic，启动真实后端及带 `--strictPort` 的 Vite，并只经 5173 执行 readiness/reset/start/poll/incident/audit；轮询使用 30 秒单调截止时间。`verify.ps1` 严格按 Ruff、Pytest、ESLint、TypeScript、Vitest、前端生产构建、阶段 2 smoke 的顺序执行，并在首个失败处停止且返回该退出码。脚本会移除继承的 `RUN_LIVE_DEEPSEEK_TEST`，因此不会意外产生付费调用。
 
-smoke 不读取或覆盖已有 `.env`。若 `.env` 不存在，它只创建一个空密钥文件并在 `finally` 删除；它还会恢复调用者环境、停止仅由自己直接跟踪的 PID、删除自己的临时目录，并确认 8000/5173 不再监听。
+smoke 完全不命名、读取、检查、创建、覆盖或删除仓库 `.env`。Alembic 和 FastAPI 后端都从唯一的系统临时工作目录启动，仅使用绝对仓库路径与子进程环境覆盖；Vite 继续从 `frontend` 工作目录启动。脚本会恢复调用者环境、停止仅由自己统一跟踪的 PID、删除自己的临时目录，并确认 8000/5173 不再监听。
 
 ## 7. 可选实时 DeepSeek 冒烟测试
 
