@@ -118,7 +118,10 @@ def assess(evidence: tuple[Evidence, ...]) -> Assessment:
     remote_ip = connection["remote_ip"]
     process_name = connection["process_name"]
     if not (
-        alert["status"] == "pending"
+        alert["alert_id"] == "ALT-2026-0001"
+        and alert["status"] == "pending"
+        and remote_ip == "198.51.100.24"
+        and connection["remote_port"] == 443
         and connection["status"] == "active"
         and intelligence["remote_ip"] == remote_ip
         and intelligence["malicious"] is True

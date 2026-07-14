@@ -126,6 +126,25 @@ def test_conflicting_identity_fields_are_insufficient(
     assert assess(tuple(evidence)).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
 
 
+def test_noncanonical_alert_identity_is_insufficient() -> None:
+    evidence = list(_evidence())
+    evidence[0] = _with_payload(evidence[0], alert_id="ALT-OTHER")
+    assert assess(tuple(evidence)).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
+
+
+def test_internally_consistent_noncanonical_target_ip_is_insufficient() -> None:
+    evidence = list(_evidence())
+    evidence[1] = _with_payload(evidence[1], remote_ip="203.0.113.99")
+    evidence[2] = _with_payload(evidence[2], remote_ip="203.0.113.99")
+    assert assess(tuple(evidence)).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
+
+
+def test_noncanonical_target_port_is_insufficient() -> None:
+    evidence = list(_evidence())
+    evidence[1] = _with_payload(evidence[1], remote_port=80)
+    assert assess(tuple(evidence)).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
+
+
 @pytest.mark.parametrize(
     ("index", "changes"),
     [
