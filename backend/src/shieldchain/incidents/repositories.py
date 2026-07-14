@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from shieldchain.incidents.domain import (
+    ACTIVE_INVESTIGATION_STATUSES,
     Assessment,
     AuditEvent,
     BlockOutcome,
@@ -28,6 +29,7 @@ from shieldchain.incidents.domain import (
     is_terminal,
     transition,
 )
+from shieldchain.incidents.integrity import verify_evidence_integrity
 from shieldchain.incidents.persistence import (
     ACTIVE_VALUES,
     AuditEventRow,
@@ -42,19 +44,14 @@ from shieldchain.incidents.ports import (
     ActiveInvestigationExists,
     DuplicateEvidence,
     DuplicateIdempotencyKey,
+    EvidenceIntegrityMismatch,
+    IdempotencyConflict,
     IncidentNotFound,
     InvalidInvestigationState,
     InvestigationNotFound,
     RunSimulationMismatch,
     ScenarioFactory,
     SimulationNotFound,
-)
-
-_RECOVERABLE_STATUSES = (
-    InvestigationStatus.COLLECTING,
-    InvestigationStatus.ANALYZING,
-    InvestigationStatus.EXECUTING,
-    InvestigationStatus.VERIFYING,
 )
 
 
@@ -367,6 +364,9 @@ class SqlAlchemyIncidentRepository:
         run = self._require_run(session, run_id)
         if not evidence:
             return
+        for item in evidence:
+            if not verify_evidence_integrity(item):
+                raise EvidenceIntegrityMismatch(item.id)
         duplicate = self._find_duplicate_evidence(session, run_id, evidence)
         if duplicate is not None:
             raise DuplicateEvidence(duplicate)
@@ -463,12 +463,18 @@ class SqlAlchemyIncidentRepository:
     def get_tool_result(
         self, session: Session, idempotency_key: str
     ) -> ToolResult | None:
-        row = session.execute(
+        row = self._get_tool_call_row(session, idempotency_key)
+        return _tool_result_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _get_tool_call_row(
+        session: Session, idempotency_key: str
+    ) -> SimulationToolCallRow | None:
+        return session.execute(
             select(SimulationToolCallRow).where(
                 SimulationToolCallRow.idempotency_key == idempotency_key
             )
         ).scalar_one_or_none()
-        return _tool_result_from_row(row) if row is not None else None
 
     def apply_tool_outcome(
         self,
@@ -479,15 +485,26 @@ class SqlAlchemyIncidentRepository:
         request_id: str,
         now: datetime,
     ) -> ToolResult:
-        stored = self.get_tool_result(session, outcome.result.idempotency_key)
-        if stored is not None:
-            return stored
         run = self._require_run(session, run_id)
         if (
             outcome.state.simulation_id != UUID(run.simulation_instance_id)
             or outcome.state.incident_id != UUID(run.incident_id)
         ):
             raise RunSimulationMismatch(run_id, outcome.state.simulation_id)
+        stored_row = self._get_tool_call_row(
+            session, outcome.result.idempotency_key
+        )
+        if stored_row is not None:
+            operation_matches = (
+                stored_row.run_id == str(run_id)
+                and stored_row.simulation_instance_id
+                == str(outcome.state.simulation_id)
+                and stored_row.tool_name == outcome.result.tool_name
+                and stored_row.target == outcome.result.target
+            )
+            if not operation_matches:
+                raise IdempotencyConflict(outcome.result.idempotency_key)
+            return _tool_result_from_row(stored_row)
         simulation = session.execute(
             select(SimulationInstanceRow)
             .where(SimulationInstanceRow.id == str(outcome.state.simulation_id))
@@ -612,7 +629,7 @@ class SqlAlchemyIncidentRepository:
                 select(InvestigationRunRow)
                 .where(
                     InvestigationRunRow.status.in_(
-                        [status.value for status in _RECOVERABLE_STATUSES]
+                        [status.value for status in ACTIVE_INVESTIGATION_STATUSES]
                     )
                 )
                 .with_for_update()

@@ -29,6 +29,7 @@ from shieldchain.incidents.domain import (
     ToolResult,
     VerificationResult,
 )
+from shieldchain.incidents.integrity import create_evidence
 from shieldchain.incidents.persistence import (
     AuditEventRow,
     EvidenceRecordRow,
@@ -38,6 +39,8 @@ from shieldchain.incidents.ports import (
     ActiveInvestigationExists,
     DuplicateEvidence,
     DuplicateIdempotencyKey,
+    EvidenceIntegrityMismatch,
+    IdempotencyConflict,
     IncidentRepository,
     InvalidInvestigationState,
     RunSimulationMismatch,
@@ -119,14 +122,12 @@ def _create_run(
 
 
 def _evidence(evidence_id: int = 301, digest: str = "a" * 64) -> Evidence:
-    return Evidence(
-        id=UUID(int=evidence_id),
+    return create_evidence(
         evidence_type="network_connection",
         source="simulation",
         observed_at=NOW,
-        summary="sensitive evidence summary",
-        raw_reference="memory://secret-packet",
-        integrity_sha256=digest,
+        summary=f"sensitive evidence summary {digest}",
+        raw_reference=f"memory://secret-packet/{evidence_id}",
         confidence=0.95,
         confirmed=True,
         payload={"remote_ip": "203.0.113.44", "remote_port": 443, "active": True},
@@ -529,32 +530,19 @@ def test_duplicate_evidence_rolls_back_savepoint_and_keeps_session_usable(
     assert repository.get_run(session, run.id).status is InvestigationStatus.COLLECTING
 
 
-@pytest.mark.parametrize("conflict", ["batch_id", "batch_digest", "stored_id", "stored_digest"])
 def test_duplicate_evidence_reports_the_actual_offending_uuid(
-    conflict: str,
     session: Session,
     repository: SqlAlchemyIncidentRepository,
     simulation: PhishingScenarioState,
 ) -> None:
     run = _create_run(session, repository, simulation.simulation_id)
     first = _evidence(501, "d" * 64)
-    if conflict.startswith("stored"):
-        repository.append_evidence(session, run.id, [first], request_id="seed-evidence")
-        session.commit()
-
-    expected = UUID(int=501 if conflict in {"batch_id", "stored_id"} else 502)
-    batches = {
-        "batch_id": [first, replace(first, integrity_sha256="e" * 64)],
-        "batch_digest": [first, _evidence(502, "d" * 64)],
-        "stored_id": [_evidence(503, "f" * 64), replace(first, integrity_sha256="0" * 64)],
-        "stored_digest": [_evidence(503, "f" * 64), _evidence(502, "d" * 64)],
-    }
     with pytest.raises(DuplicateEvidence) as caught:
         repository.append_evidence(
-            session, run.id, batches[conflict], request_id=f"duplicate-{conflict}"
+            session, run.id, [first, first], request_id="duplicate-batch"
         )
 
-    assert caught.value.evidence_id == expected
+    assert caught.value.evidence_id == first.id
 
 
 def test_cross_run_id_conflict_does_not_create_a_false_digest_conflict(
@@ -570,13 +558,11 @@ def test_cross_run_id_conflict_does_not_create_a_false_digest_conflict(
     )
     session.commit()
 
-    evidence_y_same_digest = _evidence(602, "6" * 64)
-    evidence_x_new_digest = _evidence(601, "7" * 64)
     with pytest.raises(DuplicateEvidence) as caught:
         repository.append_evidence(
             session,
             run_b.id,
-            [evidence_y_same_digest, evidence_x_new_digest],
+            [evidence_x],
             request_id="evidence-run-b",
         )
 
@@ -632,6 +618,25 @@ def test_evidence_structured_payload_is_persisted(
         select(EvidenceRecordRow).where(EvidenceRecordRow.id == str(evidence.id))
     ).scalar_one()
     assert stored.payload_json == dict(evidence.payload)
+
+
+def test_mismatched_evidence_is_rejected_without_evidence_or_audit_side_effects(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    session.commit()
+    audit_before = repository.list_audit(session, run.incident_id)
+    mismatched = replace(_evidence(), summary="tampered after digest")
+
+    with pytest.raises(EvidenceIntegrityMismatch):
+        repository.append_evidence(
+            session, run.id, [mismatched], request_id="tampered-evidence"
+        )
+
+    assert session.scalar(select(EvidenceRecordRow)) is None
+    assert repository.list_audit(session, run.incident_id) == audit_before
 
 
 def test_assessment_tool_and_verification_are_persisted_and_audited(
@@ -705,6 +710,57 @@ def test_tool_outcome_is_idempotent_and_does_not_add_a_second_audit(
     ) == 1
 
 
+def test_idempotency_key_cannot_be_reused_by_another_run(
+    session: Session, repository: SqlAlchemyIncidentRepository
+) -> None:
+    state_a = repository.reset_phishing_scenario(session, now=NOW)
+    state_b = repository.reset_phishing_scenario(session, now=NOW + timedelta(minutes=1))
+    run_a = _create_run(session, repository, state_a.simulation_id, request_id="run-a")
+    run_b = _create_run(session, repository, state_b.simulation_id, request_id="run-b")
+    first = _tool_outcome(state_a, "shared-key")
+    repository.apply_tool_outcome(
+        session, run_a.id, first, request_id="tool-a", now=NOW
+    )
+    session.commit()
+    audit_before = repository.list_audit(session, run_b.incident_id)
+
+    with pytest.raises(IdempotencyConflict):
+        repository.apply_tool_outcome(
+            session,
+            run_b.id,
+            _tool_outcome(state_b, "shared-key"),
+            request_id="tool-b",
+            now=NOW,
+        )
+
+    assert repository.get_simulation(session, state_b.simulation_id) == state_b
+    assert repository.list_audit(session, run_b.incident_id) == audit_before
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"target": "203.0.113.99"}, {"tool_name": "different_tool"}],
+)
+def test_idempotency_key_rejects_a_different_operation_on_the_same_run(
+    change: dict[str, str],
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    first = _tool_outcome(simulation, "same-run-key")
+    repository.apply_tool_outcome(
+        session, run.id, first, request_id="first-tool", now=NOW
+    )
+    session.commit()
+    changed = replace(first, result=replace(first.result, **change))
+
+    with pytest.raises(IdempotencyConflict):
+        repository.apply_tool_outcome(
+            session, run.id, changed, request_id="changed-tool", now=NOW
+        )
+
+
 @pytest.mark.parametrize(
     "mismatched_state",
     [
@@ -749,14 +805,14 @@ def test_concurrent_tool_key_collision_is_safe_and_loser_session_is_usable(
         setup_session.commit()
     outcome = _tool_outcome(state, "concurrent-tool-key")
     query_barrier = Barrier(2)
-    original_get = repository.get_tool_result
+    original_get = repository._get_tool_call_row
 
     def synchronized_get(worker_session: Session, key: str):
         result = original_get(worker_session, key)
         query_barrier.wait()
         return result
 
-    monkeypatch.setattr(repository, "get_tool_result", synchronized_get)
+    monkeypatch.setattr(repository, "_get_tool_call_row", synchronized_get)
 
     def attempt(request_id: str) -> str:
         with session_factory() as worker_session:
@@ -836,7 +892,7 @@ def test_mappers_restore_naive_sqlite_datetimes_as_aware_utc(
     assert all(value.tzinfo is UTC for value in values)
 
 
-def test_recovery_interrupts_exactly_four_statuses_and_appends_ordered_audits(
+def test_recovery_interrupts_all_six_active_statuses_and_appends_ordered_audits(
     session: Session, repository: SqlAlchemyIncidentRepository
 ) -> None:
     targets = [
@@ -884,15 +940,8 @@ def test_recovery_interrupts_exactly_four_statuses_and_appends_ordered_audits(
     )
     session.commit()
 
-    assert count == 4
-    expected = {
-        InvestigationStatus.PENDING: InvestigationStatus.PENDING,
-        InvestigationStatus.COLLECTING: InvestigationStatus.INTERRUPTED,
-        InvestigationStatus.ANALYZING: InvestigationStatus.INTERRUPTED,
-        InvestigationStatus.ACTION_PLANNED: InvestigationStatus.ACTION_PLANNED,
-        InvestigationStatus.EXECUTING: InvestigationStatus.INTERRUPTED,
-        InvestigationStatus.VERIFYING: InvestigationStatus.INTERRUPTED,
-    }
+    assert count == 6
+    expected = dict.fromkeys(targets, InvestigationStatus.INTERRUPTED)
     for original, run in zip(targets, runs, strict=True):
         restored = repository.get_run(session, run.id)
         assert restored.status is expected[original]
