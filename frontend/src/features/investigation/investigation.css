@@ -1,0 +1,97 @@
+.investigation-page {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.investigation-page h2,
+.investigation-page h3,
+.investigation-page p {
+  margin-top: 0;
+}
+
+.simulation-badge,
+.run-status {
+  width: fit-content;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: 700;
+}
+
+.run-status--closed {
+  color: var(--color-status-healthy);
+  background: var(--color-status-healthy-bg);
+}
+
+.run-status--failed,
+.run-status--interrupted,
+.investigation-error {
+  color: var(--color-danger);
+  background: var(--color-status-unavailable-bg);
+}
+
+.investigation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.investigation-controls button,
+.investigation-controls select {
+  min-height: 2.6rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: white;
+}
+
+.investigation-controls button {
+  color: white;
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  cursor: pointer;
+}
+
+.investigation-controls :disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.investigation-error {
+  padding: 0.8rem;
+  border-radius: 0.55rem;
+}
+
+.investigation-result,
+.investigation-result section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.detail-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-list li {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.65rem;
+}
+
+.investigation-page dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+}
+
+.investigation-page dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

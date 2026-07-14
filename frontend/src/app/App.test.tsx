@@ -91,7 +91,7 @@ describe('dashboard health', () => {
 })
 
 describe('future routes', () => {
-  it.each(['/events', '/agents', '/knowledge', '/response', '/reports'])(
+  it.each(['/agents', '/knowledge', '/response', '/reports'])(
     'marks %s as not implemented',
     (path) => {
       renderRoute(path)
@@ -101,4 +101,12 @@ describe('future routes', () => {
       expect(screen.queryByRole('button')).not.toBeInTheDocument()
     },
   )
+
+  it('renders the investigation page at /events', () => {
+    renderRoute('/events')
+
+    expect(screen.getByRole('heading', { name: '浜嬩欢璋冩煡' })).toBeVisible()
+    expect(screen.getByText('妯℃嫙鐜')).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
 })
