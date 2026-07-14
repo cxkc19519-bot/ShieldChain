@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta, timezone
 from ipaddress import IPv4Address
+from types import MappingProxyType
 from uuid import UUID, uuid4
 
 import pytest
@@ -43,6 +44,7 @@ def make_evidence(**changes: object) -> Evidence:
         "integrity_sha256": "a" * 64,
         "confidence": 0.95,
         "confirmed": True,
+        "payload": {"remote_ip": "203.0.113.7", "remote_port": 443},
     }
     values.update(changes)
     return Evidence(**values)  # type: ignore[arg-type]
@@ -208,6 +210,41 @@ def test_evidence_is_immutable() -> None:
     evidence = make_evidence()
     with pytest.raises(FrozenInstanceError):
         evidence.summary = "changed"
+
+
+def test_evidence_payload_is_copied_and_immutable() -> None:
+    payload = {"remote_ip": "203.0.113.7"}
+    evidence = make_evidence(payload=payload)
+    payload["remote_ip"] = "192.0.2.1"
+
+    assert isinstance(evidence.payload, MappingProxyType)
+    assert evidence.payload == {"remote_ip": "203.0.113.7"}
+    with pytest.raises(TypeError):
+        evidence.payload["remote_ip"] = "192.0.2.1"
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_evidence_rejects_empty_payload_keys(key: str) -> None:
+    with pytest.raises(ValueError, match="payload keys must not be empty"):
+        make_evidence(payload={key: "value"})
+
+
+@pytest.mark.parametrize("value", [[], {}, object()])
+def test_evidence_rejects_non_scalar_payload_values(value: object) -> None:
+    with pytest.raises(TypeError, match="payload values must be scalar"):
+        make_evidence(payload={"field": value})
+
+
+def test_evidence_accepts_all_scalar_payload_values() -> None:
+    payload = {
+        "text": "value",
+        "integer": 443,
+        "decimal": 0.98,
+        "flag": True,
+        "absent": None,
+    }
+
+    assert make_evidence(payload=payload).payload == payload
 
 
 @pytest.mark.parametrize("field", ["evidence_type", "source", "summary", "raw_reference"])

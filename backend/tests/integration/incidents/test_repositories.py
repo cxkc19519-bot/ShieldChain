@@ -28,7 +28,7 @@ from shieldchain.incidents.domain import (
     ToolResult,
     VerificationResult,
 )
-from shieldchain.incidents.persistence import AuditEventRow
+from shieldchain.incidents.persistence import AuditEventRow, EvidenceRecordRow
 from shieldchain.incidents.ports import (
     ActiveInvestigationExists,
     DuplicateEvidence,
@@ -123,6 +123,7 @@ def _evidence(evidence_id: int = 301, digest: str = "a" * 64) -> Evidence:
         integrity_sha256=digest,
         confidence=0.95,
         confirmed=True,
+        payload={"remote_ip": "203.0.113.44", "remote_port": 443, "active": True},
     )
 
 
@@ -483,6 +484,22 @@ def test_evidence_audit_contains_only_ids_and_count(
     assert event.payload == {"evidence_ids": [str(evidence.id)], "count": 1}
     assert "sensitive" not in str(event.payload)
     assert "secret-packet" not in str(event.payload)
+
+
+def test_evidence_structured_payload_is_persisted(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    evidence = _evidence()
+    repository.append_evidence(session, run.id, [evidence], request_id="req-evidence")
+    session.commit()
+
+    stored = session.execute(
+        select(EvidenceRecordRow).where(EvidenceRecordRow.id == str(evidence.id))
+    ).scalar_one()
+    assert stored.payload_json == dict(evidence.payload)
 
 
 def test_assessment_tool_and_verification_are_persisted_and_audited(

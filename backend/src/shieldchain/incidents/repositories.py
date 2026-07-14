@@ -331,7 +331,7 @@ class SqlAlchemyIncidentRepository:
                 integrity_sha256=item.integrity_sha256,
                 confidence=item.confidence,
                 confirmed=item.confirmed,
-                payload_json={},
+                payload_json=dict(item.payload),
                 created_at=item.observed_at,
             )
             for item in evidence

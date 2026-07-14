@@ -8,6 +8,8 @@ from types import MappingProxyType
 from typing import Literal
 from uuid import UUID
 
+EvidenceScalar = str | int | float | bool | None
+
 
 class InvestigationStatus(StrEnum):
     PENDING = "pending"
@@ -168,6 +170,7 @@ class Evidence:
     integrity_sha256: str
     confidence: float
     confirmed: bool
+    payload: Mapping[str, EvidenceScalar]
 
     def __post_init__(self) -> None:
         _require_uuid(self.id, "id")
@@ -178,6 +181,13 @@ class Evidence:
             raise ValueError("integrity_sha256 must be 64 lowercase hexadecimal characters")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
+        copied_payload = dict(self.payload)
+        for key, value in copied_payload.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("payload keys must not be empty")
+            if value is not None and not isinstance(value, (str, int, float, bool)):
+                raise TypeError("payload values must be scalar")
+        object.__setattr__(self, "payload", MappingProxyType(copied_payload))
 
 
 @dataclass(frozen=True, slots=True)
