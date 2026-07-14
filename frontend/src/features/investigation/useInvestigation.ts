@@ -13,7 +13,7 @@ import type {
 const TERMINAL = new Set<InvestigationStatus>(['closed', 'failed', 'needs_review', 'interrupted'])
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : '璇锋眰澶辫触'
+  return error instanceof Error ? error.message : '请求失败'
 }
 
 export interface InvestigationState {
@@ -30,12 +30,14 @@ export interface InvestigationState {
 
 export function useInvestigation(): InvestigationState {
   const [scenario, setScenario] = useState<ResetSimulationResponse | null>(null)
+  const [scenarioFresh, setScenarioFresh] = useState(false)
   const [run, setRun] = useState<InvestigationResponse | null>(null)
   const [incident, setIncident] = useState<IncidentResponse | null>(null)
   const [audit, setAudit] = useState<AuditResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const actionController = useRef<AbortController | null>(null)
+  const cancelPolling = useRef<() => void>(() => undefined)
 
   const cancelAction = useCallback(() => {
     actionController.current?.abort()
@@ -44,6 +46,8 @@ export function useInvestigation(): InvestigationState {
 
   const reset = useCallback(async () => {
     cancelAction()
+    cancelPolling.current()
+    setScenarioFresh(false)
     setRun(null)
     setIncident(null)
     setAudit(null)
@@ -53,7 +57,10 @@ export function useInvestigation(): InvestigationState {
     actionController.current = controller
     try {
       const next = await resetPhishingScenario(controller.signal)
-      if (!controller.signal.aborted) setScenario(next)
+      if (!controller.signal.aborted) {
+        setScenario(next)
+        setScenarioFresh(true)
+      }
     } catch (failure) {
       if (!controller.signal.aborted) setError(message(failure))
     } finally {
@@ -69,11 +76,12 @@ export function useInvestigation(): InvestigationState {
     const controller = new AbortController()
     actionController.current = controller
     try {
-      let loaded = scenario
+      let loaded = scenarioFresh ? scenario : null
       if (!loaded) {
         loaded = await resetPhishingScenario(controller.signal)
         if (controller.signal.aborted) return
         setScenario(loaded)
+        setScenarioFresh(true)
       }
       const next = await startInvestigation(loaded.simulation.id, mode, controller.signal)
       if (!controller.signal.aborted) setRun(next)
@@ -83,7 +91,7 @@ export function useInvestigation(): InvestigationState {
       if (actionController.current === controller) actionController.current = null
       if (!controller.signal.aborted) setPending(false)
     }
-  }, [cancelAction, scenario])
+  }, [cancelAction, scenario, scenarioFresh])
 
   const runId = run?.run_id
   const runStatus = run?.status
@@ -113,10 +121,15 @@ export function useInvestigation(): InvestigationState {
     }
 
     schedule()
-    return () => {
+    const cancel = () => {
       stopped = true
       if (timer !== undefined) window.clearTimeout(timer)
       requestController?.abort()
+    }
+    cancelPolling.current = cancel
+    return () => {
+      cancel()
+      if (cancelPolling.current === cancel) cancelPolling.current = () => undefined
     }
   }, [runId, runIsTerminal])
 

@@ -5,10 +5,10 @@ import { useInvestigation } from './useInvestigation'
 import './investigation.css'
 
 const STATUS_LABELS: Partial<Record<InvestigationStatus, string>> = {
-  closed: '宸查棴鐜痐',
-  failed: '澶勭疆澶辫触',
-  needs_review: '闇€瑕佷汉宸ュ鏍竊',
-  interrupted: '璋冩煡宸蹭腑鏂璥',
+  closed: '已闭环',
+  failed: '处置失败',
+  needs_review: '需要人工复核',
+  interrupted: '调查已中断',
 }
 
 function JsonDetails({ value }: { value: JsonObject }) {
@@ -21,13 +21,13 @@ function RunResult({ run }: { run: InvestigationResponse }) {
     && run.verification.connection_stopped === true
   const publicStatus = verifiedClosed
     ? STATUS_LABELS.closed
-    : run.status === 'closed' ? 'closed' : STATUS_LABELS[run.status] ?? run.status
+    : run.status === 'closed' ? '闭环未验证' : STATUS_LABELS[run.status] ?? run.status
   const statusClass = verifiedClosed ? 'closed' : run.status === 'closed' ? 'unverified' : run.status
 
   return (
     <div className="investigation-result">
       <p className={`run-status run-status--${statusClass}`} aria-live="polite">{publicStatus}</p>
-      {run.verification?.connection_stopped === true && <p>杩炴帴宸插仠姝</p>}
+      {run.verification?.connection_stopped === true && <p>连接已停止</p>}
 
       {run.steps.length > 0 && (
         <section aria-labelledby="steps-title">
@@ -38,7 +38,7 @@ function RunResult({ run }: { run: InvestigationResponse }) {
 
       {run.evidence.length > 0 && (
         <section aria-labelledby="evidence-title">
-          <h3 id="evidence-title">璇佹嵁</h3>
+          <h3 id="evidence-title">证据</h3>
           <ul className="detail-list">{run.evidence.map((item) => {
             const integrityPresent = item.confirmed && /^[0-9a-f]{64}$/.test(item.integrity_sha256)
             return (
@@ -46,7 +46,7 @@ function RunResult({ run }: { run: InvestigationResponse }) {
                 <strong>{item.summary}</strong>
                 <span>{item.source}</span>
                 <span>{item.confidence}</span>
-                {integrityPresent && <span>瀹屾暣鎬у凡鏍￠獙</span>}
+                {integrityPresent && <span>完整性已校验</span>}
               </li>
             )
           })}</ul>
@@ -55,7 +55,7 @@ function RunResult({ run }: { run: InvestigationResponse }) {
 
       {run.assessment && (
         <section aria-labelledby="assessment-title">
-          <h3 id="assessment-title">鍒嗘瀽缁撹</h3>
+          <h3 id="assessment-title">分析结论</h3>
           <p>{run.assessment.conclusion}</p>
           <p>{run.assessment.explanation}</p>
         </section>
@@ -63,14 +63,14 @@ function RunResult({ run }: { run: InvestigationResponse }) {
 
       {run.tool_result && (
         <section aria-labelledby="tool-title">
-          <h3 id="tool-title">澶勭疆缁撴灉</h3>
+          <h3 id="tool-title">处置结果</h3>
           <dl>
-            <dt>鐩爣</dt><dd>{run.tool_result.target}</dd>
+            <dt>目标</dt><dd>{run.tool_result.target}</dd>
             <dt>幂等键</dt><dd>{run.tool_result.idempotency_key}</dd>
             <dt>处置前</dt><dd><JsonDetails value={run.tool_result.before_state} /></dd>
             <dt>处置后</dt><dd><JsonDetails value={run.tool_result.after_state} /></dd>
-            <dt>缁撴灉</dt><dd>{run.tool_result.status}</dd>
-            {run.tool_result.error_code && <><dt>閿欒浠ｇ爜</dt><dd>{run.tool_result.error_code}</dd></>}
+            <dt>结果</dt><dd>{run.tool_result.status}</dd>
+            {run.tool_result.error_code && <><dt>错误代码</dt><dd>{run.tool_result.error_code}</dd></>}
           </dl>
         </section>
       )}
@@ -90,15 +90,15 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
 
   return (
     <section aria-labelledby="investigation-title" className="page-card investigation-page">
-      <p className="eyebrow">妯℃嫙鐜</p>
-      <h2 id="investigation-title">浜嬩欢璋冩煡</h2>
+      <p className="eyebrow">模拟环境</p>
+      <h2 id="investigation-title">事件调查</h2>
 
       {state.scenario && (
-        <p className="simulation-badge">妯℃嫙鐜 · #{state.scenario.simulation.generation}</p>
+        <p className="simulation-badge">模拟环境 · #{state.scenario.simulation.generation}</p>
       )}
 
       <div className="investigation-controls">
-        <label htmlFor="investigation-mode">璋冩煡妯″紡</label>
+        <label htmlFor="investigation-mode">调查模式</label>
         <select
           id="investigation-mode"
           value={mode}
@@ -108,8 +108,8 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
           <option value="normal">normal</option>
           {allowFailureMode && <option value="fail_block_once">fail_block_once</option>}
         </select>
-        <button type="button" disabled={state.active} onClick={() => void state.start(mode)}>鍚姩璋冩煡</button>
-        <button type="button" disabled={state.active} onClick={() => void state.reset()}>閲嶇疆鍦烘櫙</button>
+        <button type="button" disabled={state.active} onClick={() => void state.start(mode)}>启动调查</button>
+        <button type="button" disabled={state.active} onClick={() => void state.reset()}>重置场景</button>
       </div>
 
       {state.error && <p className="investigation-error" role="alert">{state.error}</p>}
@@ -117,7 +117,7 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
 
       {state.incident && (
         <section aria-labelledby="incident-title">
-          <h3 id="incident-title">浜嬩欢</h3>
+          <h3 id="incident-title">事件</h3>
           <p>{state.incident.incident.external_id}</p>
           <p>{state.incident.incident.remote_ip}:{state.incident.incident.remote_port}</p>
         </section>
@@ -125,7 +125,7 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
 
       {state.audit && state.audit.events.length > 0 && (
         <section aria-labelledby="audit-title">
-          <h3 id="audit-title">瀹¤璁板綍</h3>
+          <h3 id="audit-title">审计记录</h3>
           <ol>{[...state.audit.events].sort((left, right) => left.sequence - right.sequence).map((event) => (
             <li key={event.id}><strong>{event.event_type}</strong> · {event.occurred_at}</li>
           ))}</ol>

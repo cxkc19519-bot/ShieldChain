@@ -45,6 +45,15 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+function model(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  const item = record(value)
+  const allowed = new Set(keys)
+  if (Object.keys(item).length !== keys.length || Object.keys(item).some((key) => !allowed.has(key))) {
+    throw new Error()
+  }
+  return item
+}
+
 function string(value: unknown): string {
   if (typeof value !== 'string') throw new Error()
   return value
@@ -87,7 +96,9 @@ function jsonScalar(value: unknown): JsonScalar {
 }
 
 function simulationView(value: unknown): SimulationView {
-  const item = record(value)
+  const item = model(value, [
+    'id', 'generation', 'environment', 'connection_status', 'firewall_status', 'fail_block_consumed',
+  ])
   const environment = string(item.environment)
   if (environment !== 'simulation') throw new Error()
   return {
@@ -98,7 +109,11 @@ function simulationView(value: unknown): SimulationView {
 }
 
 function incidentView(value: unknown): IncidentView {
-  const item = record(value)
+  const item = model(value, [
+    'id', 'external_id', 'simulation_instance_id', 'alert_id', 'alert_status', 'endpoint', 'username',
+    'source_ip', 'remote_ip', 'remote_port', 'process_name', 'parent_process_name', 'command_summary',
+    'threat_label', 'created_at',
+  ])
   return {
     id: string(item.id), external_id: string(item.external_id),
     simulation_instance_id: string(item.simulation_instance_id), alert_id: string(item.alert_id),
@@ -111,7 +126,7 @@ function incidentView(value: unknown): IncidentView {
 }
 
 function runSummary(value: unknown): RunSummaryView {
-  const item = record(value)
+  const item = model(value, ['run_id', 'status', 'mode', 'created_at', 'updated_at', 'completed_at'])
   return {
     run_id: string(item.run_id), status: string(item.status), mode: string(item.mode),
     created_at: string(item.created_at), updated_at: string(item.updated_at),
@@ -120,7 +135,9 @@ function runSummary(value: unknown): RunSummaryView {
 }
 
 function stepView(value: unknown): InvestigationStep {
-  const item = record(value)
+  const item = model(value, [
+    'step_key', 'status', 'detail', 'error_code', 'started_at', 'completed_at',
+  ])
   return {
     step_key: string(item.step_key), status: string(item.status), detail: jsonObject(item.detail),
     error_code: nullableString(item.error_code), started_at: string(item.started_at),
@@ -129,7 +146,10 @@ function stepView(value: unknown): InvestigationStep {
 }
 
 function evidenceView(value: unknown): EvidenceView {
-  const item = record(value)
+  const item = model(value, [
+    'id', 'evidence_type', 'source', 'observed_at', 'summary', 'raw_reference', 'integrity_sha256',
+    'confidence', 'confirmed', 'payload',
+  ])
   return {
     id: string(item.id), evidence_type: string(item.evidence_type), source: string(item.source),
     observed_at: string(item.observed_at), summary: string(item.summary), raw_reference: string(item.raw_reference),
@@ -139,7 +159,9 @@ function evidenceView(value: unknown): EvidenceView {
 }
 
 function assessmentView(value: unknown): AssessmentView {
-  const item = record(value)
+  const item = model(value, [
+    'conclusion', 'risk_level', 'rule_ids', 'evidence_ids', 'recommended_action', 'explanation',
+  ])
   return {
     conclusion: string(item.conclusion), risk_level: string(item.risk_level),
     rule_ids: array(item.rule_ids, string), evidence_ids: array(item.evidence_ids, string),
@@ -148,7 +170,9 @@ function assessmentView(value: unknown): AssessmentView {
 }
 
 function toolResultView(value: unknown): ToolResultView {
-  const item = record(value)
+  const item = model(value, [
+    'tool_name', 'target', 'idempotency_key', 'status', 'before_state', 'after_state', 'error_code',
+  ])
   return {
     tool_name: string(item.tool_name), target: string(item.target), idempotency_key: string(item.idempotency_key),
     status: string(item.status), before_state: jsonObject(item.before_state), after_state: jsonObject(item.after_state),
@@ -157,7 +181,7 @@ function toolResultView(value: unknown): ToolResultView {
 }
 
 function verificationView(value: unknown): VerificationView {
-  const item = record(value)
+  const item = model(value, ['blocked', 'connection_stopped', 'observed_at', 'evidence_ids'])
   return {
     blocked: boolean(item.blocked), connection_stopped: boolean(item.connection_stopped),
     observed_at: string(item.observed_at), evidence_ids: array(item.evidence_ids, string),
@@ -165,12 +189,15 @@ function verificationView(value: unknown): VerificationView {
 }
 
 function resetResponse(value: unknown): ResetSimulationResponse {
-  const item = record(value)
+  const item = model(value, ['simulation', 'incident'])
   return { simulation: simulationView(item.simulation), incident: incidentView(item.incident) }
 }
 
 function investigationResponse(value: unknown): InvestigationResponse {
-  const item = record(value)
+  const item = model(value, [
+    'run_id', 'incident_id', 'simulation_instance_id', 'status', 'mode', 'created_at', 'updated_at',
+    'completed_at', 'simulation', 'steps', 'evidence', 'assessment', 'tool_result', 'verification',
+  ])
   const status = string(item.status) as InvestigationStatus
   const mode = string(item.mode) as InvestigationMode
   if (!STATUSES.has(status) || !MODES.has(mode)) throw new Error()
@@ -187,12 +214,12 @@ function investigationResponse(value: unknown): InvestigationResponse {
 }
 
 function incidentResponse(value: unknown): IncidentResponse {
-  const item = record(value)
+  const item = model(value, ['incident', 'runs'])
   return { incident: incidentView(item.incident), runs: array(item.runs, runSummary) }
 }
 
 function auditEvent(value: unknown): AuditEventView {
-  const item = record(value)
+  const item = model(value, ['id', 'sequence', 'event_type', 'request_id', 'occurred_at', 'payload'])
   return {
     id: string(item.id), sequence: number(item.sequence), event_type: string(item.event_type),
     request_id: string(item.request_id), occurred_at: string(item.occurred_at), payload: jsonObject(item.payload),
@@ -200,7 +227,7 @@ function auditEvent(value: unknown): AuditEventView {
 }
 
 function auditResponse(value: unknown): AuditResponse {
-  const item = record(value)
+  const item = model(value, ['incident_id', 'events'])
   return { incident_id: string(item.incident_id), events: array(item.events, auditEvent) }
 }
 

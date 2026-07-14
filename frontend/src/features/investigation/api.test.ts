@@ -151,6 +151,37 @@ describe('investigation API client', () => {
     })
   })
 
+  it('rejects an unknown top-level response key', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ ...investigation, extra: 'unexpected' })))
+
+    await expect(getInvestigation(RUN_ID)).rejects.toMatchObject({
+      name: 'InvestigationApiError',
+      message: expect.stringContaining('unexpected success body'),
+    })
+  })
+
+  it('rejects an unknown key in a nested response model', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...investigation,
+      simulation: { ...simulation, extra: 'unexpected' },
+    })))
+
+    await expect(getInvestigation(RUN_ID)).rejects.toBeInstanceOf(InvestigationApiError)
+  })
+
+  it('allows arbitrary keys inside declared JSON value maps', async () => {
+    const body = {
+      ...investigation,
+      steps: [{
+        step_key: 'collect', status: 'completed', detail: { reviewer_defined: ['safe', 1, true, null] },
+        error_code: null, started_at: NOW, completed_at: NOW,
+      }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(body)))
+
+    await expect(getInvestigation(RUN_ID)).resolves.toEqual(body)
+  })
+
   it('rejects invalid JSON with InvestigationApiError', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{', { status: 200 })))
 

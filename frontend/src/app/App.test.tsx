@@ -105,8 +105,8 @@ describe('future routes', () => {
   it('renders the investigation page at /events', () => {
     renderRoute('/events')
 
-    expect(screen.getByRole('heading', { name: '浜嬩欢璋冩煡' })).toBeVisible()
-    expect(screen.getByText('妯℃嫙鐜')).toBeVisible()
+    expect(screen.getByRole('heading', { name: '事件调查' })).toBeVisible()
+    expect(screen.getByText('模拟环境')).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 })
