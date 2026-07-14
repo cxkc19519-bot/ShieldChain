@@ -126,13 +126,30 @@ try {
         $smokeScriptText -match '\$stdoutPath\s*=\s*Join-Path\s+\$temporaryRoot\s+\(\$Label\s*\+\s*"\.stdout\.log"\)' -and
         $smokeScriptText -match '\$stderrPath\s*=\s*Join-Path\s+\$temporaryRoot\s+\(\$Label\s*\+\s*"\.stderr\.log"\)' -and
         $smokeScriptText -match 'ShieldChainProcessLogCapture' -and
-        $smokeScriptText -match '\.WaitForDrain\(5000\)' -and
-        [regex]::Matches($smokeScriptText, '-Label\s+"(migration|backend|frontend)"').Count -eq 3 -and
+        $smokeScriptText -match '\.WaitForCompletion\(5000,' -and
+        $smokeScriptText -match 'activeCallbacks' -and
+        $smokeScriptText -match 'BeginClosing\(\)' -and
+        [regex]::Matches($smokeScriptText, '-Label\s+"(migration|backend|frontend)"').Count -ge 3 -and
+        $smokeScriptText -match '-Label\s+"migration"' -and
+        $smokeScriptText -match '-Label\s+"backend"' -and
+        $smokeScriptText -match '-Label\s+"frontend"' -and
         $smokeScriptText -notmatch '(?m)^\s*[^#\r\n]*\s>\s'
     )
     Assert-True $isolatedProcessLogContract "migration/backend/frontend write distinct stdout and stderr files directly under the temporary root"
     Assert-True ($smokeScriptText -match '\$trackedProcesses' -and $smokeScriptText -match '(?s)\.Start\(\).{0,500}\$script:trackedProcesses\.Add') "started migration and services immediately join the top-level tracked collection"
     Assert-True ($smokeScriptText -notmatch '(?s)finally\s*\{\s*\$Process\.Dispose\(\)\s*\}') "tracked processes are not disposed before bounded exit confirmation"
+
+    foreach ($processLogCase in @("normal", "write_failure", "cancel")) {
+        $processLogResult = Invoke-CapturedPowerShell -Arguments @(
+            "-File", (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1"),
+            "-ProcessLogContractTest", $processLogCase
+        )
+        Assert-True (
+            $processLogResult.ExitCode -eq 0 -and
+            $processLogResult.Output -match ("PROCESS_LOG_CONTRACT_PASS=" + $processLogCase) -and
+            $processLogResult.Output -match "TEMP_REMOVED=True"
+        ) "process-log fixture safely completes $processLogCase with removable temporary files"
+    }
 
     $smokeEnvironmentPath = Join-Path $repositoryRoot ".env"
     $environmentExistedBeforePortFixture = Test-Path -LiteralPath $smokeEnvironmentPath

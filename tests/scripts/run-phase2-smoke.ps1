@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [ValidateSet("normal", "write_failure", "cancel")]
+    [string]$ProcessLogContractTest
+)
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
@@ -33,61 +36,135 @@ public sealed class ShieldChainProcessLogCapture : IDisposable
     private readonly StreamWriter stderr;
     private readonly ManualResetEventSlim stdoutDone = new ManualResetEventSlim(false);
     private readonly ManualResetEventSlim stderrDone = new ManualResetEventSlim(false);
-    private int failed;
+    private readonly ManualResetEventSlim callbacksIdle = new ManualResetEventSlim(true);
+    private readonly bool forceWriteFailure;
+    private int activeCallbacks;
+    private int closing;
+    private string failureMessage;
 
     public DataReceivedEventHandler OutputHandler { get; private set; }
     public DataReceivedEventHandler ErrorHandler { get; private set; }
-    public bool HasFailure { get { return Interlocked.CompareExchange(ref failed, 0, 0) != 0; } }
+    public bool HasFailure { get { return Interlocked.CompareExchange(ref failureMessage, null, null) != null; } }
+    public string FailureMessage { get { return Interlocked.CompareExchange(ref failureMessage, null, null); } }
 
-    public ShieldChainProcessLogCapture(string stdoutPath, string stderrPath)
+    public ShieldChainProcessLogCapture(string stdoutPath, string stderrPath, bool forceWriteFailure)
     {
         stdout = new StreamWriter(stdoutPath, false, new UTF8Encoding(false));
         stderr = new StreamWriter(stderrPath, false, new UTF8Encoding(false));
+        this.forceWriteFailure = forceWriteFailure;
         OutputHandler = HandleOutput;
         ErrorHandler = HandleError;
     }
 
     private void HandleOutput(object sender, DataReceivedEventArgs args)
     {
-        Write(stdout, stdoutDone, args.Data);
+        Handle(stdout, stdoutDone, args.Data);
     }
 
     private void HandleError(object sender, DataReceivedEventArgs args)
     {
-        Write(stderr, stderrDone, args.Data);
+        Handle(stderr, stderrDone, args.Data);
     }
 
-    private void Write(StreamWriter writer, ManualResetEventSlim done, string data)
+    private void Handle(StreamWriter writer, ManualResetEventSlim done, string data)
     {
-        if (data == null)
-        {
-            done.Set();
-            return;
-        }
+        bool counted = false;
         try
         {
-            lock (writer)
+            Interlocked.Increment(ref activeCallbacks);
+            counted = true;
+            callbacksIdle.Reset();
+            if (data == null)
             {
-                writer.WriteLine(data);
-                writer.Flush();
+                done.Set();
+                return;
+            }
+            if (Volatile.Read(ref closing) != 0 || HasFailure)
+            {
+                return;
+            }
+            try
+            {
+                if (forceWriteFailure)
+                {
+                    throw new IOException("forced process-log contract failure");
+                }
+                lock (writer)
+                {
+                    if (Volatile.Read(ref closing) == 0 && !HasFailure)
+                    {
+                        writer.WriteLine(data);
+                        writer.Flush();
+                    }
+                }
+            }
+            catch
+            {
+                RecordFailure("process log write failed");
             }
         }
         catch
         {
-            Interlocked.Exchange(ref failed, 1);
-            done.Set();
+            RecordFailure("process log callback failed");
+        }
+        finally
+        {
+            if (counted)
+            {
+                try
+                {
+                    if (Interlocked.Decrement(ref activeCallbacks) == 0)
+                    {
+                        callbacksIdle.Set();
+                    }
+                }
+                catch
+                {
+                    RecordFailure("process log callback finalization failed");
+                }
+            }
         }
     }
 
-    public bool WaitForDrain(int milliseconds)
+    private void RecordFailure(string message)
+    {
+        Interlocked.CompareExchange(ref failureMessage, message, null);
+    }
+
+    public void BeginClosing()
+    {
+        Interlocked.Exchange(ref closing, 1);
+    }
+
+    private static int Remaining(Stopwatch clock, int milliseconds)
+    {
+        return Math.Max(0, milliseconds - (int)clock.ElapsedMilliseconds);
+    }
+
+    public bool WaitForCompletion(int milliseconds, bool requireEof)
     {
         Stopwatch clock = Stopwatch.StartNew();
-        if (!stdoutDone.Wait(milliseconds))
+        try
         {
+            if (requireEof)
+            {
+                if (!stdoutDone.Wait(Remaining(clock, milliseconds)))
+                {
+                    return false;
+                }
+                if (!stderrDone.Wait(Remaining(clock, milliseconds)))
+                {
+                    return false;
+                }
+            }
+            return callbacksIdle.Wait(Remaining(clock, milliseconds)) &&
+                Interlocked.CompareExchange(ref activeCallbacks, 0, 0) == 0;
+        }
+        catch
+        {
+            RecordFailure("process log completion wait failed");
             return false;
         }
-        int remaining = Math.Max(0, milliseconds - (int)clock.ElapsedMilliseconds);
-        return stderrDone.Wait(remaining);
     }
 
     public void Dispose()
@@ -96,6 +173,7 @@ public sealed class ShieldChainProcessLogCapture : IDisposable
         stderr.Dispose();
         stdoutDone.Dispose();
         stderrDone.Dispose();
+        callbacksIdle.Dispose();
     }
 }
 '@
@@ -139,12 +217,17 @@ function Start-TrackedProcess {
         [string[]]$Arguments,
         [string]$WorkingDirectory,
         [ValidateSet("migration", "backend", "frontend")]
-        [string]$Label
+        [string]$Label,
+        [switch]$ForceLogWriteFailure
     )
 
     $stdoutPath = Join-Path $temporaryRoot ($Label + ".stdout.log")
     $stderrPath = Join-Path $temporaryRoot ($Label + ".stderr.log")
-    $capture = [ShieldChainProcessLogCapture]::new($stdoutPath, $stderrPath)
+    $capture = [ShieldChainProcessLogCapture]::new(
+        $stdoutPath,
+        $stderrPath,
+        [bool]$ForceLogWriteFailure
+    )
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.Arguments = ConvertTo-ArgumentString -Arguments $Arguments
@@ -180,7 +263,10 @@ function Start-TrackedProcess {
 }
 
 function Dispose-ExitedTrackedProcess {
-    param([System.Diagnostics.Process]$Process)
+    param(
+        [System.Diagnostics.Process]$Process,
+        [switch]$CancelReads
+    )
 
     $Process.Refresh()
     if (-not $Process.HasExited) { return $false }
@@ -194,16 +280,22 @@ function Dispose-ExitedTrackedProcess {
         }
     }
     if ($null -ne $record) {
-        $drained = $record.Capture.WaitForDrain(5000)
-        if (-not $drained) {
-            $cleanupFailures.Add("$($record.Label) process output did not drain within 5 seconds.")
+        $cancelCapture = [bool]$CancelReads -or $record.Capture.HasFailure
+        if ($cancelCapture) {
+            $record.Capture.BeginClosing()
             try { $Process.CancelOutputRead() } catch {}
             try { $Process.CancelErrorRead() } catch {}
         }
+        $quiescent = $record.Capture.WaitForCompletion(5000, -not $cancelCapture)
+        if (-not $quiescent) {
+            $cleanupFailures.Add("$($record.Label) process log callbacks did not quiesce within 5 seconds.")
+            return $false
+        }
+        $record.Capture.BeginClosing()
         $Process.remove_OutputDataReceived($record.Capture.OutputHandler)
         $Process.remove_ErrorDataReceived($record.Capture.ErrorHandler)
         if ($record.Capture.HasFailure) {
-            $cleanupFailures.Add("$($record.Label) process output could not be written to its isolated log files.")
+            $cleanupFailures.Add("$($record.Label) process output could not be written to its isolated log files: $($record.Capture.FailureMessage).")
         }
         $record.Capture.Dispose()
         $trackedProcesses.RemoveAt($recordIndex)
@@ -283,10 +375,12 @@ function Stop-TrackedProcess {
     param([System.Diagnostics.Process]$Process, [string]$Label)
 
     if ($null -eq $Process) { return }
+    $stopped = $false
     try {
         $Process.Refresh()
         if (-not $Process.HasExited) {
             Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+            $stopped = $true
             if (-not $Process.WaitForExit(5000)) {
                 $cleanupFailures.Add("$Label process $($Process.Id) did not exit within 5 seconds.")
             }
@@ -296,9 +390,94 @@ function Stop-TrackedProcess {
         $cleanupFailures.Add("Could not stop tracked $Label process $($Process.Id): $($_.Exception.Message)")
     }
     finally {
-        try { [void](Dispose-ExitedTrackedProcess -Process $Process) }
+        try { [void](Dispose-ExitedTrackedProcess -Process $Process -CancelReads:$stopped) }
         catch { $cleanupFailures.Add("Could not dispose exited $Label process: $($_.Exception.Message)") }
     }
+}
+
+function Invoke-ProcessLogContractFixture {
+    param(
+        [ValidateSet("normal", "write_failure", "cancel")]
+        [string]$Case
+    )
+
+    $script:temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "shieldchain-process-log-contract-" + [guid]::NewGuid()
+    )
+    New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+    $fixtureFailure = $null
+    $fixtureProcess = $null
+    try {
+        $contractShell = Join-Path $PSHOME "powershell.exe"
+        $command = if ($Case -ceq "cancel") {
+            'while ($true) { [Console]::Out.WriteLine("tick"); Start-Sleep -Milliseconds 10 }'
+        }
+        else {
+            '[Console]::Out.WriteLine("fixture-out"); [Console]::Error.WriteLine("fixture-error")'
+        }
+        $fixtureProcess = Start-TrackedProcess -FilePath $contractShell -Arguments @(
+            "-NoProfile", "-Command", $command
+        ) -WorkingDirectory $temporaryRoot -Label "migration" -ForceLogWriteFailure:($Case -ceq "write_failure")
+
+        if ($Case -ceq "cancel") {
+            Start-Sleep -Milliseconds 200
+            Stop-Process -Id $fixtureProcess.Id -Force -ErrorAction Stop
+            if (-not $fixtureProcess.WaitForExit(5000)) {
+                throw "cancel fixture process did not exit within 5 seconds"
+            }
+            if (-not (Dispose-ExitedTrackedProcess -Process $fixtureProcess -CancelReads)) {
+                throw "cancel fixture callbacks did not quiesce"
+            }
+            if ($cleanupFailures.Count -ne 0) {
+                throw "cancel fixture reported an unexpected cleanup failure"
+            }
+        }
+        else {
+            if (-not $fixtureProcess.WaitForExit(5000)) {
+                throw "$Case fixture process did not exit within 5 seconds"
+            }
+            if (-not (Dispose-ExitedTrackedProcess -Process $fixtureProcess)) {
+                throw "$Case fixture callbacks did not quiesce"
+            }
+            $stdoutInfo = Get-Item -LiteralPath (Join-Path $temporaryRoot "migration.stdout.log")
+            $stderrInfo = Get-Item -LiteralPath (Join-Path $temporaryRoot "migration.stderr.log")
+            if ($Case -ceq "normal") {
+                if ($cleanupFailures.Count -ne 0 -or $stdoutInfo.Length -eq 0 -or $stderrInfo.Length -eq 0) {
+                    throw "normal fixture did not capture both streams cleanly"
+                }
+            }
+            elseif (-not ($cleanupFailures -match "process log write failed")) {
+                throw "write-failure fixture did not retain a safe failure reason"
+            }
+        }
+        Write-Host "PROCESS_LOG_CONTRACT_PASS=$Case"
+    }
+    catch {
+        $fixtureFailure = $_
+    }
+    finally {
+        $snapshot = @($trackedProcesses.ToArray())
+        [array]::Reverse($snapshot)
+        foreach ($tracked in $snapshot) {
+            Stop-TrackedProcess -Process $tracked.Process -Label $tracked.Label
+        }
+        if (Test-Path -LiteralPath $temporaryRoot) {
+            try { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction Stop }
+            catch {
+                if ($null -eq $fixtureFailure) { $fixtureFailure = $_ }
+            }
+        }
+        Write-Host ("TEMP_REMOVED=" + (-not (Test-Path -LiteralPath $temporaryRoot)))
+    }
+    if ($null -ne $fixtureFailure) {
+        Write-Error $fixtureFailure.Exception.Message
+        return 1
+    }
+    return 0
+}
+
+if ($ProcessLogContractTest) {
+    exit (Invoke-ProcessLogContractFixture -Case $ProcessLogContractTest)
 }
 
 try {
@@ -332,14 +511,16 @@ try {
             $cleanupFailures.Add("Migration process $($migration.Id) did not exit within 5 seconds after timeout stop.")
         }
         else {
-            [void](Dispose-ExitedTrackedProcess -Process $migration)
+            [void](Dispose-ExitedTrackedProcess -Process $migration -CancelReads)
         }
         throw "Alembic upgrade did not finish within 30 seconds."
     }
     $migrationExitCode = $migration.ExitCode
-    [void](Dispose-ExitedTrackedProcess -Process $migration)
+    if (-not (Dispose-ExitedTrackedProcess -Process $migration)) {
+        throw "Alembic process logs did not quiesce within the bounded cleanup deadline."
+    }
     if ($migrationExitCode -ne 0) {
-        throw "Alembic upgrade failed with exit code $migrationExitCode; see inherited process output above."
+        throw "Alembic upgrade failed with exit code $migrationExitCode; details were captured in the isolated migration log."
     }
 
     $backendProcess = Start-TrackedProcess -FilePath $pythonPath -Arguments @(
