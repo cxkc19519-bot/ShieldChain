@@ -19,6 +19,88 @@ foreach ($name in @("DATABASE_URL", "ENVIRONMENT", "RUN_LIVE_DEEPSEEK_TEST")) {
     $preservedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 
+if (-not ("ShieldChainProcessLogCapture" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+
+public sealed class ShieldChainProcessLogCapture : IDisposable
+{
+    private readonly StreamWriter stdout;
+    private readonly StreamWriter stderr;
+    private readonly ManualResetEventSlim stdoutDone = new ManualResetEventSlim(false);
+    private readonly ManualResetEventSlim stderrDone = new ManualResetEventSlim(false);
+    private int failed;
+
+    public DataReceivedEventHandler OutputHandler { get; private set; }
+    public DataReceivedEventHandler ErrorHandler { get; private set; }
+    public bool HasFailure { get { return Interlocked.CompareExchange(ref failed, 0, 0) != 0; } }
+
+    public ShieldChainProcessLogCapture(string stdoutPath, string stderrPath)
+    {
+        stdout = new StreamWriter(stdoutPath, false, new UTF8Encoding(false));
+        stderr = new StreamWriter(stderrPath, false, new UTF8Encoding(false));
+        OutputHandler = HandleOutput;
+        ErrorHandler = HandleError;
+    }
+
+    private void HandleOutput(object sender, DataReceivedEventArgs args)
+    {
+        Write(stdout, stdoutDone, args.Data);
+    }
+
+    private void HandleError(object sender, DataReceivedEventArgs args)
+    {
+        Write(stderr, stderrDone, args.Data);
+    }
+
+    private void Write(StreamWriter writer, ManualResetEventSlim done, string data)
+    {
+        if (data == null)
+        {
+            done.Set();
+            return;
+        }
+        try
+        {
+            lock (writer)
+            {
+                writer.WriteLine(data);
+                writer.Flush();
+            }
+        }
+        catch
+        {
+            Interlocked.Exchange(ref failed, 1);
+            done.Set();
+        }
+    }
+
+    public bool WaitForDrain(int milliseconds)
+    {
+        Stopwatch clock = Stopwatch.StartNew();
+        if (!stdoutDone.Wait(milliseconds))
+        {
+            return false;
+        }
+        int remaining = Math.Max(0, milliseconds - (int)clock.ElapsedMilliseconds);
+        return stderrDone.Wait(remaining);
+    }
+
+    public void Dispose()
+    {
+        stdout.Dispose();
+        stderr.Dispose();
+        stdoutDone.Dispose();
+        stderrDone.Dispose();
+    }
+}
+'@
+}
+
 function Test-PortListening {
     param([int]$Port)
 
@@ -56,22 +138,44 @@ function Start-TrackedProcess {
         [string]$FilePath,
         [string[]]$Arguments,
         [string]$WorkingDirectory,
+        [ValidateSet("migration", "backend", "frontend")]
         [string]$Label
     )
 
+    $stdoutPath = Join-Path $temporaryRoot ($Label + ".stdout.log")
+    $stderrPath = Join-Path $temporaryRoot ($Label + ".stderr.log")
+    $capture = [ShieldChainProcessLogCapture]::new($stdoutPath, $stderrPath)
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.Arguments = ConvertTo-ArgumentString -Arguments $Arguments
     $startInfo.WorkingDirectory = $WorkingDirectory
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
-        $process.Dispose()
-        throw "Failed to start tracked process: $FilePath"
+    $process.add_OutputDataReceived($capture.OutputHandler)
+    $process.add_ErrorDataReceived($capture.ErrorHandler)
+    try {
+        if (-not $process.Start()) {
+            throw "Failed to start tracked process: $FilePath"
+        }
     }
-    $script:trackedProcesses.Add([pscustomobject]@{ Process = $process; Label = $Label })
+    catch {
+        $process.remove_OutputDataReceived($capture.OutputHandler)
+        $process.remove_ErrorDataReceived($capture.ErrorHandler)
+        $process.Dispose()
+        $capture.Dispose()
+        throw
+    }
+    $script:trackedProcesses.Add([pscustomobject]@{
+        Process = $process
+        Label = $Label
+        Capture = $capture
+    })
+    $process.BeginOutputReadLine()
+    $process.BeginErrorReadLine()
     return $process
 }
 
@@ -80,11 +184,29 @@ function Dispose-ExitedTrackedProcess {
 
     $Process.Refresh()
     if (-not $Process.HasExited) { return $false }
+    $record = $null
+    $recordIndex = -1
     for ($index = $trackedProcesses.Count - 1; $index -ge 0; $index--) {
         if ([object]::ReferenceEquals($trackedProcesses[$index].Process, $Process)) {
-            $trackedProcesses.RemoveAt($index)
+            $record = $trackedProcesses[$index]
+            $recordIndex = $index
             break
         }
+    }
+    if ($null -ne $record) {
+        $drained = $record.Capture.WaitForDrain(5000)
+        if (-not $drained) {
+            $cleanupFailures.Add("$($record.Label) process output did not drain within 5 seconds.")
+            try { $Process.CancelOutputRead() } catch {}
+            try { $Process.CancelErrorRead() } catch {}
+        }
+        $Process.remove_OutputDataReceived($record.Capture.OutputHandler)
+        $Process.remove_ErrorDataReceived($record.Capture.ErrorHandler)
+        if ($record.Capture.HasFailure) {
+            $cleanupFailures.Add("$($record.Label) process output could not be written to its isolated log files.")
+        }
+        $record.Capture.Dispose()
+        $trackedProcesses.RemoveAt($recordIndex)
     }
     $Process.Dispose()
     return $true

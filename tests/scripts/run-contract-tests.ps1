@@ -114,7 +114,23 @@ try {
         '(?s)Start-TrackedProcess.{0,500}-WorkingDirectory\s+\$temporaryRoot'
     ).Count
     Assert-True ($temporaryWorkingDirectoryStarts -ge 2) "migration and backend start from the isolated temporary working directory"
-    Assert-True ($smokeScriptText -notmatch 'ReadToEnd\s*\(' -and $smokeScriptText -notmatch 'RedirectStandard(Output|Error)\s*=\s*\$true') "tracked processes cannot block on undrained redirected pipes"
+    Assert-True (
+        $smokeScriptText -notmatch 'ReadToEnd\s*\(' -and
+        $smokeScriptText -match 'RedirectStandardOutput\s*=\s*\$true' -and
+        $smokeScriptText -match 'RedirectStandardError\s*=\s*\$true' -and
+        $smokeScriptText -match 'BeginOutputReadLine\s*\(' -and
+        $smokeScriptText -match 'BeginErrorReadLine\s*\('
+    ) "redirected process pipes are drained asynchronously from startup without ReadToEnd"
+    $isolatedProcessLogContract = (
+        $smokeScriptText -match '\[ValidateSet\("migration",\s*"backend",\s*"frontend"\)\]' -and
+        $smokeScriptText -match '\$stdoutPath\s*=\s*Join-Path\s+\$temporaryRoot\s+\(\$Label\s*\+\s*"\.stdout\.log"\)' -and
+        $smokeScriptText -match '\$stderrPath\s*=\s*Join-Path\s+\$temporaryRoot\s+\(\$Label\s*\+\s*"\.stderr\.log"\)' -and
+        $smokeScriptText -match 'ShieldChainProcessLogCapture' -and
+        $smokeScriptText -match '\.WaitForDrain\(5000\)' -and
+        [regex]::Matches($smokeScriptText, '-Label\s+"(migration|backend|frontend)"').Count -eq 3 -and
+        $smokeScriptText -notmatch '(?m)^\s*[^#\r\n]*\s>\s'
+    )
+    Assert-True $isolatedProcessLogContract "migration/backend/frontend write distinct stdout and stderr files directly under the temporary root"
     Assert-True ($smokeScriptText -match '\$trackedProcesses' -and $smokeScriptText -match '(?s)\.Start\(\).{0,500}\$script:trackedProcesses\.Add') "started migration and services immediately join the top-level tracked collection"
     Assert-True ($smokeScriptText -notmatch '(?s)finally\s*\{\s*\$Process\.Dispose\(\)\s*\}') "tracked processes are not disposed before bounded exit confirmation"
 
