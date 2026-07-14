@@ -154,11 +154,19 @@ async def start_investigation(
     try:
         response, should_start = await asyncio.to_thread(create_or_reuse)
         if should_start:
-            _runner(request).start(
-                response.run_id,
-                request_id,
-                payload.mode == "fail_block_once",
-            )
+            try:
+                _runner(request).start(
+                    response.run_id,
+                    request_id,
+                    payload.mode == "fail_block_once",
+                )
+            except InvestigationRunnerUnavailable:
+                def cancel_pending() -> None:
+                    with factory.begin() as session:
+                        repository.cancel_pending_run(session, response.run_id)
+
+                await asyncio.to_thread(cancel_pending)
+                raise
         return response
     except Exception as error:
         raise _public_error(error) from None

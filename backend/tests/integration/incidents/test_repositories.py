@@ -39,6 +39,7 @@ from shieldchain.incidents.ports import (
     DuplicateEvidence,
     DuplicateIdempotencyKey,
     IncidentRepository,
+    InvalidInvestigationState,
     RunSimulationMismatch,
     SimulationNotFound,
 )
@@ -272,6 +273,61 @@ def test_reset_refuses_while_an_investigation_is_active(
 
     assert caught.value.simulation_id == simulation.simulation_id
     assert "SELECT" not in str(caught.value)
+
+
+def test_cancel_pending_run_removes_only_run_owned_rows(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    session.commit()
+    reset_event = session.scalar(
+        select(AuditEventRow).where(AuditEventRow.event_type == "simulation_reset")
+    )
+    run_event = session.scalar(
+        select(AuditEventRow).where(AuditEventRow.run_id == str(run.id))
+    )
+
+    repository.cancel_pending_run(session, run.id)
+    session.commit()
+
+    assert repository.get_run(session, run.id) is None
+    assert session.get(AuditEventRow, reset_event.id) is not None
+    assert session.get(AuditEventRow, run_event.id) is None
+    assert reset_event.sequence < run_event.sequence
+
+    replacement = _create_run(
+        session, repository, simulation.simulation_id, request_id="req-replacement"
+    )
+    session.commit()
+    sequences = list(
+        session.scalars(
+            select(AuditEventRow.sequence)
+            .where(AuditEventRow.incident_id == str(replacement.incident_id))
+            .order_by(AuditEventRow.sequence)
+        )
+    )
+    assert sequences == [reset_event.sequence, run_event.sequence + 1]
+
+
+def test_cancel_pending_run_rejects_non_pending_status(
+    session: Session,
+    repository: SqlAlchemyIncidentRepository,
+    simulation: PhishingScenarioState,
+) -> None:
+    run = _create_run(session, repository, simulation.simulation_id)
+    repository.transition_run(
+        session,
+        run.id,
+        InvestigationStatus.COLLECTING,
+        request_id="req-transition",
+        now=NOW + timedelta(seconds=1),
+    )
+    session.commit()
+
+    with pytest.raises(InvalidInvestigationState):
+        repository.cancel_pending_run(session, run.id)
 
 
 def test_transition_and_audit_commit_atomically(

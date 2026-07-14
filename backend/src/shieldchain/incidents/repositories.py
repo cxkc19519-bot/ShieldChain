@@ -7,7 +7,7 @@ from ipaddress import IPv4Address
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from shieldchain.incidents.ports import (
     DuplicateEvidence,
     DuplicateIdempotencyKey,
     IncidentNotFound,
+    InvalidInvestigationState,
     InvestigationNotFound,
     RunSimulationMismatch,
     ScenarioFactory,
@@ -239,6 +240,15 @@ class SqlAlchemyIncidentRepository:
     def get_run(self, session: Session, run_id: UUID) -> InvestigationRun | None:
         row = session.get(InvestigationRunRow, str(run_id))
         return _run_from_row(row) if row is not None else None
+
+    def cancel_pending_run(self, session: Session, run_id: UUID) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        status = InvestigationStatus(row.status)
+        if status is not InvestigationStatus.PENDING:
+            raise InvalidInvestigationState(run_id, status)
+        session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        session.delete(row)
+        session.flush()
 
     def get_simulation(
         self, session: Session, simulation_id: UUID

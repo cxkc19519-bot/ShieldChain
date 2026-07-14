@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
@@ -248,6 +250,7 @@ def test_runner_unavailable_and_invalid_state_are_safe_errors(incident_context) 
     def unavailable(*_args, **_kwargs):
         raise InvestigationRunnerUnavailable
 
+    available_start = runner.start
     runner.start = unavailable
     unavailable_response = client.post(
         "/api/v1/investigations",
@@ -261,6 +264,17 @@ def test_runner_unavailable_and_invalid_state_are_safe_errors(incident_context) 
         "Investigation runner is unavailable",
         "req-unavailable",
     )
+    with _factory() as session:
+        assert session.scalar(select(func.count()).select_from(InvestigationRunRow)) == 0
+        assert (
+            session.scalar(select(func.count()).select_from(AuditEventRow)) == 1
+        )
+    runner.start = available_start
+    retry = client.post(
+        "/api/v1/investigations", json=payload, headers={"X-Request-ID": "req-retry"}
+    )
+    assert retry.status_code == 202
+    assert len(runner.started) == 1
 
     class InvalidRepository:
         def create_run(self, *_args, **_kwargs):
@@ -285,6 +299,42 @@ def test_runner_unavailable_and_invalid_state_are_safe_errors(incident_context) 
         "Investigation state does not allow this operation",
         "req-invalid-state",
     )
+
+
+def test_concurrent_start_requests_have_one_database_winner(incident_context) -> None:
+    client, factory, runner = incident_context
+    reset = _reset(client)
+    payload = {"simulation_instance_id": reset["simulation"]["id"]}
+    delegate = client.app.state.incident_query_service
+    barrier = Barrier(2)
+
+    class BarrierQueryService:
+        def latest_run_for_simulation(self, simulation_id):
+            result = delegate.latest_run_for_simulation(simulation_id)
+            barrier.wait(timeout=5)
+            return result
+
+        def __getattr__(self, name):
+            return getattr(delegate, name)
+
+    client.app.state.incident_query_service = BarrierQueryService()
+
+    def start(request_id: str):
+        return client.post(
+            "/api/v1/investigations",
+            json=payload,
+            headers={"X-Request-ID": request_id},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = tuple(executor.map(start, ("req-race-1", "req-race-2")))
+
+    assert sorted(response.status_code for response in responses) == [202, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json()["error"]["code"] == "investigation_already_running"
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(InvestigationRunRow)) == 1
+    assert len(runner.started) == 1
 
 
 @pytest.mark.parametrize(

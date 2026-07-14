@@ -20,7 +20,7 @@ from shieldchain.core.errors import (
 )
 from shieldchain.core.logging import configure_logging
 from shieldchain.core.request_id import RequestIdMiddleware
-from shieldchain.db.session import check_database, create_engine_from_url, create_session_factory
+from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.incidents.background import InvestigationRunner
 from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
@@ -62,8 +62,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
-            if await asyncio.to_thread(check_database, engine):
-                await asyncio.to_thread(runner.recover_interrupted)
+            await asyncio.to_thread(runner.recover_interrupted)
             yield
         finally:
             await runner.shutdown()
