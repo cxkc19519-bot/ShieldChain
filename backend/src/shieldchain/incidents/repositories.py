@@ -111,7 +111,7 @@ class SqlAlchemyIncidentRepository:
         self._scenario_factory = scenario_factory
 
     def reset_phishing_scenario(
-        self, session: Session, *, now: datetime
+        self, session: Session, *, now: datetime, request_id: str = "simulation-reset"
     ) -> PhishingScenarioState:
         active = session.execute(
             select(InvestigationRunRow.simulation_instance_id)
@@ -177,7 +177,7 @@ class SqlAlchemyIncidentRepository:
                 incident_id=state.incident_id,
                 run_id=None,
                 event_type="simulation_reset",
-                request_id="simulation-reset",
+                request_id=request_id,
                 occurred_at=now,
                 payload={
                     "simulation_id": str(state.simulation_id),

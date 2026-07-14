@@ -79,7 +79,7 @@ ScenarioFactory = Callable[[datetime], PhishingScenarioState]
 @runtime_checkable
 class IncidentRepository(Protocol):
     def reset_phishing_scenario(
-        self, session: Session, *, now: datetime
+        self, session: Session, *, now: datetime, request_id: str = "simulation-reset"
     ) -> PhishingScenarioState: ...
 
     def create_run(
