@@ -10,21 +10,22 @@ Phase 0 已完成来源权威顺序、功能来源矩阵、论文协议分析、
 
 本次交叉审计新增：
 
-- `docs/phase-0-verification.md`：本十章验证报告及可复现门禁证据。
+- [docs/phase-0-verification.md](phase-0-verification.md)：本十章验证报告及可复现门禁证据。
 
 本次审计逐一复核但未修改：
 
-- `docs/source-index.md`
-- `docs/feature-source-matrix.md`
-- `docs/paper-analysis.md`
-- `docs/protocol-messages.md`
-- `docs/threat-model.md`
-- `docs/ambiguities-and-decisions.md`
-- `docs/architecture.md`
-- `docs/experiment-plan.md`
-- `docs/implementation-plan.md`
-- `docs/superpowers/specs/2026-07-15-saga-reproduction-design.md`
-- `.gitignore`
+- [docs/source-index.md](source-index.md)
+- [docs/feature-source-matrix.md](feature-source-matrix.md)
+- [docs/paper-analysis.md](paper-analysis.md)
+- [docs/protocol-messages.md](protocol-messages.md)
+- [docs/threat-model.md](threat-model.md)
+- [docs/ambiguities-and-decisions.md](ambiguities-and-decisions.md)
+- [docs/architecture.md](architecture.md)
+- [docs/experiment-plan.md](experiment-plan.md)
+- [docs/implementation-plan.md](implementation-plan.md)
+- [已批准设计规格](superpowers/specs/2026-07-15-saga-reproduction-design.md)
+- [Phase 0 执行计划](superpowers/plans/2026-07-15-saga-phase-0.md)
+- [`.gitignore`](../.gitignore)
 
 `.gitignore` 已覆盖本地论文 PDF、需求 DOCX、Office 临时文件和 `/.superpowers/`；这些输入均保持未跟踪且不出现在普通 `git status` 中。
 
@@ -53,7 +54,7 @@ ACT 明文在全部基线材料中保持论文的五字段语义：`<N, T_issued
 
 ## 5. 已运行的测试命令
 
-以下是 Windows PowerShell 中实际运行的 Step 1 命令。brief 内两个损坏的 Unicode 字符串被恢复为语义等价的 `稍后`+`填写` 与 `以后`+`补充`；其余模式保持字符串拼接，以避免报告本身触发占位符扫描。
+源 brief 已完整以 UTF-8 读取。为了在 Windows PowerShell 中稳定捕获结果、退出码和匹配行数，以下实际命令对原 Step 1 检查做了等价包装；终端的字符显示方式不代表源文件存在编码缺陷。字符串拼接保持原检查语义，并避免验证报告中的命令文本触发自身的占位符扫描。
 
 ```powershell
 $placeholderPattern = @('TB'+'D','TO'+'DO','implement '+'later','fill in '+'details','similar '+'to','稍后'+'填写','以后'+'补充') -join '|'
@@ -76,7 +77,7 @@ $futureExit = $LASTEXITCODE
 $futureOutput
 ```
 
-以下是实际运行的 Step 2 命令。brief 中损坏的矩阵表头正则被恢复为仓库文件中的真实 Unicode 表头。
+以下是实际运行的 Step 2 命令。源 brief 同样已按 UTF-8 完整读取；实际命令只为 Windows PowerShell 的结果捕获和退出码记录做等价包装，矩阵表头检查仍针对仓库文件中的真实 Unicode 表头。
 
 ```powershell
 $required = @(
@@ -133,7 +134,7 @@ git diff --cached --name-only
 - 矩阵精确表头扫描：exit `0`，匹配行 `1`。
 - IV-B/IV-C/IV-D/IV-E 引用扫描：exit `0`，匹配行 `136`；三份指定文档均覆盖四个核心协议部分。
 - `git check-ignore -v`：三项本地输入全部命中 `.gitignore`；`git status --short --ignored` 只显示三个预期 ignored 条目。
-- 新增本报告后的完整 Step 1-2 重跑：占位符 `exit=1/match_lines=0`，whitespace `exit=0`，ACT 扩展字段 `exit=1/match_lines=0`，后续功能 `exit=0/match_lines=8`，必需文件 `exit=0/present=9/missing=0`，五字段 ACT `exit=0/match_lines=17`，矩阵表头 `exit=0/match_lines=1`，核心章节 `exit=0/match_lines=136`（`paper-analysis=22`、`protocol-messages=66`、`feature-source-matrix=48`）。十章标题检查为 `exit=0/count=10`。
+- 修订后的完整重跑：占位符 `exit=1/match_lines=0`，whitespace `exit=0`，ACT 扩展字段 `exit=1/match_lines=0`，后续功能 `exit=0/match_lines=8`，必需文件 `present=9/missing=0`，五字段 ACT `exit=0/match_lines=17`，矩阵表头 `exit=0/match_lines=1`，核心章节 `exit=0/match_lines=136`（`paper-analysis=22`、`protocol-messages=66`、`feature-source-matrix=48`）。十章标题检查为 `exit=0/count=10`；相对 Markdown 文档链接为 `count=12/broken=0`。
 - 最终重跑、cached diff 和提交后的真实结果见本次任务的 `.superpowers/sdd/task-7-report.md`；该报告为本地审计记录，不进入 Git。
 
 ## 7. 尚未解决的问题
@@ -148,7 +149,7 @@ git diff --cached --name-only
 
 ## 8. 与论文的已知差异
 
-- IV-C Step 7 与 Figure 8 的 Provider 签名字段不同；同时 Figure 8 的 OTK 签名图示省略 `aid_A`。基线按正文公式实现并保留差异。
+- IV-C Step 7 与 Figure 8 的 Provider 签名字段不同；同时 Figure 8 的 OTK 签名图示省略 `aid_A`。基线规定并计划按正文公式实现，同时保留差异；Phase 0 尚未编写实现代码。
 - IV-E Step 6 要求 `A` 验证 `Cert_U2`，但 Step 5 和 Figure 9 没有说明该证书的传输来源；未来具体供给路径必须标注为工程补充。
 - III-D 的 C4 使用“TLS public keys”共享措辞；仅共享 TLS 公钥的安全意义不完整，基线原样记录而不改写成不同密钥材料。
 - 论文把 ACT 描述为 task-scoped，但五字段元组没有 task 字段，因此基础 ACT 不具备密码学任务绑定。
