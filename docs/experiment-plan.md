@@ -287,7 +287,7 @@ For each mix and adjacent concurrency pair, compute paired repetition throughput
 
 ## Result Schemas
 
-Schema version `saga-benchmark/v1` produces two distinct CSV files, never mixed row types, plus one equivalent versioned JSON document.
+Schema version `saga-benchmark/v1` produces three distinct CSV files, never mixed row types, plus one equivalent versioned JSON document.
 
 `benchmark-samples.csv` contains every warmup and measured attempt. All columns are required to exist:
 
@@ -313,24 +313,50 @@ Schema version `saga-benchmark/v1` produces two distinct CSV files, never mixed 
 
 Every offered attempt is recorded, including warmups and failures; warmups are selected by `phase`, not deleted. A failed sample still has `duration_ns`, `success=false`, and non-null `error_class`.
 
-`benchmark-summary.csv` contains one row per `(run_id, scenario, operation, canonical parameters, adapter, concurrency, outcome_scope)` measured group:
+`benchmark-summary.csv` contains exactly one row per `(run_id, scenario, operation, canonical parameters, environment_fingerprint, adapter, concurrency)` measured group. Duration statistics use successful measured attempts only; failed-attempt durations remain in `benchmark-samples.csv`, while counts preserve the full offered workload:
 
 | Field | Type/unit | Required/nullable | Rule |
 |---|---|---|---|
 | `schema_version`, `run_id`, `scenario`, `operation`, `parameters`, `environment_fingerprint`, `adapter`, `concurrency` | as above | required, non-null | Exact grouping key |
-| `outcome_scope` | string enum | required, non-null | `success`, `failure`, or `all`; duration summaries use the named population |
-| `mean_ns`, `median_ns`, `p95_ns`, `p99_ns`, `standard_deviation_ns` | number, ns | required, nullable | Null only when `sample_count=0`; otherwise finite and >= 0 |
-| `sample_count`, `success_count`, `failure_count` | integer >= 0 | required, non-null | `success_count + failure_count = measured attempt count` for `all` |
+| `mean_ns`, `median_ns`, `p95_ns`, `p99_ns`, `standard_deviation_ns` | number, ns | required, nullable | Successful measured-attempt durations; all null iff `success_count=0`, otherwise finite and >= 0 |
+| `sample_count`, `success_count`, `failure_count` | integer >= 0 | required, non-null | `sample_count = success_count + failure_count =` all measured attempts in the group |
 | `throughput_per_second` | number >= 0 | required, nullable | Non-null for throughput scenarios; null otherwise |
-| `bootstrap_ci_lower`, `bootstrap_ci_upper` | number | required, nullable | Non-null for preregistered trend comparisons; unit matches metric |
-| `trend_class` | string enum | required, nullable | `increase`, `decrease`, `stable`, `inconclusive`, or null when not a trend row |
-| `gate_pass` | boolean | required, nullable | Non-null for preregistered gate rows |
 
-JSON root is an object with required, non-null `schema_version` (string), `run` (object), `environments` (object map), `configuration` (object), `samples` (array), `summaries` (array), `trend_gates` (array), and `comparison` (array). `schema_version` is exactly `saga-benchmark/v1`. `run` requires typed `run_id` (UUID string), `timestamp_utc` (RFC3339 UTC string), `git_commit` (40-char hex string), and `dirty` (boolean). `environments` maps each 64-char fingerprint to a non-null object containing CPU string/count, memory bytes integer, OS/kernel/architecture/Python strings, dependency version map, TLS backend/version strings, and SQLite version/journal-mode strings. `configuration` requires the structured preregistered parameters, seed list, order formula, warmup count/duration, repetition count/duration, resample count/seed, tolerances, and pass rules. `samples[]` and `summaries[]` use the same required types/nullability as the CSV tables with `parameters` as an object rather than a string. `trend_gates[]` requires metric string, parameter endpoints object, estimator enum, integer resample count/seed, numeric nullable CI bounds, numeric tolerance, classification enum, and boolean pass. `comparison[]` requires paper location string, comparability enum (`comparable`, `partially_comparable`, `not_comparable`), nullable numeric paper/reproduction values with nullable unit strings, nullable relative difference, trend result enum, and explanation string. Unknown schema versions fail validation; additions require a new version.
+`benchmark-trend-gates.csv` contains exactly one row per preregistered comparison or gate and is structurally isomorphic to JSON `trend_gates[]`. All columns are required to exist:
+
+| Field | Type/unit | Required/nullable | Rule |
+|---|---|---|---|
+| `schema_version` | string enum | required, non-null | Exactly `saga-benchmark/v1` |
+| `run_id` | UUID string | required, non-null | Must match root run/sample/summary run |
+| `environment_fingerprint` | 64-char lowercase SHA-256 hex | required, non-null | Must resolve in JSON `environments` |
+| `adapter` | string enum | required, non-null | `memory`, `sqlite`, or `network` |
+| `gate_id` | string | required, non-null | Unique in the run; stable registered identifier |
+| `experiment` | string enum | required, non-null | `q_max`, `token_lifetime`, `agent_scale`, or `concurrent_throughput` |
+| `metric` | string enum | required, non-null | Registered metric: `authorization_ns_per_request`, `reauthorization_count`, `throughput_per_second`, `throughput_cv`, or `throughput_ci_relative_half_width` |
+| `unit` | string enum | required, non-null | `fraction`, `ratio`, `log_slope`, `count`, `requests_per_second`, or `dimensionless` |
+| `comparison_kind` | string enum | required, non-null | `endpoint_delta`, `endpoint_ratio`, `slope`, `adjacent_ratio`, `adjacent_delta`, `coefficient_of_variation`, or `ci_relative_half_width` |
+| `lhs_parameters` | canonical JSON object string | required, non-null | High/target endpoint or the single cell/series definition |
+| `rhs_parameters` | canonical JSON object string | required, nullable | Required for endpoint/adjacent comparisons; null for slope and single-cell dispersion/precision gates |
+| `estimate` | finite number | required, nullable | Non-null when computable; null only for missing/invalid data with `gate_pass=false` and non-null `notes` |
+| `ci_lower`, `ci_upper` | finite number | required, nullable | Non-null and ordered when `bootstrap_resamples > 0`; both null when resamples are 0; computation failure also requires false gate and non-null notes |
+| `tolerance` | finite number | required, non-null | Exact preregistered threshold in the metric's declared unit |
+| `classification` | string enum | required, nullable | `increase`, `decrease`, `stable`, `inconclusive`; non-null for Agent-scale slopes and concurrency adjacent deltas, null otherwise |
+| `pass_rule` | string | required, non-null | Exact registered Boolean expression over estimate/CI/tolerance/classification |
+| `gate_pass` | boolean | required, non-null | Must equal deterministic reevaluation of `pass_rule`; missing/inconclusive data is false |
+| `repetitions` | integer > 0 | required, non-null | Must equal preregistered completed-repetition requirement |
+| `bootstrap_resamples` | integer >= 0 | required, non-null | `10000` where a CI is required; `0` only for the direct CV limit row |
+| `bootstrap_seed` | integer >= 0 | required, nullable | Non-null iff `bootstrap_resamples > 0` and equal to registered seed |
+| `notes` | string | required, nullable | Required when computation/validation fails; optional explanatory text otherwise |
+
+Required trend rows are deterministic. For each adapter/scenario, q_max emits separate `qmax.endpoint_delta` and `qmax.slope` rows: the former stores q64 versus q1 `endpoint_delta`, and the latter stores the whole-series `slope` with null `rhs_parameters`. Token lifetime emits one `adjacent_ratio` row for each of 1→5, 5→30, 30→60, and 60→300 seconds plus one 1→300 `endpoint_ratio` row. Agent scale emits one slope/classification row for each concurrency 1/8/32 and, for every 3×3 Agent/concurrency cell, one `coefficient_of_variation` row and one `ci_relative_half_width` row. Concurrent throughput emits one independent `adjacent_delta` row for every adjacent concurrency pair in each of the two workload mixes (12 rows per adapter/scenario). No aggregate row may stand in for any required comparison.
+
+Validation parses both parameter fields as canonical JSON objects, checks `gate_id` uniqueness and the complete expected gate-ID set, checks metric/unit/comparison compatibility, validates repetition/resample/seed values against preregistration, recomputes estimates/type-7 bootstrap bounds/classification/pass rule from summary plus raw repetition data, and rejects extra, missing, duplicated, non-finite, wrong-unit, or post-hoc-threshold rows. `lhs_parameters` is always the higher/target setting and `rhs_parameters` the lower/reference setting, so delta/ratio orientation is fixed.
+
+JSON root is an object with required, non-null `schema_version` (string), `run` (object), `environments` (object map), `configuration` (object), `samples` (array), `summaries` (array), `trend_gates` (array), and `comparison` (array). `schema_version` is exactly `saga-benchmark/v1`. `run` requires typed `run_id` (UUID string), `timestamp_utc` (RFC3339 UTC string), `git_commit` (40-char hex string), and `dirty` (boolean). `environments` maps each 64-char fingerprint to a non-null object containing CPU string/count, memory bytes integer, OS/kernel/architecture/Python strings, dependency version map, TLS backend/version strings, and SQLite version/journal-mode strings. `configuration` requires the structured preregistered parameters, seed list, order formula, warmup count/duration, repetition count/duration, resample count/seed, tolerances, and pass rules. `samples[]` and `summaries[]` use the same required types/nullability as their CSV tables with `parameters` as an object rather than a string, and `summaries[]` has exactly one object per measured group with no trend/gate fields. `trend_gates[]` has exactly the same fields, enum values, units, conditional nullability, one-gate-per-object cardinality, and validation rules as `benchmark-trend-gates.csv`; only `lhs_parameters`/`rhs_parameters` are JSON objects instead of CSV JSON strings. CSV rows and JSON objects must match field-for-field after canonicalization. `comparison[]` requires paper location string, comparability enum (`comparable`, `partially_comparable`, `not_comparable`), nullable numeric paper/reproduction values with nullable unit strings, nullable relative difference, trend result enum, and explanation string. Unknown schema versions fail validation; additions require a new version.
 
 ## Statistical Summaries
 
-All warmup/sample counts, repetition counts, seeds, order, resamples, thresholds, and failure rules are fixed above; there is no data-dependent stopping. Warmup attempts remain in `benchmark-samples.csv` with `phase=warmup` and are excluded from primary summaries. Every measured success and failure remains in the raw file; durations are summarized for explicit `outcome_scope` populations, while success/failure counts always expose the full offered workload.
+All warmup/sample counts, repetition counts, seeds, order, resamples, thresholds, and failure rules are fixed above; there is no data-dependent stopping. Warmup attempts remain in `benchmark-samples.csv` with `phase=warmup` and are excluded from primary summaries. Every measured success and failure remains in the raw file; each measured group has exactly one summary row, successful durations supply its latency statistics, and success/failure counts expose the full offered workload. Every comparison and gate exists only in `benchmark-trend-gates.csv`/JSON `trend_gates[]`, never as an extra summary row.
 
 Arithmetic mean is `sum(x)/n`; sample standard deviation uses denominator `n-1` and is `0` for `n=1`. Median, P95, and P99 use Hyndman-Fan type 7 linear interpolation: for sorted zero-based values `x[0..n-1]`, `h=(n-1)p`, `j=floor(h)`, `g=h-j`, and quantile `x[j] + g*(x[min(j+1,n-1)]-x[j])`. Empty populations have nullable statistics and `sample_count=0`. Primary summaries are untrimmed. Outliers are never removed; any labeled sensitivity analysis is secondary.
 
@@ -351,6 +377,6 @@ The experiment phase passes only when:
 - memory and SQLite atomicity tests pass, including protocol-owned authorization with versioned snapshot/CAS retry, exactly one no-crash success/handler side effect for concurrent `q_max=1`, and one winner for last OTK, last pair budget, and SOTK claim; crash injection must show persisted `use_count <= 1`, no loser effect, and recoverable state without claiming exactly-once winner effects;
 - real X.509 network cases pass, Agent mTLS is enforced, and User-Provider remains server-authenticated TLS plus User authentication rather than User mTLS;
 - ProVerif reports exactly the three scoped security properties and successful non-vacuity/reachability sanity checks, with no expanded claims;
-- `benchmark-samples.csv`, `benchmark-summary.csv`, and JSON validate against `saga-benchmark/v1`, preserve every success/failure/warmup attempt as specified, and contain complete environment metadata and required statistics;
+- `benchmark-samples.csv`, `benchmark-summary.csv`, `benchmark-trend-gates.csv`, and JSON validate against `saga-benchmark/v1`; samples preserve every success/failure/warmup attempt, summaries contain exactly one row per measured group with no trend/gate rows, and CSV trend gates are field-for-field isomorphic to JSON `trend_gates[]` with every required comparison present;
 - each preregistered trend runs exactly its fixed parameters, warmups, repetitions, seeds, aggregation, bootstrap, tolerance, and pass rule; any failed/inconclusive condition fails the gate and is reported without post hoc sample extension or threshold changes;
 - every result is traceable to Git commit, configuration, source category, raw samples, and an explanation of material paper deviation.
