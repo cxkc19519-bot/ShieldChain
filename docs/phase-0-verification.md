@@ -13,7 +13,7 @@ Phase 0 已完成来源权威顺序、功能来源矩阵、论文协议分析、
 - [docs/architecture.md](architecture.md)：将 SOTK claim/delete 固定为先发生、不可逆的独立线性化提交，并明确三个 crash 点。
 - [docs/ambiguities-and-decisions.md](ambiguities-and-decisions.md)：同步 SOTK/ACT 的失败恢复结论。
 - [docs/implementation-plan.md](implementation-plan.md)：将 Phase 4 论文范围改为真实的 IV-E Steps 4–8，并同步 crash 测试与事务边界。
-- [docs/experiment-plan.md](experiment-plan.md)：补齐固定运行表、4096 offered-attempt 规则、完整 JSON 契约和正反示例。
+- [docs/experiment-plan.md](experiment-plan.md)：补齐固定运行表、4096 offered-attempt 规则，并以 closed `configuration.execution_profiles[]` 表达异构运行次数、种子、调度和超时；正反 JSON 示例同步覆盖 profile 契约。
 - [docs/phase-0-verification.md](phase-0-verification.md)：记录本轮最终修订和实际门禁结果。
 
 本次审计逐一复核但未修改：
@@ -51,7 +51,7 @@ ACT 明文在全部基线材料中保持论文的五字段语义：`<N, T_issued
 - 合法的同一 Agent ACT 复用、错误 Agent 转移、过期/耗尽使用、TLS 记录重放和应用语义重复请求分别建模。
 - ProVerif 只承载 Token secrecy、Agent-Provider authentication、Agent-Agent authentication 三类安全属性；reachability 只作为模型可执行性/非空性 sanity check。
 - OTK、pair budget、SOTK 与 `q_max` 的持久化、CAS、线性化和崩溃边界是复现工程加固，不能由论文形式化结果代替。
-- 按 IV-E Step 6/Figure 9，SOTK claim/delete 是独立且不可逆的线性化提交，之后才创建和存储 ACT。delete 前 crash 不消费；delete 后、ACT 持久化前 crash 永久损失该 OTK；ACT 持久化后、响应前 crash 可在 `A` 留下 `B` 未收到的 orphan ACT。所有失败都使用新 OTK，不把两次提交包装成可回滚的 all-or-nothing 事务。
+- 按 IV-E Step 6/Figure 9，SOTK claim/delete 是独立且不可逆的线性化提交，之后才创建和存储 ACT。claim 前 crash 不消费且 `B` 可用同一已分配 OTK 重试；claim 后、ACT 持久化前 crash 永久损失该 OTK；ACT 持久化后、响应被 `B` 观察前 crash 可在 `A` 留下 `B` 无法使用的 orphan ACT。claim 线性化点之后的失败或不确定结果都使用新 OTK；不增加 intention 状态，也不把两次提交包装成可回滚的 all-or-nothing 事务。
 
 ## 5. 已运行的测试命令
 
@@ -127,10 +127,10 @@ git diff --cached --name-only
 ```powershell
 $ghostPattern = @('IV-E Steps? 4.?'+'9','IV-E Step '+'9','Steps 4.?'+'9') -join '|'
 rg -n -i $ghostPattern docs
-rg -n 'irreversible linearization commit|crash before.*SOTK|crash after.*ACT persistence|orphan ACT|fresh OTK|never modeled as one all-or-nothing' docs/architecture.md docs/ambiguities-and-decisions.md docs/implementation-plan.md
+rg -n 'same already allocated OTK|same OTK|fresh OTK|uncertain outcome|orphan ACT|intention state|all-or-nothing' docs/architecture.md docs/ambiguities-and-decisions.md docs/implementation-plan.md docs/phase-0-verification.md
 rg -n 'Warmup repetitions × offered attempts|scheduling seeds|aggregation unit|repetition timeout|no adaptive stopping' docs/experiment-plan.md
 rg -n 'exactly 4,096 offered attempts|fixed denominator of 4,096 offered attempts|all 4,096 succeed|offered_attempts_per_point.*4096' docs/experiment-plan.md
-rg -n 'Complete `saga-benchmark/v1` JSON contract|canonical_fingerprint_input|configuration.parameters|comparison\[\]|Minimal structurally valid example|This example must fail' docs/experiment-plan.md
+rg -n 'execution_profiles|profile_id|warmup_seeds|measured_seeds|warmup_offered_attempts_per_repetition|measured_offered_attempts_per_repetition|fail_profile_no_replacement' docs/experiment-plan.md
 ```
 
 ## 6. 测试结果
@@ -148,8 +148,9 @@ rg -n 'Complete `saga-benchmark/v1` JSON contract|canonical_fingerprint_input|co
 - `git check-ignore -v`：三项本地输入全部命中 `.gitignore`；`git status --short --ignored` 只显示三个预期 ignored 条目。
 - 修订后的完整重跑：占位符 `exit=1/match_lines=0`，whitespace `exit=0`，ACT 扩展字段 `exit=1/match_lines=0`，后续功能 `exit=0/match_lines=8`，必需文件 `present=9/missing=0`，五字段 ACT `exit=0/match_lines=17`，矩阵表头 `exit=0/match_lines=1`，核心章节 `exit=0/match_lines=136`（`paper-analysis=22`、`protocol-messages=66`、`feature-source-matrix=48`）。十章标题检查为 `exit=0/count=10`；相对 Markdown 文档链接为 `count=12/broken=0`。
 - 最终重跑、cached diff 和提交后的真实结果见本次任务的 `.superpowers/sdd/task-7-report.md`；该报告为本地审计记录，不进入 Git。
-- 最终修订定向检查：幽灵步骤编号 `exit=1/match_lines=0`；SOTK 顺序/crash/fresh-OTK 语义 `exit=0/match_lines=7`；密码学与注册/授权固定参数标记 `exit=0/match_lines=9`；`q_max` 4096 offered 规则 `exit=0/match_lines=5`；JSON 顶级/schema/environment/configuration/comparison/示例标记 `exit=0/match_lines=9`。
-- JSON 示例验证：最小有效示例可被 JSON 解析，顶级键正好为 `schema_version,run,environments,configuration,samples,summaries,trend_gates,comparison`；`canonical_fingerprint_input` 重新计算为 `41267dcc00ab22f82bcfc8e3bc423069d56b5237b522fbea3616828f89845d1b`，与 environment map key 一致。应失败示例保持合法 JSON，但包含错误版本/类型、缺失必填键和未知属性。
+- 第二轮最终修订定向检查：SOTK 三个 crash 点只保留统一口径——claim 前同一已分配 OTK 可重试，claim 后失败或不确定结果必须 fresh OTK；不存在 intention 状态或组合回滚事务。`execution_profiles`、`profile_id`、warmup/measured seeds、两阶段 offered-attempt 数、超时、调度和 `fail_profile_no_replacement` 均有 closed-object 契约。
+- JSON 示例验证：最小有效示例可被 JSON 解析，顶级键正好为 `schema_version,run,environments,configuration,samples,summaries,trend_gates,comparison`；`canonical_fingerprint_input` 重新计算为 `41267dcc00ab22f82bcfc8e3bc423069d56b5237b522fbea3616828f89845d1b`，与 environment map key 一致；有效例有 ordinary crypto 与 scrypt 两个异构 profile，运行次数、attempt 数、种子和超时不同。应失败示例也保持合法 JSON，但缺失 `warmup_seeds`、重复 `profile_id`/selector，且 measured seed 数与 repetition 数不符。Phase 0 尚无 validator 实现，因此这里只验证 JSON 解析、示例结构和预期拒绝理由，不声称已执行 schema validation。
+- 本轮实跑结果：两个 JSON code block 均解析成功；有效例 `valid_profiles=2`，分别为 `3×1024/10×4096/2s/3600s` 和 `2×8/8×32/30s/1200s`，warmup/measured seed 数分别精确匹配 `3/10` 与 `2/8`；反例静态检查得到重复 profile ID 组 `1`、缺失 warmup seeds `1`、measured seed/repetition 不匹配 `1`。过宽的 “every/all failure -> fresh OTK” 扫描为 `0` 行，一致语义扫描为 `7` 行，execution-profile 契约扫描为 `13` 行，placeholder 为 `0` 行，`git diff --check` 为 exit `0`。
 - 本轮占位符扫描 `exit=1/match_lines=0`，`git diff --check exit=0`。最终 cached 检查、状态和 commit 记录见 `.superpowers/sdd/final-fixes-report.md`；该本地审查报告不进入 Git。
 
 ## 7. 尚未解决的问题
