@@ -148,7 +148,7 @@ Capability and evaluation labels remain exact: C1 is a registered adversarial Ag
 
 - **Setup:** A permits B with a finite budget and enough public OTKs; consume the full pair budget.
 - **Mutation/adversarial action:** B requests one more OTK, including concurrent last-budget attempts.
-- **Expected rejection point:** Provider atomic positive-counter check at IV-D.2/IV-E Step 2.
+- **Expected rejection point:** Provider protocol's positive-counter decision at IV-D.2/IV-E Step 2, before submitting the structural CAS.
 - **Invariant:** Successful issuance count never exceeds the selected pair budget; pool and counter update together.
 - **Paper provenance category:** Threat-model/protocol inference from IV-D.2 and bounded-contact design; concurrency is reproduction engineering.
 - **Test layer:** Protocol security, memory/SQLite parity, and concurrency test.
@@ -193,20 +193,24 @@ Capability and evaluation labels remain exact: C1 is a registered adversarial Ag
 
 - **Setup:** Issue a persistent ACT with `q_max=1`; synchronize many workers so they present it concurrently.
 - **Mutation/adversarial action:** Trigger simultaneous validate-and-increment attempts through memory, SQLite, and real network paths.
-- **Expected rejection point:** Receiving Agent's atomic compare/check-and-increment; all losing requests receive `TokenExhausted` or a bounded/retried concurrency outcome that cannot become success.
-- **Invariant:** Exactly one request succeeds, persisted `use_count` is exactly one after restart, and no losing request causes application effects.
+- **Expected rejection point:** Receiving protocol's `< q_max` decision followed by an expected-revision/use-count CAS; all losing requests reread/revalidate and receive `TokenExhausted` or a bounded conflict outcome that cannot become success.
+- **Invariant:** In a no-crash race, exactly one CAS winner enters the handler, persisted `use_count` is one, one handler side effect occurs, and losing requests cause none. Under crash injection, persisted `use_count <= 1`, losers cause no side effect, and state is recoverable; no exactly-once claim is made for the winner's external side effect.
 - **Paper provenance category:** Reproduction engineering hardening implementing IV-E Step 8 quota; ProVerif does not prove atomicity.
 - **Test layer:** Deterministic concurrency, SQLite restart, and real mTLS load test.
 
 ## Concurrent q_max=1 Experiment
 
-Use a barrier, not timing sleeps, to release 2, 8, 32, and 128 workers against one fresh `q_max=1` ACT. Run each level repeatedly for memory, SQLite, and network adapters. Assert one success, `workers-1` non-successes, receiver count `1`, one application side effect, and the same state after SQLite close/reopen. Inject transaction conflicts and process interruption around the commit point to show that retries cannot duplicate success. Record linearization outcome per worker and latency distribution.
+Use a barrier, not timing sleeps, to release 2, 8, 32, and 128 workers against one fresh `q_max=1` ACT. In ordinary no-crash runs for memory, SQLite, and network adapters, assert one successful CAS/admission, `workers-1` non-successes, receiver count `1`, exactly one handler entry and one test handler side effect, and no loser side effect.
+
+Run crash injection as a separate experiment before the count commit, immediately after commit/before handler entry, and during the external test handler. After restart assert only persisted `use_count <= 1`, no losing-request side effect, rejection of any second admission when the count is one, and a readable/recoverable state. The winner's external effect may be absent, partial, or complete depending on the crash point. Count commit and external side effects are not exactly-once without an outbox/idempotency protocol, and this phase adds neither. Record each worker's CAS/admission outcome, crash point, persisted count, handler-entry marker when observable, side-effect observation, and latency.
 
 ## OTK and Pair-Budget Atomicity Experiments
 
 For a one-item OTK pool and sufficiently large pair budget, concurrently request contact from many initiators/requests and assert that one response contains the OTK and no OTK ID appears twice. For a pair budget of one and a multi-OTK pool, assert exactly one successful allocation and one decrement. For both last-OTK and last-budget races, verify that no partial state pairs “budget spent but OTK available” or “OTK issued without the corresponding committed budget transition.”
 
 Repeat against memory and SQLite, reopen SQLite after each terminal race, and inject rollback/lock-conflict faults. Separately race SOTK claim/ACT establishment and assert one ACT. A public OTK committed as issued is never made reissuable after a later Agent/network failure; the experiment does not invent cross-service rollback.
+
+Also force stale contact snapshots by changing Agent active revision, policy version, counter revision/value, and OTK-pool revision between protocol decision and CAS. Assert that the store returns `Conflict` without mutation, never evaluates a policy rule, and never returns allow/deny. The protocol must reread the complete snapshot and rerun active-state, most-specific policy, budget/cap, and OTK selection before attempting a new CAS; a stale allow decision cannot survive a policy deny/deactivation race.
 
 ## Real mTLS Network Experiments
 
@@ -241,55 +245,96 @@ Benchmark User registration, Agent registration at multiple OTK-batch sizes, sig
 
 ## q_max Trend Experiment
 
-For fixed request count, lifetime, Agents, hardware, storage, and network mode, compare `q_max` values such as 1, 2, 4, 8, 16, 32, and 64. Include reauthorization (Provider lookup, OTK, DH/HKDF, ACT creation) whenever the quota is exhausted, then compute total and amortized authorization cost per successful application request.
+This gate is preregistered as follows:
 
-Accepted directional trend: `q_max` 增大时，每请求授权开销下降. Report raw distributions and confidence/repeatability; do not force strict monotonicity at every adjacent point or compare absolute paper timings as a cross-hardware gate.
+- **Parameters:** `q_max = [1, 2, 4, 8, 16, 32, 64]`; one initiating/one receiving Agent; lifetime `3_600_000 ms`; 4,096 successful requests per repetition; 1,024-byte application payload; one exact-match permitting policy with sufficient pair budget/OTKs; memory and SQLite are separate scenarios, with the network scenario reported separately.
+- **Warmup and samples:** three recorded warmup repetitions per scenario/point (excluded from primary summaries), then ten independent measured repetitions. For measured repetition `r=0..9`, point order is the base list cyclically left-rotated by `(3*r) mod 7`; seeds are `41001..41010`. There is no adaptive stopping.
+- **Aggregation unit:** for each repetition, total authorization-path duration (including every required reauthorization, Provider lookup, OTK, DH/HKDF, ACT creation, and validation) divided by 4,096 successes. The point estimate is the median of the ten repetition means.
+- **Comparison and uncertainty:** compute the endpoint relative change `delta = median(q64)/median(q1)-1`, the Theil-Sen slope of repetition mean versus `log2(q_max)`, and paired bootstrap 95% percentile confidence intervals using 10,000 resamples of repetition IDs with seed `41999`.
+- **Pass rule:** `delta <= -0.10`, the upper bound of the bootstrap CI for `delta` is `< 0`, and the upper bound of the slope CI is `< 0`. Any missing point, excess failure preventing 4,096 successes, or failed condition fails the gate.
+
+Accepted directional trend: `q_max` 增大时，每请求授权开销下降. The 10% endpoint tolerance avoids treating measurement noise as reproduction while remaining a same-environment relative rule. Absolute paper timings are comparison data, never a cross-hardware threshold.
 
 ## Token Lifetime Trend Experiment
 
-Use a fixed simulated time window and deterministic request-arrival trace. Hold `q_max`, Agents, policy, storage, and network constant while varying lifetime. Expire naturally, reacquire a fresh OTK/ACT, and count reauthorizations; do not use wall-clock sleeps.
+This gate is preregistered as follows:
 
-Accepted directional trend: lifetime 增大时，固定时间窗口内重新授权次数下降. Also report amortized latency and the fraction limited by quota rather than time so the interpretation is explicit.
+- **Parameters:** lifetime in seconds `[1, 5, 30, 60, 300]`; a 600-second injected-clock window; mean request rate 10/s; `q_max=100_000` so quota never triggers; one initiating/receiving pair, one exact allow rule, sufficient OTK/budget, and a 1,024-byte payload in each fixed adapter/network scenario. For trace seed `s` and event index `i`, derive `u` from the first 53 bits of `SHA-256("SAGA-LIFETIME/v1" || uint64be(s) || uint64be(i))` mapped strictly into `(0,1)`, then use exponential inter-arrival `-ln(1-u)/10` seconds until the next event would exceed 600 seconds.
+- **Warmup and samples:** three recorded warmup traces with seeds `50998..51000`, then ten independent measured arrival traces generated from fixed seeds `51001..51010`; each seed's exact timestamp trace is saved and replayed for every lifetime. Lifetime order for measured repetition `r` is the base list cyclically left-rotated by `(2*r) mod 5`. No wall-clock sleeps or adaptive stopping are allowed.
+- **Aggregation unit:** per trace/lifetime, count initial authorization plus every expiration-driven reauthorization in the 600-second window. Also summarize authorization duration per successful request, but reauthorization count is the gate metric.
+- **Comparison and uncertainty:** require non-increasing counts at every adjacent lifetime for every paired trace; compute `ratio = median(count_300s)/median(count_1s)` and a paired 10,000-resample bootstrap 95% percentile CI using seed `51999`.
+- **Pass rule:** all paired adjacent comparisons are non-increasing, `ratio <= 0.20`, and the upper CI bound for `ratio` is `< 0.50`. A quota-driven renewal, missing trace, or failed condition fails the gate.
+
+Accepted directional trend: lifetime 增大时，固定时间窗口内重新授权次数下降. The fixed 80% endpoint reduction is a relative same-environment/event-trace criterion; it does not impose paper hardware timing.
 
 ## 1/10/100 Receiving-Agent Experiment
 
-Run identical workloads against 1/10/100 receiving agents with controlled per-Agent policy, OTK pool, Token parameters, and request rate. Record aggregate/per-Agent throughput, latency, Provider lookup/issuance cost, error rate, and resource consumption. Randomize or rotate target order to avoid warm-cache bias.
+This scale/repeatability gate is preregistered as follows:
 
-Accepted directional trend: receiving Agent 数量和并发度变化时，吞吐与开销趋势可解释且可重复. There is no mandated improvement direction; repeated runs must show a stable, explainable relationship tied to measured CPU, storage, network, and contention.
+- **Parameters:** receiving-Agent counts `[1, 10, 100]` crossed with closed-loop concurrency `[1, 8, 32]`; identical single exact-match policy and prefilled OTK/pair budget per Agent, `q_max=64`, lifetime 10 minutes, 1,024-byte request payload, round-robin target selection, and constant total client concurrency (not per-Agent concurrency).
+- **Warmup and samples:** two recorded 15-second warmup intervals per cell, then eight independent 30-second measured repetitions using target-order seeds `61001..61008`. Number the nine `(agent_count, concurrency)` cells in the written Cartesian-product order; measured repetition `r=0..7` visits cells in the base order cyclically left-rotated by `(4*r) mod 9`. No adaptive extension is allowed.
+- **Aggregation unit:** per repetition/cell, aggregate successful requests per second and request-weighted P95 latency; also record per-Agent throughput, failure rate, CPU, memory, SQLite lock retries, and TLS connection counts.
+- **Direction classification:** for each concurrency, fit the Theil-Sen slope of `log(throughput)` versus `log(agent_count)`. Use a 10,000-resample paired bootstrap by repetition ID (seed `61999`) and a preregistered practical-equivalence band `[-0.05, +0.05]`: classify **increase** if the CI is wholly above `+0.05`, **decrease** if wholly below `-0.05`, **stable** if the CI is wholly inside the band, otherwise **inconclusive**.
+- **Repeatability pass rule:** every cell has throughput coefficient of variation `<= 0.15`; its bootstrap 95% CI half-width divided by median throughput is `<= 0.15`; and every concurrency receives a non-inconclusive direction classification. A metric/telemetry gap or any failed condition fails the gate. The report must explain the classified direction using the measured CPU, lock, TLS, latency, and failure telemetry without changing the classification.
+
+Accepted directional trend: receiving Agent 数量和并发度变化时，吞吐与开销趋势可解释且可重复. No increase/decrease is mandated, but “repeatable and explainable” is now a calculable gate rather than narrative discretion; no absolute throughput number is compared across hardware.
 
 ## Concurrent Throughput Experiment
 
-Sweep client concurrency (for example 1, 2, 4, 8, 16, 32, 64) for authorization-heavy and ACT-reuse-heavy mixes. Measure completed successful requests/second, offered load, rejection/error class, latency percentiles, CPU/memory, SQLite lock retries, and connection/TLS overhead. Keep a closed-loop and, if used, an open-loop workload as separate scenarios. Saturation and failure modes are results, not discarded outliers.
+Sweep closed-loop client concurrency `[1, 2, 4, 8, 16, 32, 64]` for two fixed 1,024-byte mixes: authorization-heavy (`q_max=1`) and ACT-reuse-heavy (`q_max=64`), both with 10-minute lifetime and sufficient OTK/pair budget. Use two recorded 15-second warmups and eight fixed 30-second measured repetitions per point with seeds `71001..71008`; measured repetition `r=0..7` visits the base concurrency list cyclically left-rotated by `(3*r) mod 7`. There is no adaptive stopping. The aggregation unit is one repetition/point. Measure successful requests/second, offered attempts, rejection/error class, median/P95/P99 latency, CPU/memory, SQLite lock retries, and connection/TLS overhead. Open-loop workloads, if added, are separate scenarios and cannot replace this gate. Saturation and failures remain recorded samples.
+
+For each mix and adjacent concurrency pair, compute paired repetition throughput change `delta=median(high)/median(low)-1` and a 10,000-resample paired bootstrap 95% percentile CI using seed `71999`. Classify increase if the CI is wholly above `+0.05`, decrease if wholly below `-0.05`, stable if wholly inside `[-0.05,+0.05]`, and otherwise inconclusive; any inconclusive point is a gate failure. This experiment characterizes saturation and is not an additional paper-direction claim. It uses only relative same-environment comparisons.
 
 ## Result Schemas
 
-CSV uses one raw-sample row per operation attempt and one separately typed summary row (or separate `benchmark-samples.csv` and `benchmark-summaries.csv`). Required raw fields are:
+Schema version `saga-benchmark/v1` produces two distinct CSV files, never mixed row types, plus one equivalent versioned JSON document.
 
-```text
-schema_version, run_id, timestamp_utc, git_commit, dirty,
-scenario, operation, parameters, sample_index, duration_ns, success,
-error_class, environment_fingerprint, adapter, concurrency,
-warmup_count, sample_count
-```
+`benchmark-samples.csv` contains every warmup and measured attempt. All columns are required to exist:
 
-`parameters` is canonical JSON. `environment_fingerprint` is a stable SHA-256 identifier whose expanded object is included in JSON metadata. Required summary fields are:
+| Field | Type/unit | Required/nullable | Rule |
+|---|---|---|---|
+| `schema_version` | string | required, non-null | Enum: `saga-benchmark/v1` |
+| `run_id` | UUID string | required, non-null | One experiment invocation |
+| `timestamp_utc` | RFC3339 UTC string | required, non-null | Sample completion time |
+| `git_commit` | 40-char lowercase hex string | required, non-null | Tested revision |
+| `dirty` | boolean | required, non-null | `true` is retained, not hidden |
+| `scenario` | string | required, non-null | Registered scenario name |
+| `operation` | string | required, non-null | Registered operation enum/name |
+| `parameters` | canonical JSON object string | required, non-null | Typed scenario parameters and units |
+| `repetition_index` | integer >= 0 | required, non-null | Independent measured/warmup repetition |
+| `sample_index` | integer >= 0 | required, non-null | Unique within repetition/operation |
+| `phase` | string enum | required, non-null | `warmup` or `measured` |
+| `duration_ns` | integer >= 0 | required, non-null | Attempt duration, including failed attempts |
+| `success` | boolean | required, non-null | Outcome of this attempt |
+| `error_class` | string enum | required, nullable | Null iff success; otherwise stable domain/transport error enum |
+| `environment_fingerprint` | 64-char lowercase SHA-256 hex | required, non-null | References JSON `environments` entry |
+| `adapter` | string enum | required, non-null | `memory`, `sqlite`, or `network` |
+| `concurrency` | integer >= 1 | required, non-null | Active closed-loop clients/workers |
 
-```text
-schema_version, run_id, scenario, operation, parameters,
-environment_fingerprint, mean, median, P95, P99,
-standard_deviation, sample_count, success_count, failure_count,
-throughput_per_second
-```
+Every offered attempt is recorded, including warmups and failures; warmups are selected by `phase`, not deleted. A failed sample still has `duration_ns`, `success=false`, and non-null `error_class`.
 
-Thus the schema explicitly contains mean, median, P95, P99, standard deviation, and sample count. Durations use integer nanoseconds in raw rows and one documented unit in summaries.
+`benchmark-summary.csv` contains one row per `(run_id, scenario, operation, canonical parameters, adapter, concurrency, outcome_scope)` measured group:
 
-JSON is an object with `schema_version`, `run`, `environment`, `configuration`, `samples`, `summaries`, and `comparison`. Each `samples[]` item contains `operation`, structured `parameters`, `sample_index`, `duration_ns`, `success`, `error_class`, and `environment_fingerprint`. Each `summaries[]` item contains the full statistical summary fields above. `comparison` records paper figure/table/section, comparable/not-comparable status, paper value/unit if extractable, reproduction value/unit, relative difference where meaningful, trend result, and explanation.
+| Field | Type/unit | Required/nullable | Rule |
+|---|---|---|---|
+| `schema_version`, `run_id`, `scenario`, `operation`, `parameters`, `environment_fingerprint`, `adapter`, `concurrency` | as above | required, non-null | Exact grouping key |
+| `outcome_scope` | string enum | required, non-null | `success`, `failure`, or `all`; duration summaries use the named population |
+| `mean_ns`, `median_ns`, `p95_ns`, `p99_ns`, `standard_deviation_ns` | number, ns | required, nullable | Null only when `sample_count=0`; otherwise finite and >= 0 |
+| `sample_count`, `success_count`, `failure_count` | integer >= 0 | required, non-null | `success_count + failure_count = measured attempt count` for `all` |
+| `throughput_per_second` | number >= 0 | required, nullable | Non-null for throughput scenarios; null otherwise |
+| `bootstrap_ci_lower`, `bootstrap_ci_upper` | number | required, nullable | Non-null for preregistered trend comparisons; unit matches metric |
+| `trend_class` | string enum | required, nullable | `increase`, `decrease`, `stable`, `inconclusive`, or null when not a trend row |
+| `gate_pass` | boolean | required, nullable | Non-null for preregistered gate rows |
+
+JSON root is an object with required, non-null `schema_version` (string), `run` (object), `environments` (object map), `configuration` (object), `samples` (array), `summaries` (array), `trend_gates` (array), and `comparison` (array). `schema_version` is exactly `saga-benchmark/v1`. `run` requires typed `run_id` (UUID string), `timestamp_utc` (RFC3339 UTC string), `git_commit` (40-char hex string), and `dirty` (boolean). `environments` maps each 64-char fingerprint to a non-null object containing CPU string/count, memory bytes integer, OS/kernel/architecture/Python strings, dependency version map, TLS backend/version strings, and SQLite version/journal-mode strings. `configuration` requires the structured preregistered parameters, seed list, order formula, warmup count/duration, repetition count/duration, resample count/seed, tolerances, and pass rules. `samples[]` and `summaries[]` use the same required types/nullability as the CSV tables with `parameters` as an object rather than a string. `trend_gates[]` requires metric string, parameter endpoints object, estimator enum, integer resample count/seed, numeric nullable CI bounds, numeric tolerance, classification enum, and boolean pass. `comparison[]` requires paper location string, comparability enum (`comparable`, `partially_comparable`, `not_comparable`), nullable numeric paper/reproduction values with nullable unit strings, nullable relative difference, trend result enum, and explanation string. Unknown schema versions fail validation; additions require a new version.
 
 ## Statistical Summaries
 
-Warmups are excluded by an explicit flag/count, never silently. For every operation/parameter group, retain all formal attempts and separately summarize successes and failure classes. Report arithmetic mean, median, P95, P99, sample standard deviation, sample count, and confidence intervals or repeated-run ranges where meaningful. Define percentile interpolation in the schema/version notes.
+All warmup/sample counts, repetition counts, seeds, order, resamples, thresholds, and failure rules are fixed above; there is no data-dependent stopping. Warmup attempts remain in `benchmark-samples.csv` with `phase=warmup` and are excluded from primary summaries. Every measured success and failure remains in the raw file; durations are summarized for explicit `outcome_scope` populations, while success/failure counts always expose the full offered workload.
 
-Use enough samples to stabilize percentiles and publish the chosen stopping/sample rule before looking at results. Outliers remain in raw data; any secondary trimmed view is labeled and cannot replace the primary summary. Trend experiments run multiple independent repetitions with controlled order/randomization and report both within-run and across-run variability.
+Arithmetic mean is `sum(x)/n`; sample standard deviation uses denominator `n-1` and is `0` for `n=1`. Median, P95, and P99 use Hyndman-Fan type 7 linear interpolation: for sorted zero-based values `x[0..n-1]`, `h=(n-1)p`, `j=floor(h)`, `g=h-j`, and quantile `x[j] + g*(x[min(j+1,n-1)]-x[j])`. Empty populations have nullable statistics and `sample_count=0`. Primary summaries are untrimmed. Outliers are never removed; any labeled sensitivity analysis is secondary.
+
+All specified confidence intervals are paired percentile bootstrap intervals over independent repetition IDs, 10,000 resamples, using the fixed per-experiment seed and the 2.5th/97.5th type-7 percentiles. Resampling never treats requests within one repetition as independent. A missing/invalid sample, schema violation, insufficient completed repetitions, inconclusive required classification, or unmet preregistered threshold is a gate failure, not grounds to collect extra repetitions after inspecting results.
 
 ## Comparison with Paper Results
 
@@ -303,9 +348,9 @@ The experiment phase passes only when:
 
 - all unit/protocol mappings and all 20 attack headings execute with provenance and expected invariant assertions;
 - legal ACT reuse, wrong-Agent transfer, expired/exhausted reuse, and TLS record replay have separate outcomes;
-- memory and SQLite atomicity tests pass, including exactly one success for concurrent `q_max=1`, last OTK, last pair budget, and SOTK claim;
+- memory and SQLite atomicity tests pass, including protocol-owned authorization with versioned snapshot/CAS retry, exactly one no-crash success/handler side effect for concurrent `q_max=1`, and one winner for last OTK, last pair budget, and SOTK claim; crash injection must show persisted `use_count <= 1`, no loser effect, and recoverable state without claiming exactly-once winner effects;
 - real X.509 network cases pass, Agent mTLS is enforced, and User-Provider remains server-authenticated TLS plus User authentication rather than User mTLS;
 - ProVerif reports exactly the three scoped security properties and successful non-vacuity/reachability sanity checks, with no expanded claims;
-- raw CSV and JSON validate against the documented schemas and contain complete environment metadata and all required statistics;
-- the three accepted directional trends are reproducible or a failed trend is transparently reported and investigated; results are never altered to obtain acceptance;
+- `benchmark-samples.csv`, `benchmark-summary.csv`, and JSON validate against `saga-benchmark/v1`, preserve every success/failure/warmup attempt as specified, and contain complete environment metadata and required statistics;
+- each preregistered trend runs exactly its fixed parameters, warmups, repetitions, seeds, aggregation, bootstrap, tolerance, and pass rule; any failed/inconclusive condition fails the gate and is reported without post hoc sample extension or threshold changes;
 - every result is traceable to Git commit, configuration, source category, raw samples, and an explanation of material paper deviation.

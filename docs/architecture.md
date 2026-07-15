@@ -82,7 +82,7 @@ Secret OTK: available -> consumed/deleted (terminal)
 ACT:        established -> usable -> exhausted | expired | discarded
 ```
 
-Registration transitions commit only after all credentials, certificates, uniqueness conditions, and signatures verify. Contact resolution evaluates active state and current policy, initializes/caps the pair counter, consumes exactly one budget unit and one OTK, then returns one typed response. ACT establishment accepts an unused local SOTK, verifies initiating registration material, derives `SDHK`, consumes the SOTK, and creates/stores the five-field Token. ACT use maps the mTLS peer to its registered `PAC_B`, decrypts, checks binding/time/quota, and atomically increments on success.
+Registration transitions commit only after all credentials, certificates, uniqueness conditions, and signatures verify. For contact resolution, the protocol reads one consistent versioned snapshot, evaluates active state and the most-specific current policy, computes pair-counter initialization/capping and the selected OTK, then asks storage to perform only a structural compare-and-swap (CAS). A revision conflict restarts the read/decide/CAS loop, so every retry re-evaluates authorization against current state. ACT establishment accepts an unused local SOTK, verifies initiating registration material, derives `SDHK`, consumes the SOTK, and creates/stores the five-field Token. ACT use maps the mTLS peer to its registered `PAC_B`, decrypts, checks binding/time/quota, and atomically reserves one successful use before the application handler runs.
 
 Same-Agent ACT reuse below `q_max` and before expiry, including across a new TLS session, is legal. Wrong-Agent transfer, expired use, exhausted use, and TLS-record replay are different cases. No request ID exists, so semantic duplicate detection is outside the baseline.
 
@@ -92,9 +92,10 @@ Ports are narrow and express transaction intent rather than storage mechanics:
 
 - `UserRegistry`: create-if-absent and fetch User certificate/password record.
 - `AgentRegistry`: create-if-unique, fetch active/owned registration, update policy, append signed OTKs, and deactivate owned Agent.
-- `ContactResolutionStore`: one atomic operation for current policy/active checks, pair-counter initialization or capping, positive-budget decrement, and exactly-one public OTK consumption.
+- `ContactResolutionStore.read_snapshot(receiving, initiating)`: returns one consistent immutable snapshot containing Agent records, `agent_active` plus `agent_revision`, policy plus `policy_version`, pair-counter value plus `counter_revision` (or absence), and available public OTK IDs plus `otk_pool_revision`. It performs no pattern matching and returns no allow/deny result.
+- `ContactResolutionStore.try_commit(command)`: performs only a structural CAS using the protocol-selected OTK ID and expected `agent_revision`, expected active value, `policy_version`, counter presence/value/revision, and `otk_pool_revision`. On an exact match it writes the protocol-computed counter value and marks that OTK issued in one commit; otherwise it returns `Conflict` without mutation. It never chooses a rule, budget, allow/deny outcome, counter cap, or OTK candidate.
 - `ReceivingOtkStore`: atomically claim an `OTK -> SOTK` mapping for one ACT establishment; a claimed mapping can never be restored by retry.
-- `ActStateStore`: create receiver-owned state, atomic validate-and-increment, fetch/discard, and crash-safe recovery semantics.
+- `ActStateStore`: create receiver-owned state, fetch/discard, and structurally CAS an expected Token revision/use count to reserve one use. Identity, time, quota, and authorization checks occur in `protocols`; a CAS conflict causes a fresh read and re-validation.
 - `IdentityVerifier`: persistent-identity/human-verification decision; local adapters are substitutes for a paper assumption, not OpenID Connect reproduction.
 - `PasswordHasher`, `CertificateVerifier`, and `PeerIdentityResolver`: secure credential operations and mapping of authenticated transport identity to registered identity.
 - `Clock`, `SecureRandom`, and `TransactionRunner`: deterministic test seams and production-safe providers.
@@ -107,7 +108,7 @@ The in-memory adapter provides deterministic, lock-protected implementations for
 
 SQLite uses schema constraints for unique `uid`, `aid`, endpoint, and OTK identity; transactions use a write-locking strategy sufficient to linearize counter and consumption transitions. Transaction retry is bounded and maps lock exhaustion to `ConcurrentConflict`. Restart tests reopen the database and prove that issued public OTKs, consumed SOTKs, pair budgets, Agent deactivation, ACT state, and usage counts do not roll back.
 
-Both adapters implement protocol-requested transitions. Persistence cannot decide authorization: it may enforce structural constraints and compare-and-update preconditions, but policy matching, ownership rules, Agent eligibility, and ACT validity are protocol decisions.
+Both adapters implement protocol-requested transitions. Persistence cannot decide authorization: it may return a consistent snapshot, enforce schema/uniqueness constraints, and compare expected versions/values before applying a protocol-computed mutation. It cannot perform most-specific-rule matching, choose allow/deny, decide ownership or Agent eligibility, cap a counter, or decide ACT validity. A CAS conflict is not authorization denial; `protocols` must reread state and rerun the full decision.
 
 ## FastAPI and mTLS Adapters
 
@@ -138,11 +139,12 @@ TLS adapters enforce trust anchors, certificate validity, expected Agent/Provide
 ## Contact Resolution and OTK Data Flow
 
 1. Initiating `B` authenticates to the Provider and requests contact with receiving `A` using both Agent IDs.
-2. The protocol loads registered identities and delegates one atomic transition to `ContactResolutionStore`.
-3. Inside that transition, the requested protocol decision is applied to current active state and the most-specific current policy; the pair counter is initialized or capped by `min(old_remaining, new_budget)` and must be positive.
-4. Exactly one signed available public OTK is selected; the pair budget is decremented and the OTK is marked issued in the same commit.
-5. Only after commit does the Provider return `Cert_U1`, `aid_A`, `ED_A`, `Cert_A`, `PAC_A`, one `OTK_A^i`, `sigma_OTKi^U1`, and `sigma_A^U1`.
-6. `B` verifies the CA bindings and both User signatures before contacting `A`.
+2. The protocol calls `read_snapshot` and receives Agent/active/policy/counter/OTK state with their revisions in one consistent view.
+3. In `protocols`, it checks registered identities and active state, selects the most-specific rule, decides allow/deny, computes initialization or `min(old_remaining, new_budget)`, requires a positive remaining value, and deterministically selects one available signed OTK.
+4. The protocol sends `try_commit` a mutation command containing the selected OTK ID, computed decremented counter, and all expected revisions/values. The store only compares those preconditions and atomically writes the counter plus OTK-issued state.
+5. On `Conflict`, the protocol discards the old decision, rereads a new snapshot, and repeats policy/active/budget/OTK evaluation; it never retries only the write. On a successful CAS, exactly one OTK is committed.
+6. Only after commit does the Provider return `Cert_U1`, `aid_A`, `ED_A`, `Cert_A`, `PAC_A`, one `OTK_A^i`, `sigma_OTKi^U1`, and `sigma_A^U1`.
+7. `B` verifies the CA bindings and both User signatures before contacting `A`.
 
 No match, explicit deny, inactive Agent, pair-budget exhaustion, and OTK-pool exhaustion are distinct internal results. Policy update applies on the next request; a larger budget or OTK refill never restores already consumed pair quota.
 
@@ -154,8 +156,9 @@ No match, explicit deny, inactive Agent, pair-budget exhaustion, and OTK-pool ex
 4. `B` derives `SDHK` from `X25519(SAC_B, OTK_A^i)`; `A` derives it from `X25519(SOTK_A^i, PAC_B)` and fixed HKDF parameters.
 5. `A` atomically claims/deletes the SOTK mapping before creating Token state. Failure requires a fresh OTK; distributed rollback is not invented.
 6. `A` creates exactly `<N, T_issued, T_expire, Q_max, PAC_B>`, encrypts it with fresh AEAD nonce/AAD, stores authoritative receiver state, and sends only the envelope/ciphertext to `B`.
-7. On later mTLS requests, `A` maps the peer certificate to registered `PAC_B`, decrypts, checks semantic key equality, applies `[issued_at, expires_at)`, and atomically checks `< q_max` then increments.
-8. Expiry, exhaustion, or local task completion discards Token state as specified; continued contact starts with a fresh OTK. Policy change or deactivation blocks new discovery/OTK issuance but does not retroactively revoke an issued ACT.
+7. On later mTLS requests, `A` maps the peer certificate to registered `PAC_B`, decrypts, checks semantic key equality and `[issued_at, expires_at)`, reads versioned ACT state, and decides whether `use_count < q_max` in `protocols`. It then CAS-reserves the next count; a conflict causes a fresh read and complete re-validation. Only the CAS winner enters the application handler.
+8. In an ordinary no-crash race, one `q_max=1` CAS winner can produce one handler side effect and losers produce none. A process crash after count reservation but before or during an external side effect may produce zero, partial, or one external effect; the architecture guarantees only persisted `use_count <= q_max`, not exactly-once external effects. No outbox or application idempotency mechanism is added in this phase.
+9. Expiry, exhaustion, or local task completion discards Token state as specified; continued contact starts with a fresh OTK. Policy change or deactivation blocks new discovery/OTK issuance but does not retroactively revoke an issued ACT.
 
 ## Atomicity and Transaction Boundaries
 
@@ -163,18 +166,18 @@ The following operations cannot partially commit:
 
 - User create-if-absent and complete Agent registration;
 - policy replacement/validation, OTK append, and Agent deactivation;
-- policy/active-state read, pair-counter initialization/capping/check/decrement, and one public OTK select-and-consume;
+- one versioned contact snapshot followed by a protocol-computed CAS of expected Agent/active/policy/counter/OTK revisions, counter mutation, and one public OTK consumption; authorization is outside the transaction adapter;
 - SOTK claim/delete plus receiver ACT-state creation, with an explicit fail-closed recovery rule if encryption/storage fails;
-- ACT `< q_max` validation and successful-use increment;
+- protocol-side ACT validation followed by a structural expected-revision/use-count CAS that reserves one use before handler entry;
 - task-completion discard and terminal-state transitions.
 
-Provider and receiving Agent transactions are separate trust/state domains. The architecture does not claim distributed atomic rollback between public OTK issuance and SOTK consumption. Once a public OTK is issued it is never returned to the pool; a failed later handshake starts over with a new OTK. Linearization tests cover both in-memory and SQLite adapters, including `q_max=1`, simultaneous last-budget use, and simultaneous last-OTK allocation.
+Provider and receiving Agent transactions are separate trust/state domains. The architecture does not claim distributed atomic rollback between public OTK issuance and SOTK consumption. Once a public OTK is issued it is never returned to the pool; a failed later handshake starts over with a new OTK. Linearization tests cover both in-memory and SQLite adapters, including `q_max=1`, simultaneous last-budget use, and simultaneous last-OTK allocation. Crash tests do not claim atomicity between ACT-use-count commit and an external application side effect: without an outbox/idempotency extension, that boundary is at-most-one handler admission in a live process, not exactly-once effect delivery across crashes.
 
 ## Failure Semantics
 
 Stable categories are: `InvalidInput`, `AuthenticationFailed`, `InvalidCertificate`, `InvalidSignature`, `DuplicateRegistration`, `PolicyDenied`, `PolicyNoMatch`, `PairBudgetExhausted`, `OtkPoolExhausted`, `OtkConsumed`, `AgentInactive`, `TokenIdentityMismatch`, `TokenNotYetValid`, `TokenExpired`, `TokenExhausted`, `InvalidTokenCiphertext`, and `ConcurrentConflict`.
 
-All failures are fail closed. Validation occurs before mutation except where one atomic compare-and-update performs both. Failed signature, certificate, binding, time, or ciphertext checks do not consume ACT quota. External HTTP responses are deliberately coarser than internal errors where detail would create a credential, certificate, signature, OTK, or Token oracle. Timeouts/interruption abort uncommitted work; committed one-time consumption is never reversed. Unknown exceptions become a generic failure, are correlated internally, and never expose a stack trace or secret.
+All failures are fail closed. Authorization validation occurs in `protocols` before a mutation request; stores only compare structural expected values/revisions and commit or return `Conflict`. Failed signature, certificate, binding, time, or ciphertext checks do not consume ACT quota. External HTTP responses are deliberately coarser than internal errors where detail would create a credential, certificate, signature, OTK, or Token oracle. Timeouts/interruption abort uncommitted work; committed one-time consumption is never reversed. A crash after ACT-count reservation may consume quota without a completed external effect and is reported as such, not retried as an exactly-once operation. Unknown exceptions become a generic failure, are correlated internally, and never expose a stack trace or secret.
 
 ## Secret-Safe Observability
 
