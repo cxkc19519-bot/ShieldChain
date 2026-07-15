@@ -131,6 +131,7 @@ rg -n 'same already allocated OTK|same OTK|fresh OTK|uncertain outcome|orphan AC
 rg -n 'Warmup repetitions × offered attempts|scheduling seeds|aggregation unit|repetition timeout|no adaptive stopping' docs/experiment-plan.md
 rg -n 'exactly 4,096 offered attempts|fixed denominator of 4,096 offered attempts|all 4,096 succeed|offered_attempts_per_point.*4096' docs/experiment-plan.md
 rg -n 'execution_profiles|profile_id|warmup_seeds|measured_seeds|warmup_offered_attempts_per_repetition|measured_offered_attempts_per_repetition|fail_profile_no_replacement' docs/experiment-plan.md
+rg -n '40998..41000|50998..51000|60999..61000|70999..71000|per_attempt_timeout_seconds=10|per_repetition_timeout_seconds=(3600|120)' docs/experiment-plan.md
 ```
 
 ## 6. 测试结果
@@ -152,6 +153,7 @@ rg -n 'execution_profiles|profile_id|warmup_seeds|measured_seeds|warmup_offered_
 - JSON 示例验证：最小有效示例可被 JSON 解析，顶级键正好为 `schema_version,run,environments,configuration,samples,summaries,trend_gates,comparison`；`canonical_fingerprint_input` 重新计算为 `41267dcc00ab22f82bcfc8e3bc423069d56b5237b522fbea3616828f89845d1b`，与 environment map key 一致；有效例有 ordinary crypto 与 scrypt 两个异构 profile，运行次数、attempt 数、种子和超时不同。应失败示例也保持合法 JSON，但缺失 `warmup_seeds`、重复 `profile_id`/selector，且 measured seed 数与 repetition 数不符。Phase 0 尚无 validator 实现，因此这里只验证 JSON 解析、示例结构和预期拒绝理由，不声称已执行 schema validation。
 - 本轮实跑结果：两个 JSON code block 均解析成功；有效例 `valid_profiles=2`，分别为 `3×1024/10×4096/2s/3600s` 和 `2×8/8×32/30s/1200s`，warmup/measured seed 数分别精确匹配 `3/10` 与 `2/8`；反例静态检查得到重复 profile ID 组 `1`、缺失 warmup seeds `1`、measured seed/repetition 不匹配 `1`。过宽的 “every/all failure -> fresh OTK” 扫描为 `0` 行，一致语义扫描为 `7` 行，execution-profile 契约扫描为 `13` 行，placeholder 为 `0` 行，`git diff --check` 为 exit `0`。
 - 本轮占位符扫描 `exit=1/match_lines=0`，`git diff --check exit=0`。最终 cached 检查、状态和 commit 记录见 `.superpowers/sdd/final-fixes-report.md`；该本地审查报告不进入 Git。
+- 第三轮定向修订将四组趋势 family 的 closed execution profile 全部预注册：q_max 为 warmup/measured seeds `40998..41000`/`41001..41010`、timeouts `10 s/3600 s`；token lifetime 为 `50998..51000`/`51001..51010`、`10 s/3600 s`；Agent scale 为 `60999..61000`/`61001..61008`、`10 s/120 s`；concurrent throughput 为 `70999..71000`/`71001..71008`、`10 s/120 s`。每组 seed 数精确等于 repetition 数且两阶段不相交，顺序公式、seed scope 与 `fail_profile_no_replacement` 均固定；两个 fixed-duration profile 的 120 秒 repetition timeout 严格大于 15/30 秒窗口。这里只完成文档预注册与静态核对，不声称 benchmark harness、schema validator 或任何实验已实现/执行。
 
 ## 7. 尚未解决的问题
 
