@@ -96,7 +96,7 @@ The paper protocol is the only normative source. Decisions below follow this pre
 - **Ambiguity:** Provider public-key consumption and receiving-side secret destruction occur in different components and phases; retries/concurrency could otherwise reissue or reuse either half.
 - **Decision:** Atomically mark the public OTK consumed within the Provider's contact-resolution transaction so it is issued once. At `A`, atomically verify the mapping, derive `SDHK`, mark/delete the SOTK mapping, and only then create/store/send the ACT; any missing/consumed mapping fails closed.
 - **Classification:** Paper lifecycle ordering plus reproduction atomicity hardening.
-- **Consequence:** A failed delivery does not make the public OTK reissuable, and a consumed SOTK cannot generate a second ACT. Recovery requires a fresh OTK; distributed rollback/reconciliation is not invented as paper protocol.
+- **Consequence:** A failed delivery does not make the public OTK reissuable, and a consumed SOTK cannot generate a second ACT. A crash before SOTK claim/delete consumes nothing; a crash after claim/delete but before ACT persistence loses the OTK; a crash after ACT persistence but before response may leave an orphan ACT at `A` that `B` never received. Every failure requires a fresh OTK. SOTK deletion and ACT creation are not one rollback-capable transaction, and distributed rollback/reconciliation is not invented as paper protocol.
 
 ## 13. External human identity verification in a local research prototype
 

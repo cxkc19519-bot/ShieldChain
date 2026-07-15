@@ -2,15 +2,19 @@
 
 ## 1. 本阶段完成内容
 
-Phase 0 已完成来源权威顺序、功能来源矩阵、论文协议分析、逐步消息账本、威胁模型、歧义与确定性决策、复现架构、实验预注册以及 Phase 1-8 主实施边界。交叉审计覆盖所有九份 Phase 0 基线文档和已批准设计规格；审计没有发现需要改写既有文档的跨文档矛盾。
+Phase 0 已完成来源权威顺序、功能来源矩阵、论文协议分析、逐步消息账本、威胁模型、歧义与确定性决策、复现架构、实验预注册以及 Phase 1-8 主实施边界。最终交叉审计覆盖所有九份 Phase 0 基线文档和已批准设计规格，并修正了 IV-E 步骤范围、SOTK/ACT 崩溃边界、两组未完全固定的 benchmark family、`q_max` offered-attempt 分母和 JSON schema 契约。修订后复核未发现这些主题的跨文档矛盾。
 
 本阶段只建立可审计的文档基线，没有创建 Phase 1 计划、代码、依赖、证书、测试工具、结果数据、标签或功能分支。
 
 ## 2. 修改和新增的文件
 
-本次交叉审计新增：
+本次最终审查修改：
 
-- [docs/phase-0-verification.md](phase-0-verification.md)：本十章验证报告及可复现门禁证据。
+- [docs/architecture.md](architecture.md)：将 SOTK claim/delete 固定为先发生、不可逆的独立线性化提交，并明确三个 crash 点。
+- [docs/ambiguities-and-decisions.md](ambiguities-and-decisions.md)：同步 SOTK/ACT 的失败恢复结论。
+- [docs/implementation-plan.md](implementation-plan.md)：将 Phase 4 论文范围改为真实的 IV-E Steps 4–8，并同步 crash 测试与事务边界。
+- [docs/experiment-plan.md](experiment-plan.md)：补齐固定运行表、4096 offered-attempt 规则、完整 JSON 契约和正反示例。
+- [docs/phase-0-verification.md](phase-0-verification.md)：记录本轮最终修订和实际门禁结果。
 
 本次审计逐一复核但未修改：
 
@@ -19,10 +23,6 @@ Phase 0 已完成来源权威顺序、功能来源矩阵、论文协议分析、
 - [docs/paper-analysis.md](paper-analysis.md)
 - [docs/protocol-messages.md](protocol-messages.md)
 - [docs/threat-model.md](threat-model.md)
-- [docs/ambiguities-and-decisions.md](ambiguities-and-decisions.md)
-- [docs/architecture.md](architecture.md)
-- [docs/experiment-plan.md](experiment-plan.md)
-- [docs/implementation-plan.md](implementation-plan.md)
 - [已批准设计规格](superpowers/specs/2026-07-15-saga-reproduction-design.md)
 - [Phase 0 执行计划](superpowers/plans/2026-07-15-saga-phase-0.md)
 - [`.gitignore`](../.gitignore)
@@ -51,6 +51,7 @@ ACT 明文在全部基线材料中保持论文的五字段语义：`<N, T_issued
 - 合法的同一 Agent ACT 复用、错误 Agent 转移、过期/耗尽使用、TLS 记录重放和应用语义重复请求分别建模。
 - ProVerif 只承载 Token secrecy、Agent-Provider authentication、Agent-Agent authentication 三类安全属性；reachability 只作为模型可执行性/非空性 sanity check。
 - OTK、pair budget、SOTK 与 `q_max` 的持久化、CAS、线性化和崩溃边界是复现工程加固，不能由论文形式化结果代替。
+- 按 IV-E Step 6/Figure 9，SOTK claim/delete 是独立且不可逆的线性化提交，之后才创建和存储 ACT。delete 前 crash 不消费；delete 后、ACT 持久化前 crash 永久损失该 OTK；ACT 持久化后、响应前 crash 可在 `A` 留下 `B` 未收到的 orphan ACT。所有失败都使用新 OTK，不把两次提交包装成可回滚的 all-or-nothing 事务。
 
 ## 5. 已运行的测试命令
 
@@ -121,6 +122,17 @@ git diff --cached --check
 git diff --cached --name-only
 ```
 
+最终审查还实际运行以下定向门禁；`rg` exit 1 且匹配数 0 表示预期的“未发现”：
+
+```powershell
+$ghostPattern = @('IV-E Steps? 4.?'+'9','IV-E Step '+'9','Steps 4.?'+'9') -join '|'
+rg -n -i $ghostPattern docs
+rg -n 'irreversible linearization commit|crash before.*SOTK|crash after.*ACT persistence|orphan ACT|fresh OTK|never modeled as one all-or-nothing' docs/architecture.md docs/ambiguities-and-decisions.md docs/implementation-plan.md
+rg -n 'Warmup repetitions × offered attempts|scheduling seeds|aggregation unit|repetition timeout|no adaptive stopping' docs/experiment-plan.md
+rg -n 'exactly 4,096 offered attempts|fixed denominator of 4,096 offered attempts|all 4,096 succeed|offered_attempts_per_point.*4096' docs/experiment-plan.md
+rg -n 'Complete `saga-benchmark/v1` JSON contract|canonical_fingerprint_input|configuration.parameters|comparison\[\]|Minimal structurally valid example|This example must fail' docs/experiment-plan.md
+```
+
 ## 6. 测试结果
 
 首次运行 Step 1-2 的实际结果如下；新增本报告后的最终重跑结果记录在本节后续条目中，并作为提交门禁使用。
@@ -136,6 +148,9 @@ git diff --cached --name-only
 - `git check-ignore -v`：三项本地输入全部命中 `.gitignore`；`git status --short --ignored` 只显示三个预期 ignored 条目。
 - 修订后的完整重跑：占位符 `exit=1/match_lines=0`，whitespace `exit=0`，ACT 扩展字段 `exit=1/match_lines=0`，后续功能 `exit=0/match_lines=8`，必需文件 `present=9/missing=0`，五字段 ACT `exit=0/match_lines=17`，矩阵表头 `exit=0/match_lines=1`，核心章节 `exit=0/match_lines=136`（`paper-analysis=22`、`protocol-messages=66`、`feature-source-matrix=48`）。十章标题检查为 `exit=0/count=10`；相对 Markdown 文档链接为 `count=12/broken=0`。
 - 最终重跑、cached diff 和提交后的真实结果见本次任务的 `.superpowers/sdd/task-7-report.md`；该报告为本地审计记录，不进入 Git。
+- 最终修订定向检查：幽灵步骤编号 `exit=1/match_lines=0`；SOTK 顺序/crash/fresh-OTK 语义 `exit=0/match_lines=7`；密码学与注册/授权固定参数标记 `exit=0/match_lines=9`；`q_max` 4096 offered 规则 `exit=0/match_lines=5`；JSON 顶级/schema/environment/configuration/comparison/示例标记 `exit=0/match_lines=9`。
+- JSON 示例验证：最小有效示例可被 JSON 解析，顶级键正好为 `schema_version,run,environments,configuration,samples,summaries,trend_gates,comparison`；`canonical_fingerprint_input` 重新计算为 `41267dcc00ab22f82bcfc8e3bc423069d56b5237b522fbea3616828f89845d1b`，与 environment map key 一致。应失败示例保持合法 JSON，但包含错误版本/类型、缺失必填键和未知属性。
+- 本轮占位符扫描 `exit=1/match_lines=0`，`git diff --check exit=0`。最终 cached 检查、状态和 commit 记录见 `.superpowers/sdd/final-fixes-report.md`；该本地审查报告不进入 Git。
 
 ## 7. 尚未解决的问题
 

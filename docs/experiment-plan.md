@@ -237,21 +237,36 @@ Claims are strictly symbolic and under the Dolev-Yao/cryptographic assumptions. 
 
 ## Cryptographic Microbenchmarks
 
-Measure Ed25519 KeyGen, sign, and verify separately; X25519 key generation/exchange; HKDF-SHA256; ChaCha20-Poly1305 ACT encrypt/decrypt; certificate parsing/verification where stable; and scrypt separately from protocol latency. Pre-generate inputs when measuring one operation, prevent setup from leaking into samples, warm up, and retain raw per-sample durations. Parameterize payload/key sizes only where the primitive permits and label failures rather than discarding them.
+Measure each operation in this fixed table. Inputs are pre-generated outside the timed interval except for the operation named; Ed25519 sign/verify use a 1,024-byte message, HKDF uses a 32-byte input and 32-byte output, AEAD uses the canonical five-field ACT plaintext, certificate parse/verify uses the fixed one-intermediate test chain, and scrypt uses the baseline `N=2^15,r=8,p=1,dkLen=32` parameters.
+
+| Operations | Warmup repetitions × offered attempts | Measured repetitions × offered attempts | Per-attempt / repetition timeout |
+|---|---:|---:|---:|
+| Ed25519 key generation, sign, verify; X25519 key generation, exchange; HKDF-SHA256; ACT encrypt, decrypt; certificate parse, verify | 3 × 1,024 | 10 × 4,096 | 2 s / 60 min |
+| scrypt derivation | 2 × 8 | 8 × 32 | 30 s / 20 min |
+
+Within every repetition, operations run in the written order cyclically left-rotated by `repetition_index mod operation_count`; warmup scheduling seeds are `10998..11000` for the first row and `11999..12000` for scrypt, and measured scheduling seeds are `11001..11010` and `12001..12008`, respectively. Each repetition gets a disjoint pre-generated input set and resets operation-local state, so repetitions are independent. Seeds control only operation/input scheduling: all production-like key, salt, and nonce generation still uses the OS CSPRNG and its bytes are never derived from the seed. The aggregation unit is one operation/repetition; latency statistics use successful attempts, while offered/success/failure counts retain the fixed denominator. An attempt or repetition timeout or primitive failure is recorded with its error class and fails that operation's benchmark gate; no replacement attempt, adaptive stopping, or extra repetition is permitted. Comparisons are relative within the same environment; there is no cross-hardware absolute latency threshold.
 
 ## Registration and Authorization Benchmarks
 
-Benchmark User registration, Agent registration at multiple OTK-batch sizes, signed OTK append, contact resolution/one-OTK issuance, ACT establishment, and ACT validation/use. Run memory and SQLite separately, and network end-to-end separately from in-process protocol calls. Record transaction mode, database size, policy-rule count, OTK-pool size, certificate path length, concurrency, and whether cryptographic setup is included.
+Run memory, SQLite, and network end-to-end as separate scenarios with the fixed configuration below: concurrency `1`, 1,024-byte application payload where applicable, one exact-match policy, certificate path length `2`, empty initial database per independent repetition, sufficient pair budget/OTKs, ACT lifetime `600_000 ms`, and `q_max=64`. Agent registration and OTK append use batch sizes `[1, 10, 100]`; all other operations have one registered parameter point. Cryptographic work required by the named protocol operation is included, while fixture key/certificate generation is excluded and declared in `configuration`.
+
+| Operations/points | Warmup repetitions × offered attempts | Measured repetitions × offered attempts | Per-attempt / repetition timeout |
+|---|---:|---:|---:|
+| User registration | 2 × 8 | 8 × 32 | 30 s / 30 min |
+| Agent registration at OTK batch `[1,10,100]`; signed OTK append at batch `[1,10,100]` | 2 × 16 per point | 8 × 64 per point | 30 s / 30 min |
+| Contact resolution/one-OTK issuance; ACT establishment; ACT validation/use | 3 × 128 | 10 × 1,024 | 10 s / 30 min |
+
+Within each adapter scenario and repetition, visit the written operation/point list cyclically left-rotated by `(5*repetition_index) mod point_count`; warmup scheduling seeds are `20999..21000` for two-repetition rows and `20998..21000` for three-repetition rows, while measured scheduling seeds are `21001..21010`, with only the first eight used by eight-repetition rows. Every repetition starts from a newly created fixture and empty database, uses a disjoint identity/OTK set, and tears it down afterward, so repetitions are independent. Seeds control fixture selection and scheduling only and never replace the OS CSPRNG. The aggregation unit is one adapter/operation/parameter-point/repetition. Every offered attempt is recorded; successful-attempt latency and total offered/success/failure counts are summarized separately. Any protocol failure, attempt/repetition timeout, missing attempt, or fixture-state leak fails that repetition and the family gate; attempts are never replaced, and there is no adaptive stopping or post-observation extension. Transaction mode, database size, policy count, OTK-pool size, certificate path length, and included/excluded setup are mandatory parameters. Only same-environment relative comparisons are gates; paper or cross-hardware absolute timings are descriptive.
 
 ## q_max Trend Experiment
 
 This gate is preregistered as follows:
 
-- **Parameters:** `q_max = [1, 2, 4, 8, 16, 32, 64]`; one initiating/one receiving Agent; lifetime `3_600_000 ms`; 4,096 successful requests per repetition; 1,024-byte application payload; one exact-match permitting policy with sufficient pair budget/OTKs; memory and SQLite are separate scenarios, with the network scenario reported separately.
+- **Parameters:** `q_max = [1, 2, 4, 8, 16, 32, 64]`; one initiating/one receiving Agent; lifetime `3_600_000 ms`; exactly 4,096 offered attempts per point/repetition; 1,024-byte application payload; one exact-match permitting policy with sufficient pair budget/OTKs; memory and SQLite are separate scenarios, with the network scenario reported separately. This is a controlled-valid workload, so all 4,096 attempts must succeed.
 - **Warmup and samples:** three recorded warmup repetitions per scenario/point (excluded from primary summaries), then ten independent measured repetitions. For measured repetition `r=0..9`, point order is the base list cyclically left-rotated by `(3*r) mod 7`; seeds are `41001..41010`. There is no adaptive stopping.
-- **Aggregation unit:** for each repetition, total authorization-path duration (including every required reauthorization, Provider lookup, OTK, DH/HKDF, ACT creation, and validation) divided by 4,096 successes. The point estimate is the median of the ten repetition means.
+- **Aggregation unit:** for each repetition, total authorization-path duration (including every required reauthorization, Provider lookup, OTK, DH/HKDF, ACT creation, and validation) divided by the fixed denominator of 4,096 offered attempts. The point estimate is the median of the ten repetition means. The per-attempt timeout is fixed at 10 seconds and the repetition timeout at 60 minutes.
 - **Comparison and uncertainty:** compute the endpoint relative change `delta = median(q64)/median(q1)-1`, the Theil-Sen slope of repetition mean versus `log2(q_max)`, and paired bootstrap 95% percentile confidence intervals using 10,000 resamples of repetition IDs with seed `41999`.
-- **Pass rule:** `delta <= -0.10`, the upper bound of the bootstrap CI for `delta` is `< 0`, and the upper bound of the slope CI is `< 0`. Any missing point, excess failure preventing 4,096 successes, or failed condition fails the gate.
+- **Pass rule:** every measured repetition contains exactly 4,096 offered attempts and all 4,096 succeed; any functional failure, timeout, missing/extra attempt, or denominator other than 4,096 makes the repetition invalid and fails the gate. For valid repetitions, `delta <= -0.10`, the upper bound of the bootstrap CI for `delta` is `< 0`, and the upper bound of the slope CI is `< 0`. No replacement repetition is collected.
 
 Accepted directional trend: `q_max` 增大时，每请求授权开销下降. The 10% endpoint tolerance avoids treating measurement noise as reproduction while remaining a same-environment relative rule. Absolute paper timings are comparison data, never a cross-hardware threshold.
 
@@ -352,7 +367,116 @@ Required trend rows are deterministic. For each adapter/scenario, q_max emits se
 
 Validation parses both parameter fields as canonical JSON objects, checks `gate_id` uniqueness and the complete expected gate-ID set, checks metric/unit/comparison compatibility, validates repetition/resample/seed values against preregistration, recomputes estimates/type-7 bootstrap bounds/classification/pass rule from summary plus raw repetition data, and rejects extra, missing, duplicated, non-finite, wrong-unit, or post-hoc-threshold rows. `lhs_parameters` is always the higher/target setting and `rhs_parameters` the lower/reference setting, so delta/ratio orientation is fixed.
 
-JSON root is an object with required, non-null `schema_version` (string), `run` (object), `environments` (object map), `configuration` (object), `samples` (array), `summaries` (array), `trend_gates` (array), and `comparison` (array). `schema_version` is exactly `saga-benchmark/v1`. `run` requires typed `run_id` (UUID string), `timestamp_utc` (RFC3339 UTC string), `git_commit` (40-char hex string), and `dirty` (boolean). `environments` maps each 64-char fingerprint to a non-null object containing CPU string/count, memory bytes integer, OS/kernel/architecture/Python strings, dependency version map, TLS backend/version strings, and SQLite version/journal-mode strings. `configuration` requires the structured preregistered parameters, seed list, order formula, warmup count/duration, repetition count/duration, resample count/seed, tolerances, and pass rules. `samples[]` and `summaries[]` use the same required types/nullability as their CSV tables with `parameters` as an object rather than a string, and `summaries[]` has exactly one object per measured group with no trend/gate fields. `trend_gates[]` has exactly the same fields, enum values, units, conditional nullability, one-gate-per-object cardinality, and validation rules as `benchmark-trend-gates.csv`; only `lhs_parameters`/`rhs_parameters` are JSON objects instead of CSV JSON strings. CSV rows and JSON objects must match field-for-field after canonicalization. `comparison[]` requires paper location string, comparability enum (`comparable`, `partially_comparable`, `not_comparable`), nullable numeric paper/reproduction values with nullable unit strings, nullable relative difference, trend result enum, and explanation string. Unknown schema versions fail validation; additions require a new version.
+### Complete `saga-benchmark/v1` JSON contract
+
+Every object below is closed: unknown properties fail validation. Every listed property is required; “nullable” means the property is present with JSON `null`, never omitted. Numbers must be finite JSON numbers. Arrays are non-null; the structural schema permits an empty pre-execution envelope, while completed-run validation requires the complete preregistered row set and permits an empty row type only when the selected family defines no instances of it.
+
+| Root property | Type | Nullable | Exact rule |
+|---|---|---|---|
+| `schema_version` | string enum | no | Exactly `saga-benchmark/v1` |
+| `run` | object | no | Exact `run` object below |
+| `environments` | object map | no | One or more fingerprint-keyed environment objects |
+| `configuration` | object | no | Exact configuration object below |
+| `samples` | array of sample objects | no | JSON isomorphic to `benchmark-samples.csv` |
+| `summaries` | array of summary objects | no | JSON isomorphic to `benchmark-summary.csv` |
+| `trend_gates` | array of trend-gate objects | no | JSON isomorphic to `benchmark-trend-gates.csv` |
+| `comparison` | array of comparison objects | no | Exact comparison objects below |
+
+`run` has exactly: `run_id` (UUID string), `timestamp_utc` (RFC3339 string ending `Z`), `git_commit` (40-character lowercase hex string), and `dirty` (boolean); all four are required and non-null.
+
+Each `environments` key is a 64-character lowercase SHA-256 hex fingerprint. Its value has exactly these required properties:
+
+| Property | Type/unit | Nullable | Enum/rule |
+|---|---|---|---|
+| `cpu_model` | non-empty string | no | Reported CPU model |
+| `cpu_logical_count` | integer >= 1 | no | logical CPUs |
+| `cpu_physical_count` | integer >= 1 | yes | null if unavailable |
+| `memory_bytes` | integer >= 1, bytes | no | physical memory |
+| `os_name`, `os_version`, `kernel_version`, `architecture` | non-empty string | no | platform identity |
+| `python_implementation`, `python_version` | non-empty string | no | interpreter identity |
+| `dependency_lock_sha256` | 64-character lowercase hex string | no | exact dependency lock bytes |
+| `dependency_versions` | object map string -> non-empty string | no | sorted package/version map |
+| `tls_backend`, `tls_version` | non-empty string | no | TLS implementation/version |
+| `sqlite_version` | non-empty string | no | linked SQLite version, including memory/network runs |
+| `sqlite_journal_mode` | string enum | yes | `delete`, `truncate`, `persist`, `memory`, `wal`, `off`; null when SQLite is not used |
+| `network_topology` | string enum | no | `loopback_single_host`, `local_multi_process`, `lan`, `wan_emulated`, `remote_wan`, `not_applicable` |
+| `storage_type` | string enum | no | `memory`, `nvme_ssd`, `sata_ssd`, `hdd`, `network_block`, `network_file`, `other`, `not_applicable` |
+| `storage_location_class` | string enum | no | `ram`, `same_host`, `lan_remote`, `wan_remote`, `not_applicable` |
+| `power_mode` | string enum | no | `performance`, `balanced`, `powersave`, `unknown` |
+| `proverif_version` | non-empty string | yes | null when ProVerif is not applicable/not invoked |
+| `canonical_fingerprint_input` | string | no | RFC 8785-style canonical JSON of every preceding environment property, excluding this property |
+
+The map key must equal lowercase `SHA-256(UTF-8(canonical_fingerprint_input))`; parsing that string must reproduce exactly the other environment values and lexicographically sorted keys. Thus topology, storage type/location, power mode, dependency lock, and nullable ProVerif version all participate in the fingerprint.
+
+`configuration` has exactly these required, non-null properties:
+
+| Property | Type | Exact rule |
+|---|---|---|
+| `benchmark_family` | string enum | `crypto_microbenchmark`, `registration_authorization`, `q_max`, `token_lifetime`, `agent_scale`, `concurrent_throughput` |
+| `parameters` | object | Canonical typed parameters with unit suffixes in property names where dimensional, e.g. `lifetime_ms`; family validator rejects an incomplete/extra parameter point |
+| `adapters` | unique array of string enum | Each value `memory`, `sqlite`, or `network`; written execution order |
+| `warmup` | object | Exactly `repetitions` (integer >= 0), `offered_attempts_per_point` (integer >= 1 or null), `duration_seconds` (number > 0 or null); exactly one of the last two is non-null |
+| `measured` | object | Same three properties/types as `warmup`, but `repetitions >= 1` |
+| `scheduling` | object | Exactly `seeds` (array of non-negative integers, length = measured repetitions), `order_formula` (non-empty string), `seed_scope` (enum exactly `schedule_only`) |
+| `timeouts` | object | Exactly `attempt_seconds` and `repetition_seconds`, both finite numbers > 0 |
+| `statistics` | object | Exactly `aggregation_unit` (enum `attempt`, `operation_repetition`, `point_repetition`, `trace_repetition`, `cell_repetition`, `interval_repetition`), `quantile_method` (enum exactly `hyndman_fan_type_7`), `standard_deviation` (enum exactly `sample_n_minus_1`), `bootstrap_resamples` (integer >= 0), `bootstrap_seed` (non-negative integer or null, null iff resamples=0) |
+| `tolerances` | object map string -> finite number | Empty only when the family has no threshold |
+| `pass_rules` | non-empty array of non-empty strings | Exact preregistered Boolean rules, including failure/timeout handling |
+
+`configuration.parameters` is also closed and has the following exact family-specific properties (all required and non-null):
+
+| `benchmark_family` | Exact `parameters` properties |
+|---|---|
+| `crypto_microbenchmark` | `operations` (non-empty unique array of the crypto operation enums), `message_bytes` (integer >= 0), `hkdf_input_bytes` and `hkdf_output_bytes` (integers >= 1), `act_plaintext_fields` (array exactly `nonce,issued_at,expires_at,q_max,initiating_agent_access_control_public_key`), `certificate_path_length` (integer >= 1), `scrypt_n`, `scrypt_r`, `scrypt_p`, `scrypt_dklen_bytes` (integers >= 1), `setup_included` (boolean) |
+| `registration_authorization` | `operations` (non-empty unique array of the registration/authorization operation enums), `otk_batch_sizes` (unique positive-integer array), `concurrency` (integer >= 1), `payload_bytes` (integer >= 0), `policy_rule_count` (integer >= 1), `certificate_path_length` (integer >= 1), `initial_database` (enum exactly `empty_per_repetition`), `lifetime_ms` and `q_max` (integers >= 1), `crypto_setup_included` (boolean) |
+| `q_max` | `q_max_values` (array exactly `[1,2,4,8,16,32,64]`), `initiating_agents` and `receiving_agents` (integers exactly 1), `lifetime_ms` (integer exactly 3600000), `offered_attempts_per_point` (integer exactly 4096), `payload_bytes` (integer exactly 1024), `policy_rule_count` (integer exactly 1), `controlled_valid` (boolean exactly true) |
+| `token_lifetime` | `lifetime_seconds` (array exactly `[1,5,30,60,300]`), `window_seconds` (integer exactly 600), `mean_request_rate_per_second` (number exactly 10), `q_max` (integer exactly 100000), `initiating_agents`, `receiving_agents`, `policy_rule_count` (integers exactly 1), `payload_bytes` (integer exactly 1024), `clock_mode` (enum exactly `injected`) |
+| `agent_scale` | `receiving_agent_counts` (array exactly `[1,10,100]`), `concurrency_values` (array exactly `[1,8,32]`), `target_selection` (enum exactly `round_robin`), `q_max` (integer exactly 64), `lifetime_ms` (integer exactly 600000), `payload_bytes` (integer exactly 1024), `policy_rule_count` (integer exactly 1) |
+| `concurrent_throughput` | `concurrency_values` (array exactly `[1,2,4,8,16,32,64]`), `q_max_values` (array exactly `[1,64]`), `lifetime_ms` (integer exactly 600000), `payload_bytes` (integer exactly 1024), `workload_model` (enum exactly `closed_loop`), `policy_rule_count` (integer exactly 1) |
+
+Each JSON `samples[]` object contains exactly the 17 columns of `benchmark-samples.csv` with the same required/nullability rules; `parameters` is an object rather than a CSV string. `operation` is enum `ed25519_keygen`, `ed25519_sign`, `ed25519_verify`, `x25519_keygen`, `x25519_exchange`, `hkdf_sha256`, `act_encrypt`, `act_decrypt`, `certificate_parse`, `certificate_verify`, `scrypt`, `user_registration`, `agent_registration`, `signed_otk_append`, `contact_resolution`, `act_establishment`, `act_validation_use`, or `application_authorization`. Nullable `error_class` is null iff success, otherwise enum `InvalidInput`, `AuthenticationFailed`, `InvalidCertificate`, `InvalidSignature`, `DuplicateRegistration`, `PolicyDenied`, `PolicyNoMatch`, `PairBudgetExhausted`, `OtkPoolExhausted`, `OtkConsumed`, `AgentInactive`, `TokenIdentityMismatch`, `TokenNotYetValid`, `TokenExpired`, `TokenExhausted`, `InvalidTokenCiphertext`, `ConcurrentConflict`, `Timeout`, or `InternalError`. `scenario` is a non-empty registered name; all other sample types/units are exactly the sample CSV table above.
+
+Each JSON `summaries[]` object contains exactly the 17 expanded columns of `benchmark-summary.csv`: the eight grouping keys, five nullable nanosecond statistics, three non-null counts, and nullable `throughput_per_second`; `parameters` is an object. Nullability and equations are exactly those in the CSV table, and no trend/gate property is permitted.
+
+Each JSON `trend_gates[]` object contains exactly the 22 columns in `benchmark-trend-gates.csv`, with identical enums, units, conditional nullability, and one-gate-per-object cardinality; only `lhs_parameters` and non-null `rhs_parameters` are objects instead of canonical JSON strings. The complete expected gate-ID set and metric/unit/comparison compatibility rules above are mandatory.
+
+Each `comparison[]` object has exactly these required properties:
+
+| Property | Type | Nullable | Enum/rule |
+|---|---|---|---|
+| `paper_location` | non-empty string | no | section/figure/table identifier |
+| `metric` | string enum | no | `latency_ns`, `throughput_per_second`, `authorization_ns_per_request`, `reauthorization_count`, `trend_only` |
+| `comparability` | string enum | no | `comparable`, `partially_comparable`, `not_comparable` |
+| `paper_value`, `reproduction_value` | finite number | yes | both null only for trend-only/no numeric comparison |
+| `paper_unit`, `reproduction_unit` | string enum | yes | `ns`, `us`, `ms`, `s`, `requests_per_second`, `count`, `ratio`; null iff corresponding value is null |
+| `relative_difference` | finite number, fraction | yes | `(reproduction_value/paper_value)-1` when values are comparable and paper value != 0; otherwise null |
+| `trend_result` | string enum | no | `matched`, `not_matched`, `inconclusive`, `not_applicable` |
+| `explanation` | non-empty string | no | environment/configuration/deviation explanation |
+
+CSV rows and JSON objects must match field-for-field after canonicalization. Unknown schema versions and unknown properties fail; additions require a new schema version.
+
+Minimal structurally valid example (empty data arrays are allowed here because this illustrates the envelope before execution; completed-run validation additionally requires every configured row):
+
+```json
+{
+  "schema_version": "saga-benchmark/v1",
+  "run": {"run_id":"00000000-0000-4000-8000-000000000001","timestamp_utc":"2026-07-15T00:00:00Z","git_commit":"0000000000000000000000000000000000000000","dirty":false},
+  "environments": {
+    "41267dcc00ab22f82bcfc8e3bc423069d56b5237b522fbea3616828f89845d1b": {
+      "cpu_model":"Example CPU","cpu_logical_count":8,"cpu_physical_count":4,"memory_bytes":17179869184,"os_name":"ExampleOS","os_version":"1","kernel_version":"6.8.0","architecture":"x86_64","python_implementation":"CPython","python_version":"3.13.5","dependency_lock_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dependency_versions":{},"tls_backend":"OpenSSL","tls_version":"3.5.0","sqlite_version":"3.50.1","sqlite_journal_mode":null,"network_topology":"loopback_single_host","storage_type":"memory","storage_location_class":"ram","power_mode":"performance","proverif_version":null,
+      "canonical_fingerprint_input":"{\"architecture\":\"x86_64\",\"cpu_logical_count\":8,\"cpu_model\":\"Example CPU\",\"cpu_physical_count\":4,\"dependency_lock_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"dependency_versions\":{},\"kernel_version\":\"6.8.0\",\"memory_bytes\":17179869184,\"network_topology\":\"loopback_single_host\",\"os_name\":\"ExampleOS\",\"os_version\":\"1\",\"power_mode\":\"performance\",\"proverif_version\":null,\"python_implementation\":\"CPython\",\"python_version\":\"3.13.5\",\"sqlite_journal_mode\":null,\"sqlite_version\":\"3.50.1\",\"storage_location_class\":\"ram\",\"storage_type\":\"memory\",\"tls_backend\":\"OpenSSL\",\"tls_version\":\"3.5.0\"}"
+    }
+  },
+  "configuration": {"benchmark_family":"crypto_microbenchmark","parameters":{"operations":["ed25519_keygen"],"message_bytes":1024,"hkdf_input_bytes":32,"hkdf_output_bytes":32,"act_plaintext_fields":["nonce","issued_at","expires_at","q_max","initiating_agent_access_control_public_key"],"certificate_path_length":2,"scrypt_n":32768,"scrypt_r":8,"scrypt_p":1,"scrypt_dklen_bytes":32,"setup_included":false},"adapters":["memory"],"warmup":{"repetitions":3,"offered_attempts_per_point":1024,"duration_seconds":null},"measured":{"repetitions":10,"offered_attempts_per_point":4096,"duration_seconds":null},"scheduling":{"seeds":[11001,11002,11003,11004,11005,11006,11007,11008,11009,11010],"order_formula":"left_rotate(repetition_index mod operation_count)","seed_scope":"schedule_only"},"timeouts":{"attempt_seconds":2,"repetition_seconds":3600},"statistics":{"aggregation_unit":"operation_repetition","quantile_method":"hyndman_fan_type_7","standard_deviation":"sample_n_minus_1","bootstrap_resamples":0,"bootstrap_seed":null},"tolerances":{},"pass_rules":["no failure, timeout, missing attempt, or replacement attempt"]},
+  "samples":[],"summaries":[],"trend_gates":[],"comparison":[]
+}
+```
+
+This example must fail: `schema_version` is wrong, `run.dirty` has the wrong type, the required `environments` and `comparison` properties are absent, and unknown `configuration.adaptive_stop` is forbidden.
+
+```json
+{"schema_version":"saga-benchmark/v2","run":{"run_id":"x","timestamp_utc":"now","git_commit":"abc","dirty":"false"},"configuration":{"adaptive_stop":true},"samples":[],"summaries":[],"trend_gates":[]}
+```
 
 ## Statistical Summaries
 
