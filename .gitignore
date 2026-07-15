@@ -1,0 +1,28 @@
+# Local source artifacts; indexed in docs/source-index.md, not committed.
+/SAGA，A Security Architecture for Governing AI Agentic Systems.pdf
+/具体要求.docx
+~$*.docx
+
+# Temporary renders and editor artifacts.
+/tmp/
+*.tmp
+
+# Python/runtime artifacts reserved for later phases.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+
+# Local credentials and raw benchmark scratch data.
+*.key
+*.pem
+*.crt
+.env
+/results/raw/
+/results/.cache/
+
+/.superpowers/
