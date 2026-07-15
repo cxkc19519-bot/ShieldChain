@@ -132,11 +132,11 @@ The paper protocol is the only normative source. Decisions below follow this pre
 
 ## 17. Paper formal claims versus required engineering security tests
 
-- **Evidence:** IV-F and Appendix D formally model Token secrecy, Agent-Provider authentication, Agent-Agent authentication, and reachability under a Dolev-Yao attacker. Appendix E evaluates A1-A8. The approved design additionally requires crypto/serialization, persistence, concurrency, TLS, logging, and twenty security tests. IV-E Step 8 explicitly checks `PAC_B` binding, expiration, and `Q_max`, but does not explicitly state a separate future-issued/not-before rejection.
+- **Evidence:** IV-F and Appendix D formally verify three security properties under a Dolev-Yao attacker: Token secrecy, Agent-Provider authentication, and Agent-Agent authentication. Appendix D separately runs reachability queries as model executability/sanity checks, not as a fourth security property. Appendix E evaluates A1-A8. The approved design additionally requires crypto/serialization, persistence, concurrency, TLS, logging, and twenty security tests. IV-E Step 8 explicitly checks `PAC_B` binding, expiration, and `Q_max`, but does not explicitly state a separate future-issued/not-before rejection.
 - **Ambiguity:** Required tests can be mistaken for formal proof, while engineering validity rules can be misattributed to the paper.
-- **Decision:** Label every result as paper assumption, ProVerif proof, Appendix E attacker evaluation, or reproduction engineering test. Keep ProVerif queries within the paper scope. Implement/test Step 8's binding, expiration, and quota checks as paper behavior; classify `[issued_at, expires_at)` and an independent future-issued rejection as reproduction engineering rules, not explicit paper claims.
+- **Decision:** Label every result as paper assumption, one of the three ProVerif security proofs, Appendix D reachability sanity checking, Appendix E attacker evaluation, or reproduction engineering test. Keep ProVerif security claims to Token secrecy and the two authentication properties. Implement/test Step 8's binding, expiration, and quota checks as paper behavior; classify `[issued_at, expires_at)` and an independent future-issued rejection as reproduction engineering rules, not explicit paper claims.
 - **Classification:** Evidence taxonomy and formal-claim boundary.
-- **Consequence:** Passing twenty attacks or concurrency tests cannot expand ProVerif claims. Reports must separately enumerate symbolic queries, A1-A8 results, and engineering hardening results.
+- **Consequence:** Passing twenty attacks or concurrency tests cannot expand ProVerif claims, and successful reachability queries cannot be reported as a security property. Reports must separately enumerate the three security properties, reachability sanity checks, A1-A8 results, and engineering hardening results.
 
 ## 18. Hardware-specific performance numbers versus directional acceptance
 
