@@ -4,8 +4,8 @@
 - Scope: canonical encoding, four paper tuples, Ed25519, X25519, HKDF, AEAD, scrypt, X.509 validation.
 - Phase boundary: library/vector behavior only.
 - Public surfaces are frozen as the exact `saga.domain` and `saga.crypto` tuples tested in `tests/unit/test_public_api.py`; password persistence remains available only from `saga.crypto.passwords`.
-- Whole-branch review first pass: **With fixes**. The KDF failure-normalization fix and regression coverage described in the final-fix report are pending independent re-review; Phase 1 is not yet Ready.
-- This implementer executed no Git command. Git diff/status evidence, the independent whole-branch review, and the restricted commit remain controller-owned gates.
+- Whole-branch review first pass: **With fixes**. Commit `90861d1` closed the KDF failure-normalization, password-regression, and report-inventory findings.
+- Independent re-review of `79e0413..90861d1`: **Ready**, with zero Critical, Important, or Minor issues. Controller-owned Git diff/status and restricted-commit gates also passed.
 
 ## 2. Files created/modified
 | Path | Action | Responsibility |
@@ -91,13 +91,20 @@
 | `rg -ni "(^-e\|file:\|[A-Z]:\\\|SAGA，A Security)" requirements.lock` | 2026-07-16T10:27:07Z | 1, expected no-match result |
 | Exact Task 9/10 matrix-row and four-column-header audit against the two task briefs | 2026-07-16T10:29:30Z | 0 |
 | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_api.py tests/unit/test_phase_one_scope.py -q` after exports | 2026-07-16T10:29:46Z | 0 |
+| `.\.venv\Scripts\python.exe -m pytest tests/unit -q` after whole-branch fixes | 2026-07-16T10:50:31Z | 0 |
+| `.\.venv\Scripts\python.exe -m mypy src` after whole-branch fixes | 2026-07-16T10:50:35Z | 0 |
+| `.\.venv\Scripts\ruff.exe check src tests` after whole-branch fixes | 2026-07-16T10:50:35Z | 0 |
+| `.\.venv\Scripts\ruff.exe format --check src tests` after whole-branch fixes | 2026-07-16T10:50:35Z | 0 |
+| `git diff --check` for the final evidence update | 2026-07-16T10:50:35Z | 0 |
 
 ## 6. Test results with exact counts and exit codes
 | Gate | Passed | Failed | Skipped | Exit code |
 |---|---:|---:|---:|---:|
 | TDD RED focused pytest | 2 | 2 | 0 | 1 |
 | TDD GREEN focused pytest | 4 | 0 | 0 | 0 |
-| Complete unit pytest | 260 | 0 | 0 | 0 |
+| Final-fix TDD RED focused pytest | 73 | 9 | 0 | 1 |
+| Final-fix TDD GREEN focused pytest | 82 | 0 | 0 | 0 |
+| Complete unit pytest | 280 | 0 | 0 | 0 |
 | Fresh vector-set/loader pytest | 260 | 0 | 0 | 0 |
 | mypy | 11 source files | 0 | n/a | 0 |
 | Ruff check | all checks | 0 | n/a | 0 |
@@ -105,7 +112,7 @@
 | Ruff format check | 25 formatted files | 0 | n/a | 0 |
 | pip check | no broken requirements | 0 | n/a | 0 |
 
-The six-vector collection gate observed 6 expected paths, 6 actual paths, and 0 differences. Loader ownership is executable, not visual: canonical, Ed25519, X25519, HKDF, AEAD, and scrypt owning tests each assert exact document/record keys and `seen == expected_names`; all are included in both 260-test passes.
+The six-vector collection gate observed 6 expected paths, 6 actual paths, and 0 differences. Loader ownership is executable, not visual: canonical, Ed25519, X25519, HKDF, AEAD, and scrypt owning tests each assert exact document/record keys and `seen == expected_names`; all are included in the final 280-test pass.
 
 Both secret scans observed 0 matches. The primitive ownership scan resolves Ed25519, X25519, HKDF, ChaCha20-Poly1305, scrypt, and X.509 calls to `cryptography`. The custom-primitive regex produced exactly two benign matches, `derive_sdhk(shared_secret)` and `derive_shared_secret(...)`, because `.*sha` also matches the word `shared`; inspection confirms both are wrappers over `cryptography`, not SHA/curve/Poly1305 implementations. No modular arithmetic or scalar implementation was found.
 
