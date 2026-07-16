@@ -1,3 +1,81 @@
-"""Cryptographic primitives for the SAGA base-protocol reproduction."""
+from .aead import ActEnvelope, AeadError, decrypt_act, encrypt_act
+from .canonical import (
+    ActPlaintext,
+    AgentUserAttestation,
+    CanonicalEncodingError,
+    OtkAttestation,
+    ProviderAttestation,
+    decode_act_plaintext,
+    decode_agent_user_attestation,
+    decode_otk_attestation,
+    decode_provider_attestation,
+    encode_act_plaintext,
+    encode_agent_user_attestation,
+    encode_otk_attestation,
+    encode_provider_attestation,
+)
+from .certificates import (
+    CertificateValidationError,
+    IdentityKind,
+    identity_uri,
+    load_der_certificate,
+    validate_leaf_certificate,
+)
+from .kdf import KeyDerivationError, derive_sdhk
+from .key_agreement import (
+    KeyAgreementError,
+    derive_shared_secret,
+    generate_x25519_private_key,
+    x25519_public_key,
+    x25519_public_key_bytes,
+    x25519_public_key_from_bytes,
+)
+from .signatures import (
+    SignatureError,
+    ed25519_public_key,
+    ed25519_public_key_bytes,
+    ed25519_public_key_from_bytes,
+    generate_ed25519_private_key,
+    sign,
+    verify,
+)
 
-__all__: tuple[str, ...] = ()
+__all__ = (
+    "ActEnvelope",
+    "ActPlaintext",
+    "AeadError",
+    "AgentUserAttestation",
+    "CanonicalEncodingError",
+    "CertificateValidationError",
+    "IdentityKind",
+    "KeyAgreementError",
+    "KeyDerivationError",
+    "OtkAttestation",
+    "ProviderAttestation",
+    "SignatureError",
+    "decode_act_plaintext",
+    "decode_agent_user_attestation",
+    "decode_otk_attestation",
+    "decode_provider_attestation",
+    "decrypt_act",
+    "derive_sdhk",
+    "derive_shared_secret",
+    "ed25519_public_key",
+    "ed25519_public_key_bytes",
+    "ed25519_public_key_from_bytes",
+    "encode_act_plaintext",
+    "encode_agent_user_attestation",
+    "encode_otk_attestation",
+    "encode_provider_attestation",
+    "encrypt_act",
+    "generate_ed25519_private_key",
+    "generate_x25519_private_key",
+    "identity_uri",
+    "load_der_certificate",
+    "sign",
+    "validate_leaf_certificate",
+    "verify",
+    "x25519_public_key",
+    "x25519_public_key_bytes",
+    "x25519_public_key_from_bytes",
+)
