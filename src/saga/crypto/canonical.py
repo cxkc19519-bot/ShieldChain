@@ -155,3 +155,205 @@ def parse_canonical_object(
         raise
     except (KeyError, TypeError, ValueError):
         raise CanonicalEncodingError("canonical JSON invalid") from None
+
+
+AGENT_USER_ATTESTATION_SCHEMA = (
+    FieldSpec("agent_id", "text"),
+    FieldSpec("endpoint", "endpoint"),
+    FieldSpec("agent_tls_public_key", "bytes"),
+    FieldSpec("agent_access_control_public_key", "bytes"),
+    FieldSpec("provider_public_key", "bytes"),
+)
+OTK_ATTESTATION_SCHEMA = (
+    FieldSpec("agent_id", "text"),
+    FieldSpec("one_time_public_key", "bytes"),
+)
+PROVIDER_ATTESTATION_SCHEMA = (
+    FieldSpec("agent_id", "text"),
+    FieldSpec("agent_certificate", "bytes"),
+    FieldSpec("endpoint", "endpoint"),
+    FieldSpec("agent_access_control_public_key", "bytes"),
+    FieldSpec("user_signature", "bytes"),
+)
+ACT_PLAINTEXT_SCHEMA = (
+    FieldSpec("nonce", "bytes"),
+    FieldSpec("issued_at", "unix_ms"),
+    FieldSpec("expires_at", "unix_ms"),
+    FieldSpec("q_max", "integer"),
+    FieldSpec("initiating_agent_access_control_public_key", "bytes"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentUserAttestation:
+    agent_id: str
+    endpoint: EndpointValue
+    agent_tls_public_key: bytes
+    agent_access_control_public_key: bytes
+    provider_public_key: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class OtkAttestation:
+    agent_id: str
+    one_time_public_key: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttestation:
+    agent_id: str
+    agent_certificate: bytes
+    endpoint: EndpointValue
+    agent_access_control_public_key: bytes
+    user_signature: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class ActPlaintext:
+    nonce: bytes
+    issued_at: int
+    expires_at: int
+    q_max: int
+    initiating_agent_access_control_public_key: bytes
+
+
+def _tuple_text(value: object) -> str:
+    if not _valid_text(value):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return value
+
+
+def _tuple_bytes(value: object, length: int | None = None) -> bytes:
+    if type(value) is not bytes or not value:
+        raise CanonicalEncodingError("protocol tuple invalid")
+    if length is not None and len(value) != length:
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return value
+
+
+def _tuple_endpoint(value: object) -> EndpointValue:
+    if not isinstance(value, EndpointValue):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return value
+
+
+def _tuple_int(value: object, *, unix_ms: bool = False) -> int:
+    if type(value) is not int or (unix_ms and value < 0):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return value
+
+
+def encode_agent_user_attestation(value: AgentUserAttestation) -> bytes:
+    try:
+        if not isinstance(value, AgentUserAttestation):
+            raise CanonicalEncodingError("protocol tuple invalid")
+        fields: dict[str, object] = {
+            "agent_id": _tuple_text(value.agent_id),
+            "endpoint": _tuple_endpoint(value.endpoint),
+            "agent_tls_public_key": _tuple_bytes(value.agent_tls_public_key),
+            "agent_access_control_public_key": _tuple_bytes(
+                value.agent_access_control_public_key, 32
+            ),
+            "provider_public_key": _tuple_bytes(value.provider_public_key, 32),
+        }
+        return canonical_object_bytes(fields, AGENT_USER_ATTESTATION_SCHEMA)
+    except CanonicalEncodingError:
+        raise
+    except (AttributeError, TypeError, ValueError):
+        raise CanonicalEncodingError("protocol tuple invalid") from None
+
+
+def decode_agent_user_attestation(data: bytes) -> AgentUserAttestation:
+    try:
+        values = parse_canonical_object(data, AGENT_USER_ATTESTATION_SCHEMA)
+        return AgentUserAttestation(
+            agent_id=_tuple_text(values["agent_id"]),
+            endpoint=_tuple_endpoint(values["endpoint"]),
+            agent_tls_public_key=_tuple_bytes(values["agent_tls_public_key"]),
+            agent_access_control_public_key=_tuple_bytes(
+                values["agent_access_control_public_key"], 32
+            ),
+            provider_public_key=_tuple_bytes(values["provider_public_key"], 32),
+        )
+    except CanonicalEncodingError:
+        raise
+    except (KeyError, TypeError, ValueError):
+        raise CanonicalEncodingError("protocol tuple invalid") from None
+
+
+def encode_otk_attestation(value: OtkAttestation) -> bytes:
+    if not isinstance(value, OtkAttestation):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return canonical_object_bytes(
+        {
+            "agent_id": _tuple_text(value.agent_id),
+            "one_time_public_key": _tuple_bytes(value.one_time_public_key, 32),
+        },
+        OTK_ATTESTATION_SCHEMA,
+    )
+
+
+def decode_otk_attestation(data: bytes) -> OtkAttestation:
+    values = parse_canonical_object(data, OTK_ATTESTATION_SCHEMA)
+    return OtkAttestation(
+        agent_id=_tuple_text(values["agent_id"]),
+        one_time_public_key=_tuple_bytes(values["one_time_public_key"], 32),
+    )
+
+
+def encode_provider_attestation(value: ProviderAttestation) -> bytes:
+    if not isinstance(value, ProviderAttestation):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return canonical_object_bytes(
+        {
+            "agent_id": _tuple_text(value.agent_id),
+            "agent_certificate": _tuple_bytes(value.agent_certificate),
+            "endpoint": _tuple_endpoint(value.endpoint),
+            "agent_access_control_public_key": _tuple_bytes(
+                value.agent_access_control_public_key, 32
+            ),
+            "user_signature": _tuple_bytes(value.user_signature, 64),
+        },
+        PROVIDER_ATTESTATION_SCHEMA,
+    )
+
+
+def decode_provider_attestation(data: bytes) -> ProviderAttestation:
+    values = parse_canonical_object(data, PROVIDER_ATTESTATION_SCHEMA)
+    return ProviderAttestation(
+        agent_id=_tuple_text(values["agent_id"]),
+        agent_certificate=_tuple_bytes(values["agent_certificate"]),
+        endpoint=_tuple_endpoint(values["endpoint"]),
+        agent_access_control_public_key=_tuple_bytes(values["agent_access_control_public_key"], 32),
+        user_signature=_tuple_bytes(values["user_signature"], 64),
+    )
+
+
+def encode_act_plaintext(value: ActPlaintext) -> bytes:
+    if not isinstance(value, ActPlaintext):
+        raise CanonicalEncodingError("protocol tuple invalid")
+    return canonical_object_bytes(
+        {
+            "nonce": _tuple_bytes(value.nonce),
+            "issued_at": _tuple_int(value.issued_at, unix_ms=True),
+            "expires_at": _tuple_int(value.expires_at, unix_ms=True),
+            "q_max": _tuple_int(value.q_max),
+            "initiating_agent_access_control_public_key": _tuple_bytes(
+                value.initiating_agent_access_control_public_key, 32
+            ),
+        },
+        ACT_PLAINTEXT_SCHEMA,
+    )
+
+
+def decode_act_plaintext(data: bytes) -> ActPlaintext:
+    values = parse_canonical_object(data, ACT_PLAINTEXT_SCHEMA)
+    return ActPlaintext(
+        nonce=_tuple_bytes(values["nonce"]),
+        issued_at=_tuple_int(values["issued_at"], unix_ms=True),
+        expires_at=_tuple_int(values["expires_at"], unix_ms=True),
+        q_max=_tuple_int(values["q_max"]),
+        initiating_agent_access_control_public_key=_tuple_bytes(
+            values["initiating_agent_access_control_public_key"], 32
+        ),
+    )
