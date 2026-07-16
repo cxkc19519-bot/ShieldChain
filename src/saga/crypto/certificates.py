@@ -112,7 +112,16 @@ def load_der_certificate(data: bytes) -> x509.Certificate:
         return x509.load_der_x509_certificate(data)
     except CertificateValidationError:
         raise
-    except (OSError, OverflowError, TypeError, UnsupportedAlgorithm, ValueError):
+    except (
+        OSError,
+        OverflowError,
+        TypeError,
+        UnsupportedAlgorithm,
+        ValueError,
+        x509.DuplicateExtension,
+        x509.InvalidVersion,
+        x509.UnsupportedGeneralNameType,
+    ):
         raise CertificateValidationError("certificate encoding invalid") from None
 
 
@@ -210,6 +219,9 @@ def validate_leaf_certificate(
         TypeError,
         UnsupportedAlgorithm,
         ValueError,
+        x509.DuplicateExtension,
         x509.ExtensionNotFound,
+        x509.InvalidVersion,
+        x509.UnsupportedGeneralNameType,
     ):
         raise CertificateValidationError("certificate validation failed") from None

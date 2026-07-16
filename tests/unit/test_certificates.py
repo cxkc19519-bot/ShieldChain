@@ -331,6 +331,63 @@ def test_der_library_errors_are_normalized(
         load_der_certificate(b"not-empty")
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        x509.DuplicateExtension("duplicate extension", ObjectIdentifier("1.2.3")),
+        x509.InvalidVersion("invalid version", 4),
+    ],
+)
+def test_der_x509_profile_errors_are_normalized(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def raise_error(_: bytes) -> x509.Certificate:
+        raise error
+
+    monkeypatch.setattr(x509, "load_der_x509_certificate", raise_error)
+    with pytest.raises(CertificateValidationError):
+        load_der_certificate(b"not-empty")
+
+
+@pytest.mark.parametrize(
+    ("boundary", "error"),
+    [
+        (
+            "extension",
+            x509.DuplicateExtension("duplicate extension", ObjectIdentifier("1.2.3")),
+        ),
+        ("general-name", x509.UnsupportedGeneralNameType("unsupported general name")),
+    ],
+)
+def test_validation_x509_profile_errors_are_normalized(
+    monkeypatch: pytest.MonkeyPatch, boundary: str, error: Exception
+) -> None:
+    fixtures = build_certificate_fixtures()
+
+    if boundary == "extension":
+        monkeypatch.setattr(
+            certificate_module,
+            "_validate_extension_profile",
+            lambda *_: (_ for _ in ()).throw(error),
+        )
+    else:
+        monkeypatch.setattr(
+            x509.SubjectAlternativeName,
+            "get_values_for_type",
+            lambda *_: (_ for _ in ()).throw(error),
+        )
+
+    with pytest.raises(CertificateValidationError):
+        validate_leaf_certificate(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            expected_public_key_spki_der=fixtures.agent.spki_der,
+            now_ms=fixtures.now_ms,
+        )
+
+
 @pytest.mark.parametrize("error", [MemoryError(), KeyboardInterrupt(), SystemExit()])
 def test_der_system_exceptions_propagate(
     monkeypatch: pytest.MonkeyPatch, error: BaseException
