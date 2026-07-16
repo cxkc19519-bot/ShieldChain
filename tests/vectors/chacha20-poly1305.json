@@ -1,0 +1,1 @@
+{"format_version":1,"vectors":[{"name":"range-key","outer_nonce_hex":"000102030405060708090a0b","plaintext_hex":"7075626c69632066697874757265","aad_ascii":"SAGA-ACT/v1","ciphertext_and_tag_hex":"f98e6a6c40748526defb4b86ea78198dec2e407341a7a2dd4f878117872b"}]}
