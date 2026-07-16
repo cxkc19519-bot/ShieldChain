@@ -4,15 +4,45 @@
 - Scope: canonical encoding, four paper tuples, Ed25519, X25519, HKDF, AEAD, scrypt, X.509 validation.
 - Phase boundary: library/vector behavior only.
 - Public surfaces are frozen as the exact `saga.domain` and `saga.crypto` tuples tested in `tests/unit/test_public_api.py`; password persistence remains available only from `saga.crypto.passwords`.
+- Whole-branch review first pass: **With fixes**. The KDF failure-normalization fix and regression coverage described in the final-fix report are pending independent re-review; Phase 1 is not yet Ready.
 - This implementer executed no Git command. Git diff/status evidence, the independent whole-branch review, and the restricted commit remain controller-owned gates.
 
 ## 2. Files created/modified
 | Path | Action | Responsibility |
 |---|---|---|
-| `src/saga/domain/__init__.py` | modified | Freeze the five-name domain convenience surface. |
-| `src/saga/crypto/__init__.py` | modified | Freeze the 37-name cryptographic convenience surface without password exports. |
+| `pyproject.toml` | created | Define the package, Python/tool configuration, and development dependencies. |
+| `requirements.lock` | created | Pin the reproducible Phase 1 environment. |
+| `src/saga/__init__.py` | created | Define the top-level package boundary. |
+| `src/saga/domain/__init__.py` | created | Freeze the five-name domain convenience surface. |
+| `src/saga/domain/encoding.py` | created | Enforce strict Base64URL and Unix-millisecond domain encodings. |
+| `src/saga/crypto/__init__.py` | created | Freeze the 37-name cryptographic convenience surface without password exports. |
+| `src/saga/crypto/aead.py` | created | Implement the closed ChaCha20-Poly1305 ACT envelope. |
+| `src/saga/crypto/canonical.py` | created | Canonically encode the four closed protocol tuples. |
+| `src/saga/crypto/certificates.py` | created | Validate the closed Phase 1 X.509 identity profile. |
+| `src/saga/crypto/kdf.py` | created | Derive the fixed 32-byte SDHK and normalize KDF failures. |
+| `src/saga/crypto/key_agreement.py` | created | Wrap strict X25519 key agreement. |
+| `src/saga/crypto/passwords.py` | created | Hash and verify redacted, versioned scrypt records. |
+| `src/saga/crypto/signatures.py` | created | Wrap strict Ed25519 signing and verification. |
+| `tests/helpers/__init__.py` | created | Define the test-helper package. |
+| `tests/helpers/certificates.py` | created | Build deterministic certificate fixtures for profile tests. |
+| `tests/unit/test_aead.py` | created | Test ACT encryption, parsing, mutation rejection, and vectors. |
+| `tests/unit/test_canonical.py` | created | Test canonical encoder primitives and closed schemas. |
+| `tests/unit/test_certificates.py` | created | Test certificate profiles, bindings, validity, and rejection cases. |
+| `tests/unit/test_encoding.py` | created | Test strict Base64URL and Unix-millisecond encoding. |
+| `tests/unit/test_kdf.py` | created | Test SDHK vectors, strict inputs/outputs, and normalized failures. |
+| `tests/unit/test_key_agreement.py` | created | Test X25519 vectors, strict key material, and failure behavior. |
+| `tests/unit/test_package_boundary.py` | created | Enforce package import and dependency boundaries. |
+| `tests/unit/test_passwords.py` | created | Test scrypt records, redaction, RNG behavior, and fail-closed errors. |
 | `tests/unit/test_public_api.py` | created | Enforce exact domain, crypto, and password-submodule exports. |
 | `tests/unit/test_phase_one_scope.py` | created | Reject runtime and protocol-layer packages during Phase 1. |
+| `tests/unit/test_protocol_tuples.py` | created | Test all exact canonical protocol tuple encodings and mutations. |
+| `tests/unit/test_signatures.py` | created | Test Ed25519 vectors, strict lengths, and mutation rejection. |
+| `tests/vectors/canonical-tuples.json` | created | Publish canonical tuple interoperability vectors. |
+| `tests/vectors/chacha20-poly1305.json` | created | Publish ACT AEAD interoperability vectors. |
+| `tests/vectors/ed25519-signatures.json` | created | Publish Ed25519 interoperability vectors. |
+| `tests/vectors/hkdf-sha256.json` | created | Publish SDHK HKDF-SHA256 interoperability vectors. |
+| `tests/vectors/scrypt-records.json` | created | Publish scrypt record interoperability vectors. |
+| `tests/vectors/x25519-agreement.json` | created | Publish X25519 interoperability vectors. |
 | `docs/feature-source-matrix.md` | modified | Record seven Task 10 Phase 1 engineering supplements while preserving the other columns. |
 | `docs/phase-1-verification.md` | created | Preserve the ten-part Phase 1 implementation evidence and acceptance boundary. |
 

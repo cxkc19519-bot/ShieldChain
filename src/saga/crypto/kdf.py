@@ -1,3 +1,4 @@
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -13,9 +14,17 @@ def derive_sdhk(shared_secret: bytes) -> bytes:
     """Derive the 32-byte SAGA ACT key with fixed salt/info."""
     if type(shared_secret) is not bytes or len(shared_secret) != 32:
         raise KeyDerivationError("key derivation input invalid")
-    return HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=None,
-        info=SAGA_HKDF_INFO,
-    ).derive(shared_secret)
+    try:
+        derived = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=SAGA_HKDF_INFO,
+        ).derive(shared_secret)
+        if type(derived) is not bytes or len(derived) != SAGA_KEY_BYTES:
+            raise KeyDerivationError("key derivation failed")
+        return derived
+    except KeyDerivationError:
+        raise
+    except (TypeError, ValueError, UnsupportedAlgorithm):
+        raise KeyDerivationError("key derivation failed") from None

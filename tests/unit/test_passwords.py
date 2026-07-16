@@ -69,6 +69,14 @@ def test_hash_password_uses_fresh_sixteen_byte_random_salt() -> None:
     assert first != second
 
 
+def test_explicit_salt_bypasses_rng_completely() -> None:
+    def forbidden_rng(_: int) -> bytes:
+        raise AssertionError("rng must not be called")
+
+    record = hash_password("public-test-password", salt=b"0" * 16, random_bytes=forbidden_rng)
+    assert record.salt == b"0" * 16
+
+
 def test_password_record_is_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         VALID_RECORD.version = 2  # type: ignore[misc]
@@ -162,7 +170,14 @@ def test_password_rng_failures_are_normalized(rng: object) -> None:
 
 @pytest.mark.parametrize(
     "behavior",
-    [TypeError(), ValueError(), UnsupportedAlgorithm("unsupported"), object(), b"0" * 31],
+    [
+        TypeError(),
+        ValueError(),
+        OverflowError(),
+        UnsupportedAlgorithm("unsupported"),
+        object(),
+        b"0" * 31,
+    ],
 )
 def test_hash_scrypt_failures_are_normalized(
     monkeypatch: pytest.MonkeyPatch, behavior: object
@@ -174,7 +189,15 @@ def test_hash_scrypt_failures_are_normalized(
 
 
 @pytest.mark.parametrize(
-    "behavior", [TypeError(), ValueError(), UnsupportedAlgorithm("unsupported")]
+    "behavior",
+    [
+        TypeError(),
+        ValueError(),
+        OverflowError(),
+        UnsupportedAlgorithm("unsupported"),
+        object(),
+        b"0" * 31,
+    ],
 )
 def test_verify_scrypt_failures_are_normalized(
     monkeypatch: pytest.MonkeyPatch, behavior: object

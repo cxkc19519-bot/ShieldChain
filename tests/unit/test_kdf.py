@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -29,6 +30,20 @@ class BytesSubclass(bytes):
     pass
 
 
+class FakeHKDF:
+    constructor_behavior: object = None
+    derive_behavior: object = b"0" * 32
+
+    def __init__(self, **_: object) -> None:
+        if isinstance(self.constructor_behavior, BaseException):
+            raise self.constructor_behavior
+
+    def derive(self, _: bytes) -> object:
+        if isinstance(self.derive_behavior, BaseException):
+            raise self.derive_behavior
+        return self.derive_behavior
+
+
 @pytest.mark.parametrize(
     "shared_secret",
     [
@@ -42,6 +57,52 @@ class BytesSubclass(bytes):
 def test_derive_sdhk_requires_exact_plain_bytes32(shared_secret: object) -> None:
     with pytest.raises(KeyDerivationError):
         derive_sdhk(shared_secret)
+
+
+@pytest.mark.parametrize(
+    "stage,error",
+    [
+        ("constructor", TypeError("backend detail")),
+        ("constructor", ValueError("backend detail")),
+        ("constructor", UnsupportedAlgorithm("backend detail")),
+        ("derive", TypeError("backend detail")),
+        ("derive", ValueError("backend detail")),
+        ("derive", UnsupportedAlgorithm("backend detail")),
+    ],
+)
+def test_hkdf_ordinary_failures_are_normalized(
+    monkeypatch: pytest.MonkeyPatch, stage: str, error: BaseException
+) -> None:
+    FakeHKDF.constructor_behavior = error if stage == "constructor" else None
+    FakeHKDF.derive_behavior = error if stage == "derive" else b"0" * 32
+    monkeypatch.setattr("saga.crypto.kdf.HKDF", FakeHKDF)
+    with pytest.raises(KeyDerivationError) as caught:
+        derive_sdhk(bytes(range(32)))
+    assert str(caught.value) == "key derivation failed"
+    assert "backend detail" not in repr(caught.value)
+
+
+@pytest.mark.parametrize("result", [object(), BytesSubclass(b"0" * 32), b"0" * 31])
+def test_hkdf_requires_exact_plain_bytes32_result(
+    monkeypatch: pytest.MonkeyPatch, result: object
+) -> None:
+    FakeHKDF.constructor_behavior = None
+    FakeHKDF.derive_behavior = result
+    monkeypatch.setattr("saga.crypto.kdf.HKDF", FakeHKDF)
+    with pytest.raises(KeyDerivationError, match="^key derivation failed$"):
+        derive_sdhk(bytes(range(32)))
+
+
+@pytest.mark.parametrize("error", [MemoryError(), KeyboardInterrupt(), SystemExit()])
+@pytest.mark.parametrize("stage", ["constructor", "derive"])
+def test_hkdf_control_flow_and_resource_exceptions_propagate(
+    monkeypatch: pytest.MonkeyPatch, stage: str, error: BaseException
+) -> None:
+    FakeHKDF.constructor_behavior = error if stage == "constructor" else None
+    FakeHKDF.derive_behavior = error if stage == "derive" else b"0" * 32
+    monkeypatch.setattr("saga.crypto.kdf.HKDF", FakeHKDF)
+    with pytest.raises(type(error)):
+        derive_sdhk(bytes(range(32)))
 
 
 def test_all_hkdf_vectors_are_consumed() -> None:
