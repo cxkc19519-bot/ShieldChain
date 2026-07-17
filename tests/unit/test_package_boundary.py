@@ -1,10 +1,8 @@
 from importlib.util import find_spec
-from pathlib import Path
 
 
-def test_phase_one_package_exists_without_forbidden_layers() -> None:
+def test_foundation_and_registration_port_packages_exist() -> None:
     assert find_spec("saga") is not None
     assert find_spec("saga.domain") is not None
     assert find_spec("saga.crypto") is not None
-    for forbidden in ("protocols", "ports", "adapters"):
-        assert not Path("src", "saga", forbidden).exists()
+    assert find_spec("saga.ports") is not None
