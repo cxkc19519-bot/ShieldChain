@@ -45,11 +45,11 @@ The [feature-source matrix](feature-source-matrix.md) retains exactly `功能 | 
 | Public-API RED: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_api.py -q` | 2026-07-17, Task 9 | 1 |
 | Public-API GREEN: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_api.py -q` | 2026-07-17, Task 9 | 0 |
 | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_public_api.py -q` (review-fix confirmation) | 2026-07-17T10:44:11Z | 0 |
-| `.\.venv\Scripts\python.exe -m pytest tests/unit tests/protocol tests/integration tests/security -q` | 2026-07-17T10:44:11Z | 0 |
+| `.\.venv\Scripts\python.exe -m pytest tests/unit tests/protocol tests/integration tests/security -q` | 2026-07-17T10:58:04Z | 0 |
 | `.\.venv\Scripts\python.exe -m mypy src` | 2026-07-17T10:44:11Z | 0 |
 | `.\.venv\Scripts\ruff.exe check src tests`; `.\.venv\Scripts\ruff.exe format --check src tests` | 2026-07-17T10:44:11Z | 0; 0 |
 | `.\.venv\Scripts\python.exe -m pip check`; `git diff --check` | 2026-07-17T10:44:11Z | 0; 0 |
-| Public-vector/evidence secret-field scan; production scope scan | 2026-07-17T09:10:13Z | 1 expected no-match; 1 expected no-match |
+| Public-surface security test; public-vector/evidence secret-field scan; production scope scan | 2026-07-17T10:52:37Z | 0; 1 expected no-match; 1 expected no-match |
 
 The RED was intentional: the new exact public-surface test expected `AgentRegistrationService`, absent from `saga.protocols.__all__`; it produced one failure and four passes before the one-line export change. Task 8 adds evidence over completed Tasks 4--7, so its report honestly records no manufactured behavioral RED.
 
@@ -58,10 +58,13 @@ The RED was intentional: the new exact public-surface test expected `AgentRegist
 | Gate | Result |
 |---|---|
 | Public API review-fix confirmation | 6 passed in 0.20s; exit 0 |
-| Registration protocol, integration, security, and Phase 2 scope suite | 507 passed in 25.89s; exit 0 |
+| Registration protocol, integration, security, and Phase 2 scope suite | 509 passed in 24.69s; started 2026-07-17T10:58:04Z, completed 2026-07-17T10:58:29Z; exit 0 |
 | `.\.venv\Scripts\python.exe -m mypy src` | no issues in 30 source files; exit 0 |
 | Ruff check and format check | all checks passed; 59 files formatted; exit 0 |
 | `.\.venv\Scripts\python.exe -m pip check` and `git diff --check` | no broken requirements; clean diff check; exit 0 |
+| Public-surface secret assertion | `tests/security/test_registration_security.py::test_public_results_errors_and_source_tree_do_not_contain_known_secrets`: 1 passed in 0.37s; exit 0 |
+| Public-vector/evidence structured-secret scan | no matches; `rg` exit 1, which is the expected no-match result |
+| Production Phase 2 scope scan | no matches; `rg` exit 1, which is the expected no-match result |
 
 ## 7. Memory/SQLite parity, rollback, and restart evidence
 
@@ -69,7 +72,22 @@ Shared scenarios exercise matching memory/SQLite outcomes for success, duplicate
 
 ## 8. Security and secret-scan evidence
 
-Registration tests reject forged User metadata/OTK signatures, altered endpoint, `PAC_A`, `PK_Prov`, certificate/identity mismatches, wrong owner/password, malformed records, and backend-detail leakage. Results, exceptions, event DTOs, representations, vectors, and this report must not expose passwords, private keys, `SAC_A`, SOTKs, raw password verifiers, or Provider private material. The final scan checks source, public vectors, and evidence for private-key PEM markers, forbidden secret fields, TODO/TBD placeholders, and innovation identifiers. Synthetic passwords are test inputs only; captured public outputs are asserted separately.
+Registration tests reject forged User metadata/OTK signatures, altered endpoint, `PAC_A`, `PK_Prov`, certificate/identity mismatches, wrong owner/password, malformed records, and backend-detail leakage. Results, exceptions, event DTOs, representations, vectors, and this report must not expose passwords, private keys, `SAC_A`, SOTKs, raw password verifiers, or Provider private material. Synthetic passwords are test inputs only; captured public outputs are asserted separately.
+
+The following commands are the reproducible Phase 2 secret and scope gates. The first command checks public result/error/representation text against known synthetic credentials and source/vector PEM/SOTK markers. The second command scans only the public registration vector and this evidence report: it rejects PEM private-key blocks and structured JSON-like fields named `sotk`, `secret_key`, `private_key`, `password`, `password_hash`, `password_verifier`, or `password_record`. Its expected successful result is `rg` exit code 1 (no matches); exit 0 means a prohibited public artifact was found, and any other exit code is a scan failure.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/security/test_registration_security.py::test_public_results_errors_and_source_tree_do_not_contain_known_secrets -q
+rg -n -i -e '-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----' -e '"(?:sotk|secret[_-]?key|private[_-]?key|password(?:[_-]?(?:hash|verifier|record))?)"\s*:' tests/vectors/registration-records.json docs/phase-2-verification.md
+```
+
+The production scope command scans exactly the Phase 2 implementation roots `src/saga/protocols`, `src/saga/adapters/persistence`, and `src/saga/ports` (Python files only). It rejects Phase 3 policy/OTK/ACT behavior, network/API/formal/performance surfaces, and task/tool authorization. It likewise passes only when `rg` exits 1 with no matches; exit 0 is a scope violation and another exit code is a scan failure.
+
+```powershell
+rg -n -i --glob '*.py' -e 'fastapi|pydantic|proverif|benchmark|contactpolicymatcher|wildcard|pair_counter|otk_allocate|otk_consume|act_service|task_authorization|tool_authorization|socket\.|http\.server|time\.sleep' src/saga/protocols src/saga/adapters/persistence src/saga/ports
+```
+
+Rerun at `2026-07-17T10:52:37Z`: the public-surface test passed (exit 0); both `rg` commands returned the expected no-match exit 1.
 
 ## 9. Unresolved paper assumptions and limitations
 
