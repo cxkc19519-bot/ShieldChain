@@ -1,5 +1,8 @@
+import saga
 import saga.crypto as crypto
 import saga.domain as domain
+import saga.ports as ports
+import saga.protocols as protocols
 from saga.crypto import passwords
 
 
@@ -62,6 +65,10 @@ def test_password_submodule_api_is_exact() -> None:
     assert all(hasattr(passwords, name) for name in passwords.__all__)
 
 
+def test_top_level_public_api_is_exact() -> None:
+    assert saga.__all__ == ()
+
+
 def test_domain_public_api_is_exact() -> None:
     expected = (
         "AgentEndpointExists",
@@ -92,3 +99,35 @@ def test_domain_public_api_is_exact() -> None:
     assert domain.__all__ == expected
     assert len(domain.__all__) == len(set(domain.__all__))
     assert all(hasattr(domain, name) for name in expected)
+    assert not hasattr(domain, "StoredPasswordRecord")
+
+
+def test_ports_public_api_is_exact() -> None:
+    expected = (
+        "AgentCreateOutcome",
+        "AgentRegistry",
+        "Clock",
+        "IdentityVerifier",
+        "ProviderSigner",
+        "RandomSource",
+        "UserCreateOutcome",
+        "UserRegistry",
+    )
+    assert ports.__all__ == expected
+    assert len(ports.__all__) == len(set(ports.__all__))
+    assert all(hasattr(ports, name) for name in expected)
+
+
+def test_protocols_public_api_is_exact() -> None:
+    expected = ("AgentRegistrationService", "UserRegistrationService")
+    assert protocols.__all__ == expected
+    assert len(protocols.__all__) == len(set(protocols.__all__))
+    assert all(hasattr(protocols, name) for name in expected)
+    persistence_exports = (
+        "InMemoryAgentRegistry",
+        "InMemoryUserRegistry",
+        "SQLiteAgentRegistry",
+        "SQLiteUserRegistry",
+    )
+    for namespace in (saga, domain, ports, protocols):
+        assert all(not hasattr(namespace, name) for name in persistence_exports)
