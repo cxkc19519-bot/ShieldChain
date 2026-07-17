@@ -38,6 +38,7 @@ def test_crypto_public_api_is_exact() -> None:
         "load_der_certificate",
         "sign",
         "validate_leaf_certificate",
+        "validated_leaf_public_key_bytes",
         "verify",
         "x25519_public_key",
         "x25519_public_key_bytes",

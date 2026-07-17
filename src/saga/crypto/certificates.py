@@ -125,16 +125,24 @@ def load_der_certificate(data: bytes) -> x509.Certificate:
         raise CertificateValidationError("certificate encoding invalid") from None
 
 
-def _validate_algorithm_profile(leaf: x509.Certificate, anchor: x509.Certificate) -> None:
+def _validate_algorithm_profile(
+    leaf: x509.Certificate,
+    anchor: x509.Certificate,
+) -> tuple[Ed25519PublicKey, Ed25519PublicKey]:
     if (
         leaf.version is not x509.Version.v3
         or anchor.version is not x509.Version.v3
         or leaf.signature_algorithm_oid != SignatureAlgorithmOID.ED25519
         or anchor.signature_algorithm_oid != SignatureAlgorithmOID.ED25519
-        or not isinstance(leaf.public_key(), Ed25519PublicKey)
-        or not isinstance(anchor.public_key(), Ed25519PublicKey)
     ):
         raise CertificateValidationError("certificate algorithm invalid")
+    leaf_public_key = leaf.public_key()
+    if not isinstance(leaf_public_key, Ed25519PublicKey):
+        raise CertificateValidationError("certificate algorithm invalid")
+    anchor_public_key = anchor.public_key()
+    if not isinstance(anchor_public_key, Ed25519PublicKey):
+        raise CertificateValidationError("certificate algorithm invalid")
+    return leaf_public_key, anchor_public_key
 
 
 def _validate_extension_profile(leaf: x509.Certificate, anchor: x509.Certificate) -> None:
@@ -156,25 +164,22 @@ def _validate_extension_profile(leaf: x509.Certificate, anchor: x509.Certificate
         raise CertificateValidationError("certificate extension invalid")
 
 
-def validate_leaf_certificate(
+def _validated_leaf_certificate(
     *,
     leaf_der: bytes,
     trust_anchor_der: bytes,
     expected_kind: IdentityKind,
     expected_identifier: str,
-    expected_public_key_spki_der: bytes,
     now_ms: int,
-) -> None:
+) -> tuple[x509.Certificate, Ed25519PublicKey]:
     try:
         if not isinstance(expected_kind, IdentityKind):
             raise CertificateValidationError("certificate identity invalid")
-        if type(expected_public_key_spki_der) is not bytes or not expected_public_key_spki_der:
-            raise CertificateValidationError("certificate key binding invalid")
         leaf = load_der_certificate(leaf_der)
         anchor = load_der_certificate(trust_anchor_der)
         now = datetime.fromtimestamp(require_unix_ms(now_ms, "now_ms") / 1000, UTC)
         expected_uri = identity_uri(expected_kind, expected_identifier)
-        _validate_algorithm_profile(leaf, anchor)
+        leaf_public_key, _ = _validate_algorithm_profile(leaf, anchor)
         _validate_extension_profile(leaf, anchor)
         anchor_bc = _extension(anchor, x509.BasicConstraints, critical=True).value
         leaf_bc = _extension(leaf, x509.BasicConstraints, critical=True).value
@@ -204,11 +209,88 @@ def validate_leaf_certificate(
         uris = general_names.get_values_for_type(x509.UniformResourceIdentifier)
         if len(general_names) != 1 or uris != [expected_uri]:
             raise CertificateValidationError("certificate identity invalid")
-        actual_spki = leaf.public_key().public_bytes(
-            Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+        return leaf, leaf_public_key
+    except CertificateValidationError:
+        raise
+    except (
+        AttributeError,
+        InvalidSignature,
+        OSError,
+        OverflowError,
+        TypeError,
+        UnsupportedAlgorithm,
+        ValueError,
+        x509.DuplicateExtension,
+        x509.ExtensionNotFound,
+        x509.InvalidVersion,
+        x509.UnsupportedGeneralNameType,
+    ):
+        raise CertificateValidationError("certificate validation failed") from None
+
+
+def validate_leaf_certificate(
+    *,
+    leaf_der: bytes,
+    trust_anchor_der: bytes,
+    expected_kind: IdentityKind,
+    expected_identifier: str,
+    expected_public_key_spki_der: bytes,
+    now_ms: int,
+) -> None:
+    try:
+        if not isinstance(expected_kind, IdentityKind):
+            raise CertificateValidationError("certificate identity invalid")
+        if type(expected_public_key_spki_der) is not bytes or not expected_public_key_spki_der:
+            raise CertificateValidationError("certificate key binding invalid")
+        _, leaf_public_key = _validated_leaf_certificate(
+            leaf_der=leaf_der,
+            trust_anchor_der=trust_anchor_der,
+            expected_kind=expected_kind,
+            expected_identifier=expected_identifier,
+            now_ms=now_ms,
         )
+        actual_spki = leaf_public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
         if not hmac.compare_digest(actual_spki, expected_public_key_spki_der):
             raise CertificateValidationError("certificate key binding invalid")
+    except CertificateValidationError:
+        raise
+    except (
+        AttributeError,
+        InvalidSignature,
+        OSError,
+        OverflowError,
+        TypeError,
+        UnsupportedAlgorithm,
+        ValueError,
+        x509.DuplicateExtension,
+        x509.ExtensionNotFound,
+        x509.InvalidVersion,
+        x509.UnsupportedGeneralNameType,
+    ):
+        raise CertificateValidationError("certificate validation failed") from None
+
+
+def validated_leaf_public_key_bytes(
+    *,
+    leaf_der: bytes,
+    trust_anchor_der: bytes,
+    expected_kind: IdentityKind,
+    expected_identifier: str,
+    now_ms: int,
+) -> bytes:
+    """Validate a SAGA leaf and return its exact raw Ed25519 public key."""
+    try:
+        _, leaf_public_key = _validated_leaf_certificate(
+            leaf_der=leaf_der,
+            trust_anchor_der=trust_anchor_der,
+            expected_kind=expected_kind,
+            expected_identifier=expected_identifier,
+            now_ms=now_ms,
+        )
+        public_key = leaf_public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        if type(public_key) is not bytes or len(public_key) != 32:
+            raise CertificateValidationError("certificate validation failed")
+        return public_key
     except CertificateValidationError:
         raise
     except (

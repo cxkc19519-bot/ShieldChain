@@ -20,6 +20,7 @@ from .certificates import (
     identity_uri,
     load_der_certificate,
     validate_leaf_certificate,
+    validated_leaf_public_key_bytes,
 )
 from .kdf import KeyDerivationError, derive_sdhk
 from .key_agreement import (
@@ -74,6 +75,7 @@ __all__ = (
     "load_der_certificate",
     "sign",
     "validate_leaf_certificate",
+    "validated_leaf_public_key_bytes",
     "verify",
     "x25519_public_key",
     "x25519_public_key_bytes",

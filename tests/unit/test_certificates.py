@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import ObjectIdentifier, SignatureAlgorithmOID
 
 import saga.crypto.certificates as certificate_module
@@ -12,6 +13,7 @@ from saga.crypto.certificates import (
     identity_uri,
     load_der_certificate,
     validate_leaf_certificate,
+    validated_leaf_public_key_bytes,
 )
 from tests.helpers.certificates import LEAF_AFTER, LEAF_BEFORE, build_certificate_fixtures
 
@@ -68,6 +70,70 @@ def test_valid_agent_certificate_binds_identity_and_key() -> None:
         expected_public_key_spki_der=fixtures.agent.spki_der,
         now_ms=fixtures.now_ms,
     )
+
+
+@pytest.mark.parametrize("attribute", ["user", "agent"])
+def test_validated_leaf_public_key_returns_exact_raw_ed25519_key(
+    attribute: str,
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = getattr(fixtures, attribute)
+    expected = (
+        x509.load_der_x509_certificate(leaf.der)
+        .public_key()
+        .public_bytes(Encoding.Raw, PublicFormat.Raw)
+    )
+
+    actual = validated_leaf_public_key_bytes(
+        leaf_der=leaf.der,
+        trust_anchor_der=fixtures.anchor_der,
+        expected_kind=leaf.kind,
+        expected_identifier=leaf.identifier,
+        now_ms=fixtures.now_ms,
+    )
+
+    assert type(actual) is bytes
+    assert len(actual) == 32
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "wrong_anchor",
+        "wrong_san",
+        "expired_leaf",
+        "future_leaf",
+        "leaf_wrong_eku",
+        "malformed_leaf_der",
+        "malformed_anchor_der",
+    ],
+)
+def test_validated_leaf_public_key_rejects_invalid_certificates(case_name: str) -> None:
+    fixtures = build_certificate_fixtures()
+    case = fixtures.negative[case_name]
+
+    with pytest.raises(CertificateValidationError):
+        validated_leaf_public_key_bytes(
+            leaf_der=case.leaf_der,
+            trust_anchor_der=case.anchor_der,
+            expected_kind=case.kind,
+            expected_identifier=case.identifier,
+            now_ms=case.now_ms,
+        )
+
+
+def test_validated_leaf_public_key_rejects_wrong_kind() -> None:
+    fixtures = build_certificate_fixtures()
+
+    with pytest.raises(CertificateValidationError):
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=IdentityKind.USER,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
 
 
 @pytest.mark.parametrize("attribute", ["user", "provider", "agent"])
@@ -147,6 +213,20 @@ def test_validation_rejects_malformed_boundary_inputs(change: dict[str, object])
         validate_leaf_certificate(**arguments)
 
 
+def test_validation_preserves_identity_before_key_binding_error_precedence() -> None:
+    fixtures = build_certificate_fixtures()
+
+    with pytest.raises(CertificateValidationError, match="^certificate identity invalid$"):
+        validate_leaf_certificate(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=object(),  # type: ignore[arg-type]
+            expected_identifier=fixtures.agent.identifier,
+            expected_public_key_spki_der=b"",
+            now_ms=fixtures.now_ms,
+        )
+
+
 class CertificateProxy:
     def __init__(self, certificate: x509.Certificate, failure: str) -> None:
         self._certificate = certificate
@@ -177,6 +257,101 @@ class CertificateProxy:
         return self._certificate.public_key()
 
 
+class CountingCertificateProxy:
+    def __init__(self, certificate: x509.Certificate) -> None:
+        self._certificate = certificate
+        self.public_key_calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._certificate, name)
+
+    def verify_directly_issued_by(self, issuer: x509.Certificate) -> None:
+        self._certificate.verify_directly_issued_by(issuer)
+
+    def public_key(self) -> Any:
+        self.public_key_calls += 1
+        return self._certificate.public_key()
+
+
+class InvalidAlgorithmCertificateProxy:
+    def __init__(self, certificate: x509.Certificate, invalid_field: str) -> None:
+        self._certificate = certificate
+        self._invalid_field = invalid_field
+        self.public_key_calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        if self._invalid_field == "version" and name == "version":
+            return object()
+        if self._invalid_field == "signature-algorithm" and name == "signature_algorithm_oid":
+            return SignatureAlgorithmOID.RSA_WITH_SHA256
+        return getattr(self._certificate, name)
+
+    def public_key(self) -> Any:
+        self.public_key_calls += 1
+        raise ValueError("backend detail")
+
+
+@pytest.mark.parametrize("invalid_target", ["leaf", "anchor"])
+@pytest.mark.parametrize("invalid_field", ["version", "signature-algorithm"])
+def test_invalid_algorithm_metadata_short_circuits_before_public_key_access(
+    monkeypatch: pytest.MonkeyPatch, invalid_target: str, invalid_field: str
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = InvalidAlgorithmCertificateProxy(
+        x509.load_der_x509_certificate(fixtures.agent.der),
+        invalid_field if invalid_target == "leaf" else "none",
+    )
+    anchor = InvalidAlgorithmCertificateProxy(
+        x509.load_der_x509_certificate(fixtures.anchor_der),
+        invalid_field if invalid_target == "anchor" else "none",
+    )
+    values = iter([leaf, anchor])
+    monkeypatch.setattr(certificate_module, "load_der_certificate", lambda _: next(values))
+
+    with pytest.raises(CertificateValidationError, match="^certificate algorithm invalid$"):
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
+
+    assert leaf.public_key_calls == 0
+    assert anchor.public_key_calls == 0
+
+
+@pytest.mark.parametrize("api", ["validate", "extract"])
+def test_public_validation_reads_leaf_public_key_exactly_once(
+    monkeypatch: pytest.MonkeyPatch, api: str
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = CountingCertificateProxy(x509.load_der_x509_certificate(fixtures.agent.der))
+    anchor = x509.load_der_x509_certificate(fixtures.anchor_der)
+    values = iter([leaf, anchor])
+    monkeypatch.setattr(certificate_module, "load_der_certificate", lambda _: next(values))
+
+    if api == "validate":
+        validate_leaf_certificate(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            expected_public_key_spki_der=fixtures.agent.spki_der,
+            now_ms=fixtures.now_ms,
+        )
+    else:
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
+
+    assert leaf.public_key_calls == 1
+
+
 class ExtensionsProxy:
     def __init__(self, extensions: x509.Extensions, *, unknown_critical: bool) -> None:
         self._extensions = extensions
@@ -204,6 +379,96 @@ class PublicKeyProxy:
 
     def public_bytes(self, encoding: Any, format: Any) -> bytes:
         return self._public_key.public_bytes(encoding, format)
+
+
+class ExtractionPublicKeyProxy:
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    def public_bytes(self, encoding: Any, format: Any) -> Any:
+        if isinstance(self._result, BaseException):
+            raise self._result
+        return self._result
+
+
+class BytesSubclass(bytes):
+    pass
+
+
+@pytest.mark.parametrize(
+    "result",
+    [object(), bytearray(32), b"x" * 31, b"x" * 33, BytesSubclass(b"x" * 32)],
+)
+def test_validated_leaf_public_key_rejects_malformed_backend_result(
+    monkeypatch: pytest.MonkeyPatch, result: object
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = x509.load_der_x509_certificate(fixtures.agent.der)
+    monkeypatch.setattr(
+        certificate_module,
+        "_validated_leaf_certificate",
+        lambda **_: (leaf, ExtractionPublicKeyProxy(result)),
+    )
+
+    with pytest.raises(CertificateValidationError, match="^certificate validation failed$"):
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("backend detail"), TypeError("backend detail"), ValueError("backend detail")],
+)
+def test_validated_leaf_public_key_normalizes_extraction_failures(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = x509.load_der_x509_certificate(fixtures.agent.der)
+    monkeypatch.setattr(
+        certificate_module,
+        "_validated_leaf_certificate",
+        lambda **_: (leaf, ExtractionPublicKeyProxy(error)),
+    )
+
+    with pytest.raises(
+        CertificateValidationError, match="^certificate validation failed$"
+    ) as caught:
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is error
+
+
+@pytest.mark.parametrize("error", [MemoryError(), KeyboardInterrupt(), SystemExit()])
+def test_validated_leaf_public_key_system_exceptions_propagate_from_extraction(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = x509.load_der_x509_certificate(fixtures.agent.der)
+    monkeypatch.setattr(
+        certificate_module,
+        "_validated_leaf_certificate",
+        lambda **_: (leaf, ExtractionPublicKeyProxy(error)),
+    )
+
+    with pytest.raises(type(error)):
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
+            now_ms=fixtures.now_ms,
+        )
 
 
 @pytest.mark.parametrize("failure", ["verification", "extension", "public-key-export"])
@@ -250,6 +515,36 @@ def test_closed_profile_rejects_unapproved_algorithms_and_extensions(
             expected_kind=fixtures.agent.kind,
             expected_identifier=fixtures.agent.identifier,
             expected_public_key_spki_der=fixtures.agent.spki_der,
+            now_ms=fixtures.now_ms,
+        )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "verification",
+        "extension",
+        "public-key-export",
+        "public-key-algorithm",
+        "unknown-critical-extension",
+        "unexpected-profile-extension",
+    ],
+)
+def test_validated_leaf_public_key_normalizes_backend_and_profile_failures(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    fixtures = build_certificate_fixtures()
+    leaf = x509.load_der_x509_certificate(fixtures.agent.der)
+    anchor = x509.load_der_x509_certificate(fixtures.anchor_der)
+    values = iter([CertificateProxy(leaf, failure), CertificateProxy(anchor, failure)])
+    monkeypatch.setattr(certificate_module, "load_der_certificate", lambda _: next(values))
+
+    with pytest.raises(CertificateValidationError):
+        validated_leaf_public_key_bytes(
+            leaf_der=fixtures.agent.der,
+            trust_anchor_der=fixtures.anchor_der,
+            expected_kind=fixtures.agent.kind,
+            expected_identifier=fixtures.agent.identifier,
             now_ms=fixtures.now_ms,
         )
 
