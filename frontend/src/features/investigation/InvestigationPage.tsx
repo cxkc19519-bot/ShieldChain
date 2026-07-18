@@ -40,13 +40,12 @@ function RunResult({ run }: { run: InvestigationResponse }) {
         <section aria-labelledby="evidence-title">
           <h3 id="evidence-title">证据</h3>
           <ul className="detail-list">{run.evidence.map((item) => {
-            const integrityPresent = item.confirmed && /^[0-9a-f]{64}$/.test(item.integrity_sha256)
             return (
               <li key={item.id}>
                 <strong>{item.summary}</strong>
                 <span>{item.source}</span>
                 <span>{item.confidence}</span>
-                {integrityPresent && <span>完整性已校验</span>}
+                <span>{item.integrity_verified ? '完整性已校验' : '完整性校验失败'}</span>
               </li>
             )
           })}</ul>

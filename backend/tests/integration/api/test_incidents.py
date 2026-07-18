@@ -15,9 +15,15 @@ from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.incidents.background import InvestigationRunnerUnavailable
-from shieldchain.incidents.domain import InvestigationStatus
-from shieldchain.incidents.persistence import AuditEventRow, InvestigationRunRow
+from shieldchain.incidents.domain import InvestigationStatus, RunMode
+from shieldchain.incidents.persistence import (
+    AuditEventRow,
+    EvidenceRecordRow,
+    InvestigationRunRow,
+)
 from shieldchain.incidents.ports import InvalidInvestigationState
+from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
+from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.main import create_app
 
 
@@ -150,6 +156,54 @@ def test_lifespan_calls_shutdown_after_exit(tmp_path: Path) -> None:
         assert runner.shutdown_calls == 0
 
     assert runner.shutdown_calls == 1
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "crash_status",
+    [InvestigationStatus.PENDING, InvestigationStatus.ACTION_PLANNED],
+)
+def test_public_app_recovers_crash_boundaries_and_releases_active_index(
+    tmp_path: Path, crash_status: InvestigationStatus
+) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / f'recover-{crash_status}.db'}")
+    Base.metadata.create_all(engine)
+    factory = create_session_factory(engine)
+    repository = SqlAlchemyIncidentRepository(seed_phishing_scenario)
+    with factory.begin() as session:
+        state = repository.reset_phishing_scenario(session, now=datetime.now(UTC))
+        old_run = repository.create_run(
+            session,
+            simulation_id=state.simulation_id,
+            mode=RunMode.NORMAL,
+            request_id="before-crash",
+            now=datetime.now(UTC),
+        )
+        session.execute(
+            update(InvestigationRunRow)
+            .where(InvestigationRunRow.id == str(old_run.id))
+            .values(status=crash_status.value)
+        )
+
+    app = create_app(
+        database_engine=engine,
+        settings=Settings(_env_file=None, simulation_step_delay_ms=0),
+    )
+    with TestClient(app) as client:
+        with factory() as session:
+            recovered = session.get(InvestigationRunRow, str(old_run.id))
+            assert recovered.status == InvestigationStatus.INTERRUPTED.value
+            assert recovered.completed_at is not None
+
+        reset = _reset(client, request_id="after-recovery-reset")
+        started = client.post(
+            "/api/v1/investigations",
+            json={"simulation_instance_id": reset["simulation"]["id"]},
+            headers={"X-Request-ID": "after-recovery-start"},
+        )
+        assert started.status_code == 202
+        assert started.json()["run_id"] != str(old_run.id)
+
     engine.dispose()
 
 
@@ -366,6 +420,36 @@ def test_real_runner_polling_reaches_expected_terminal_status(
             assert polled.json()["verification"]["blocked"] is True
         else:
             assert polled.json()["tool_result"]["error_code"] == "simulated_block_failure"
+    engine.dispose()
+
+
+def test_tampered_stored_evidence_is_presented_as_unverified(tmp_path: Path) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'tampered-query.db'}")
+    Base.metadata.create_all(engine)
+    settings = Settings(_env_file=None, simulation_step_delay_ms=0)
+    with TestClient(create_app(database_engine=engine, settings=settings)) as client:
+        reset = _reset(client)
+        started = client.post(
+            "/api/v1/investigations",
+            json={"simulation_instance_id": reset["simulation"]["id"]},
+        ).json()
+        for _ in range(100):
+            polled = client.get(f"/api/v1/investigations/{started['run_id']}")
+            if polled.json()["evidence"]:
+                break
+        with create_session_factory(engine).begin() as session:
+            row = session.scalar(
+                select(EvidenceRecordRow).where(
+                    EvidenceRecordRow.run_id == started["run_id"]
+                )
+            )
+            row.summary = "tampered after persistence"
+            tampered_id = row.id
+
+        body = client.get(f"/api/v1/investigations/{started['run_id']}").json()
+        presented = next(item for item in body["evidence"] if item["id"] == tampered_id)
+        assert presented["integrity_verified"] is False
+
     engine.dispose()
 
 

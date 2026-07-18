@@ -19,7 +19,7 @@
 - 所有 ID 使用 UUID；时间以 UTC 存储并使用带时区的 `datetime`。
 - 证据创建后不可更新；状态转换和审计必须在同一事务提交。
 - 同一场景实例最多一个活动运行；同一幂等键只能对应一个工具执行结果。
-- 启动恢复只把遗留的 `collecting`、`analyzing`、`executing`、`verifying` 标记为 `interrupted`，与书面规格保持一致。
+- 用户批准的可靠性修订：启动恢复把全部数据库活动状态 `pending`、`collecting`、`analyzing`、`action_planned`、`executing`、`verifying` 标记为 `interrupted`。一个有序公开领域常量是活动判断、SQLite 部分唯一索引、reset/start 冲突查询和恢复的唯一状态真源。
 - 失败注入只在非生产环境可用，生产环境请求返回 `403`。
 - 前端每 500 毫秒轮询；阶段二不引入 SSE、WebSocket、Celery、Redis 或消息队列。
 - 本机演示每个已提交步骤之间默认暂停 600 毫秒，测试注入 0；同步工作流必须在线程中运行，不阻塞 FastAPI 事件循环。
@@ -168,7 +168,7 @@ ALLOWED_TRANSITIONS = {
 }
 ```
 
-`Evidence` must include UUID ID, type, source, observed UTC time, summary, raw reference, SHA-256 integrity hash, confidence from 0 to 1, confirmed flag. Reject naive datetimes, invalid confidence and empty references in `__post_init__`.
+`Evidence` must include UUID ID, type, source, observed UTC time, summary, raw reference, SHA-256 integrity hash, confidence from 0 to 1, confirmed flag. Reject naive datetimes, invalid confidence and empty references in `__post_init__`. Canonical integrity uses sorted-key compact UTF-8 JSON over `evidence_type`, `source`, normalized aware-UTC `observed_at`, `summary`, `raw_reference`, `confidence`, `confirmed`, and the complete `payload`; derive both digest and UUID5 ID from it. Repository persistence, deterministic rules, and query presentation use the same verifier, while API/strict frontend carry server-computed `integrity_verified` without a schema migration.
 
 Use these exact value-object fields so later tasks share one contract:
 
@@ -656,7 +656,7 @@ def test_production_rejects_failure_injection(production_client, seeded_simulati
 
 
 def test_startup_marks_active_runs_interrupted(app_factory) -> None:
-    run_ids = seed_runs_in_statuses({"collecting", "analyzing", "executing", "verifying"})
+    run_ids = seed_runs_in_statuses({"pending", "collecting", "analyzing", "action_planned", "executing", "verifying"})
     with TestClient(app_factory()):
         pass
     assert {load_status(run_id) for run_id in run_ids} == {"interrupted"}

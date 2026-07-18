@@ -19,15 +19,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shieldchain.db.base import Base
+from shieldchain.incidents.domain import ACTIVE_INVESTIGATION_STATUSES
 
-ACTIVE_VALUES = (
-    "pending",
-    "collecting",
-    "analyzing",
-    "action_planned",
-    "executing",
-    "verifying",
-)
+ACTIVE_VALUES = tuple(status.value for status in ACTIVE_INVESTIGATION_STATUSES)
 
 
 class SimulationInstanceRow(Base):

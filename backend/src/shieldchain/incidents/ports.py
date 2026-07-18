@@ -60,10 +60,22 @@ class DuplicateEvidence(RuntimeError):
         super().__init__(f"duplicate evidence: {evidence_id}")
 
 
+class EvidenceIntegrityMismatch(RuntimeError):
+    def __init__(self, evidence_id: UUID) -> None:
+        self.evidence_id = evidence_id
+        super().__init__(f"evidence integrity mismatch: {evidence_id}")
+
+
 class DuplicateIdempotencyKey(RuntimeError):
     def __init__(self, idempotency_key: str) -> None:
         self.idempotency_key = idempotency_key
         super().__init__(f"duplicate idempotency key: {idempotency_key}")
+
+
+class IdempotencyConflict(RuntimeError):
+    def __init__(self, idempotency_key: str) -> None:
+        self.idempotency_key = idempotency_key
+        super().__init__(f"idempotency operation conflict: {idempotency_key}")
 
 
 class RunSimulationMismatch(RuntimeError):

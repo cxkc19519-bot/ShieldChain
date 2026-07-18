@@ -43,7 +43,23 @@ def test_assessment_reads_payload_not_summary_or_reference() -> None:
         for item in _evidence()
     )
 
-    assert assess(evidence).conclusion is Conclusion.CONFIRMED_THREAT
+    assert assess(evidence).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"summary": "tampered"},
+        {"raw_reference": "simulation://tampered"},
+        {"confidence": 0.5},
+        {"confirmed": False},
+        {"integrity_sha256": "0" * 64},
+    ],
+)
+def test_integrity_tamper_cannot_confirm_a_threat(change: dict[str, object]) -> None:
+    evidence = list(_evidence())
+    evidence[0] = replace(evidence[0], **change)
+    assert assess(tuple(evidence)).conclusion is Conclusion.INSUFFICIENT_EVIDENCE
 
 
 @pytest.mark.parametrize("missing_index", range(5))

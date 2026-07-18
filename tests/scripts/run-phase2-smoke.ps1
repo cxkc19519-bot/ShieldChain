@@ -596,13 +596,14 @@ try {
     Assert-Equal ([int]$fixedIncident.remote_port) 443 "target port is fixed"
     Assert-Equal $fixedIncident.process_name "powershell.exe" "process is fixed"
     Assert-Equal $fixedIncident.parent_process_name "WINWORD.EXE" "parent process is fixed"
-    $expectedCommandSummary = [string]::Concat([char[]]@(0x93b5,0x0446,0xe511,0x7f01,0x5fda,0x7e43,0x9474,0x8fa8,0x6671,0x9428,0x52ed,0x7d2a,0x942e,0x4f7d,0x527c,0x93c8,0x7421))
+    $expectedCommandSummary = [string]::Concat([char[]]@(0x6267,0x884c,0x7ecf,0x8fc7,0x8131,0x654f,0x7684,0x7f16,0x7801,0x811a,0x672c))
     Assert-Equal $fixedIncident.command_summary $expectedCommandSummary "command summary is fixed"
     Assert-Equal $fixedIncident.threat_label "known-malicious-c2" "threat label is fixed"
 
     Assert-Equal @($final.evidence).Count 5 "five evidence records are returned"
     foreach ($evidence in @($final.evidence)) {
         Assert-True ([string]$evidence.integrity_sha256 -cmatch '^[0-9a-f]{64}$') "evidence hash is lowercase SHA-256"
+        Assert-True ([bool]$evidence.integrity_verified) "evidence integrity is server-verified"
     }
 
     Assert-Equal $audit.incident_id $started.incident_id "audit belongs to the incident"

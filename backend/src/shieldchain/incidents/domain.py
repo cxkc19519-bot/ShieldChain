@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from ipaddress import IPv4Address
 from types import MappingProxyType
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 EvidenceScalar = str | int | float | bool | None
@@ -53,11 +53,23 @@ class RunMode(StrEnum):
     FAIL_BLOCK_ONCE = "fail_block_once"
 
 
+ACTIVE_INVESTIGATION_STATUSES = (
+    InvestigationStatus.PENDING,
+    InvestigationStatus.COLLECTING,
+    InvestigationStatus.ANALYZING,
+    InvestigationStatus.ACTION_PLANNED,
+    InvestigationStatus.EXECUTING,
+    InvestigationStatus.VERIFYING,
+)
+
+
 ALLOWED_TRANSITIONS: Mapping[
     InvestigationStatus, frozenset[InvestigationStatus]
 ] = MappingProxyType(
     {
-        InvestigationStatus.PENDING: frozenset({InvestigationStatus.COLLECTING}),
+        InvestigationStatus.PENDING: frozenset(
+            {InvestigationStatus.COLLECTING, InvestigationStatus.INTERRUPTED}
+        ),
         InvestigationStatus.COLLECTING: frozenset(
             {
                 InvestigationStatus.ANALYZING,
@@ -103,7 +115,6 @@ _TERMINAL_STATUSES = frozenset(
         InvestigationStatus.CLOSED,
     }
 )
-_ACTIVE_STATUSES = frozenset(InvestigationStatus) - _TERMINAL_STATUSES
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -127,7 +138,7 @@ def is_terminal(status: InvestigationStatus) -> bool:
 
 
 def is_active(status: InvestigationStatus) -> bool:
-    return status in _ACTIVE_STATUSES
+    return status in ACTIVE_INVESTIGATION_STATUSES
 
 
 def _require_aware_utc(value: datetime, field_name: str) -> None:
@@ -170,7 +181,7 @@ class Evidence:
     integrity_sha256: str
     confidence: float
     confirmed: bool
-    payload: Mapping[str, EvidenceScalar]
+    payload: Mapping[str, Any]
 
     def __post_init__(self) -> None:
         _require_uuid(self.id, "id")
@@ -185,8 +196,10 @@ class Evidence:
         for key, value in copied_payload.items():
             if not isinstance(key, str) or not key.strip():
                 raise ValueError("payload keys must not be empty")
-            if value is not None and not isinstance(value, (str, int, float, bool)):
-                raise TypeError("payload values must be scalar")
+            try:
+                __import__("json").dumps(value, allow_nan=False)
+            except (TypeError, ValueError) as error:
+                raise TypeError("payload values must be JSON serializable") from error
         object.__setattr__(self, "payload", MappingProxyType(copied_payload))
 
 

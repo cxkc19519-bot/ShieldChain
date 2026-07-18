@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from datetime import datetime
 from ipaddress import IPv4Address
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import uuid4
 
 from shieldchain.incidents.domain import Evidence, EvidenceScalar, PhishingScenarioState
+from shieldchain.incidents.integrity import create_evidence
 
 
 def seed_phishing_scenario(now: datetime) -> PhishingScenarioState:
@@ -26,7 +25,7 @@ def seed_phishing_scenario(now: datetime) -> PhishingScenarioState:
         remote_port=443,
         process_name="powershell.exe",
         parent_process_name="WINWORD.EXE",
-        command_summary="鎵ц缁忚繃鑴辨晱鐨勭紪鐮佽剼鏈琡",
+        command_summary="执行经过脱敏的编码脚本",
         threat_label="known-malicious-c2",
         connection_status="active",
         firewall_status="not_blocked",
@@ -46,26 +45,12 @@ def _evidence(
     confidence: float,
     payload: Mapping[str, EvidenceScalar],
 ) -> Evidence:
-    canonical = json.dumps(
-        {
-            "evidence_type": evidence_type,
-            "source": source,
-            "observed_at": observed_at.isoformat(),
-            "payload": dict(payload),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return Evidence(
-        id=uuid5(NAMESPACE_URL, f"shieldchain-evidence:{digest}"),
+    return create_evidence(
         evidence_type=evidence_type,
         source=source,
         observed_at=observed_at,
         summary=summary,
         raw_reference=raw_reference,
-        integrity_sha256=digest,
         confidence=confidence,
         confirmed=True,
         payload=payload,

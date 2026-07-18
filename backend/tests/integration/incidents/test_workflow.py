@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select, update
@@ -234,17 +234,87 @@ def test_terminal_run_returns_without_side_effects(environment, terminal) -> Non
     assert sleeps == []
 
 
-def test_existing_idempotent_result_skips_firewall(environment) -> None:
+def test_correctly_owned_retry_returns_original_result_without_second_audit(environment) -> None:
     _engine, factory, repository, state, run = environment
     key = f"block-ip:{run.id}:{state.remote_ip}"
     with factory.begin() as session:
         outcome = SimulatedFirewall().block_ip(state, state.remote_ip, key, fail_once=True)
         repository.apply_tool_outcome(session, run.id, outcome, request_id="seed-tool", now=NOW)
+    with factory() as session:
+        audit_count_before = session.scalar(
+            select(func.count())
+            .select_from(AuditEventRow)
+            .where(
+                AuditEventRow.run_id == str(run.id),
+                AuditEventRow.event_type == "tool_called",
+            )
+        )
     firewall = RecordingFirewall()
     workflow = _workflow(repository, firewall=firewall)
 
     assert workflow.run(factory, run.id, request_id="workflow") is InvestigationStatus.FAILED
-    assert firewall.calls == 0
+    with factory() as session:
+        stored_tool = session.scalar(
+            select(SimulationToolCallRow).where(
+                SimulationToolCallRow.idempotency_key == key
+            )
+        )
+        audit_count_after = session.scalar(
+            select(func.count())
+            .select_from(AuditEventRow)
+            .where(
+                AuditEventRow.run_id == str(run.id),
+                AuditEventRow.event_type == "tool_called",
+            )
+        )
+    assert firewall.calls == 1
+    assert stored_tool.status == "failed"
+    assert stored_tool.error_code == "simulated_block_failure"
+    assert audit_count_after == audit_count_before == 1
+
+
+def test_misowned_idempotency_row_cannot_advance_execution(environment) -> None:
+    _engine, factory, repository, state, run = environment
+    key = f"block-ip:{run.id}:{state.remote_ip}"
+    with factory.begin() as session:
+        session.add(
+            SimulationToolCallRow(
+                id=str(uuid4()),
+                run_id=str(run.id),
+                simulation_instance_id=str(state.simulation_id),
+                tool_name="block_ip",
+                target="203.0.113.99",
+                idempotency_key=key,
+                status="blocked",
+                before_state_json={"firewall_status": "not_blocked"},
+                after_state_json={"firewall_status": "blocked"},
+                error_code=None,
+                requested_at=NOW,
+                completed_at=NOW,
+            )
+        )
+
+    firewall = RecordingFirewall()
+    workflow = _workflow(repository, firewall=firewall)
+
+    assert workflow.run(factory, run.id, request_id="workflow") is InvestigationStatus.FAILED
+
+    stored, steps, audits = _run_rows(factory, run.id)
+    with factory() as session:
+        simulation = repository.get_simulation(session, state.simulation_id)
+    assert stored.status == InvestigationStatus.FAILED.value
+    assert simulation.connection_status == "active"
+    assert simulation.firewall_status == "not_blocked"
+    block_step = next(step for step in steps if step.step_key == "block_ip")
+    assert block_step.status == "failed"
+    assert block_step.error_code == "workflow_step_failed"
+    transitions = [
+        event.payload_json.get("to_status")
+        for event in audits
+        if event.event_type == "status_changed"
+    ]
+    assert InvestigationStatus.VERIFYING.value not in transitions
+    assert InvestigationStatus.CLOSED.value not in transitions
 
 
 def test_each_pause_observes_committed_phase_state(environment) -> None:

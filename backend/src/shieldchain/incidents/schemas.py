@@ -77,6 +77,7 @@ class EvidenceView(StrictModel):
     integrity_sha256: str
     confidence: float
     confirmed: bool
+    integrity_verified: bool
     payload: dict[str, JsonValue]
 
 

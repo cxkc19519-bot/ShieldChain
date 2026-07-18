@@ -278,21 +278,19 @@ class InvestigationWorkflow:
             completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             idempotency_key = f"block-ip:{run_id}:{state.remote_ip}"
-            result = self._repository.get_tool_result(session, idempotency_key)
-            if result is None:
-                outcome = self._firewall.block_ip(
-                    state,
-                    state.remote_ip,
-                    idempotency_key,
-                    fail_once=fail_block_once,
-                )
-                result = self._repository.apply_tool_outcome(
-                    session,
-                    run_id,
-                    outcome,
-                    request_id=request_id,
-                    now=completed_at,
-                )
+            outcome = self._firewall.block_ip(
+                state,
+                state.remote_ip,
+                idempotency_key,
+                fail_once=fail_block_once,
+            )
+            result = self._repository.apply_tool_outcome(
+                session,
+                run_id,
+                outcome,
+                request_id=request_id,
+                now=completed_at,
+            )
             failed = result.status is ToolCallStatus.FAILED
             self._repository.record_step(
                 session,

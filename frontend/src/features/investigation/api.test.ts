@@ -102,6 +102,12 @@ describe('investigation API client', () => {
       ...investigation,
       status: 'closed',
       completed_at: NOW,
+      evidence: [{
+        id: ID, evidence_type: 'network_connection', source: 'simulated_edr', observed_at: NOW,
+        summary: 'connection', raw_reference: 'simulation://connection/1', integrity_sha256: 'a'.repeat(64),
+        confidence: 0.98, confirmed: true, integrity_verified: false,
+        payload: { remote_ip: '198.51.100.24' },
+      }],
       tool_result: {
         tool_name: 'simulated_firewall',
         target: '198.51.100.24:443',

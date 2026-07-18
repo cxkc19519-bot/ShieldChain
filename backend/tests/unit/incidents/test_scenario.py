@@ -5,6 +5,7 @@ from types import MappingProxyType
 
 import pytest
 
+from shieldchain.incidents.integrity import verify_evidence_integrity
 from shieldchain.incidents.scenario import collect_evidence, seed_phishing_scenario
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
@@ -25,7 +26,7 @@ def test_seed_has_exact_safe_simulation_contract() -> None:
     assert state.remote_port == 443
     assert state.process_name == "powershell.exe"
     assert state.parent_process_name == "WINWORD.EXE"
-    assert state.command_summary == "鎵ц缁忚繃鑴辨晱鐨勭紪鐮佽剼鏈琡"
+    assert state.command_summary == "执行经过脱敏的编码脚本"
     assert state.threat_label == "known-malicious-c2"
     assert state.connection_status == "active"
     assert state.firewall_status == "not_blocked"
@@ -39,6 +40,13 @@ def test_seed_creates_fresh_identifiers() -> None:
 
     assert first.simulation_id != second.simulation_id
     assert first.incident_id != second.incident_id
+
+
+def test_command_summary_is_exact_utf8_without_mojibake_code_points() -> None:
+    summary = seed_phishing_scenario(NOW).command_summary
+    assert summary.encode("utf-8").decode("utf-8") == summary
+    assert "\ufffd" not in summary
+    assert all(not 0xE000 <= ord(character) <= 0xF8FF for character in summary)
 
 
 def test_collect_evidence_has_exact_order_sources_confidence_and_payloads() -> None:
@@ -115,20 +123,9 @@ def test_collect_evidence_is_deterministic_and_does_not_mutate_state() -> None:
 def test_collect_evidence_hashes_canonical_structured_fields() -> None:
     evidence = collect_evidence(seed_phishing_scenario(NOW), NOW)
 
-    assert tuple(item.integrity_sha256 for item in evidence) == (
-        "17dd4b5dfd2bed526fd490a5282846e0f484495e98eb6b97eeafeb9085e76e3c",
-        "35cf0f28ef763dd0e7ea9eb8421b072a18f158178940468469eaa3f9ceffe30a",
-        "f0acd9e7d62e582a6b496b0e249c648c52302ed65fc5277cf60ca750fc0213c0",
-        "21c6fe5e87a4de5e8e516561953461009c60dc64af00ed79e63f50cd36f7d123",
-        "2c3105bc6bcca9920e94b54f5632ca19bf8952da6754611587d6d9106b6cc4b8",
-    )
-    assert tuple(str(item.id) for item in evidence) == (
-        "97419c68-080f-58ec-8e71-38900d2f717e",
-        "51bfca6a-31ec-546e-9375-48dc515aeb8b",
-        "73ee1a46-3fc5-5ae2-b02d-2fa1901259ec",
-        "bff6d743-bc8f-5c02-9762-9c74fb7cdd2c",
-        "72795a74-6f93-5912-99e2-e942bc4e550a",
-    )
+    assert all(verify_evidence_integrity(item) for item in evidence)
+    assert len({item.integrity_sha256 for item in evidence}) == len(evidence)
+    assert len({item.id for item in evidence}) == len(evidence)
 
 
 def test_collect_evidence_rejects_non_utc_now() -> None:

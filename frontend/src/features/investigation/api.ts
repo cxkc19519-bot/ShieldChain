@@ -148,13 +148,14 @@ function stepView(value: unknown): InvestigationStep {
 function evidenceView(value: unknown): EvidenceView {
   const item = model(value, [
     'id', 'evidence_type', 'source', 'observed_at', 'summary', 'raw_reference', 'integrity_sha256',
-    'confidence', 'confirmed', 'payload',
+    'confidence', 'confirmed', 'integrity_verified', 'payload',
   ])
   return {
     id: string(item.id), evidence_type: string(item.evidence_type), source: string(item.source),
     observed_at: string(item.observed_at), summary: string(item.summary), raw_reference: string(item.raw_reference),
     integrity_sha256: string(item.integrity_sha256), confidence: number(item.confidence),
-    confirmed: boolean(item.confirmed), payload: jsonObject(item.payload),
+    confirmed: boolean(item.confirmed), integrity_verified: boolean(item.integrity_verified),
+    payload: jsonObject(item.payload),
   }
 }
 

@@ -1,4 +1,5 @@
 from shieldchain.incidents.domain import (
+    ACTIVE_INVESTIGATION_STATUSES,
     ALLOWED_TRANSITIONS,
     Assessment,
     AuditEvent,
@@ -23,6 +24,7 @@ from shieldchain.incidents.domain import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "ACTIVE_INVESTIGATION_STATUSES",
     "Assessment",
     "AuditEvent",
     "BlockOutcome",

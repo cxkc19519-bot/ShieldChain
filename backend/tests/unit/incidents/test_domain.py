@@ -229,10 +229,14 @@ def test_evidence_rejects_empty_payload_keys(key: str) -> None:
         make_evidence(payload={key: "value"})
 
 
-@pytest.mark.parametrize("value", [[], {}, object()])
-def test_evidence_rejects_non_scalar_payload_values(value: object) -> None:
-    with pytest.raises(TypeError, match="payload values must be scalar"):
-        make_evidence(payload={"field": value})
+def test_evidence_accepts_complete_structured_json_payload() -> None:
+    evidence = make_evidence(payload={"nested": [1, {"verified": True}]})
+    assert evidence.payload["nested"] == [1, {"verified": True}]
+
+
+def test_evidence_rejects_non_json_payload_values() -> None:
+    with pytest.raises(TypeError, match="payload values must be JSON serializable"):
+        make_evidence(payload={"field": object()})
 
 
 def test_evidence_accepts_all_scalar_payload_values() -> None:

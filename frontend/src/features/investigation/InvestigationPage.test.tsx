@@ -79,7 +79,7 @@ describe('InvestigationPage', () => {
       .mockResolvedValueOnce(run('executing'))
       .mockResolvedValueOnce(run('verifying'))
       .mockResolvedValueOnce(run('closed', {
-        evidence: [{ id: ID, evidence_type: 'network', source: 'simulation://network', observed_at: NOW, summary: '固定目标连接', raw_reference: 'simulation://network/1', integrity_sha256: 'a'.repeat(64), confidence: 0.99, confirmed: true, payload: { remote_ip: '198.51.100.24' } }],
+        evidence: [{ id: ID, evidence_type: 'network', source: 'simulation://network', observed_at: NOW, summary: '固定目标连接', raw_reference: 'simulation://network/1', integrity_sha256: 'a'.repeat(64), confidence: 0.99, confirmed: true, integrity_verified: false, payload: { remote_ip: '198.51.100.24' } }],
         tool_result: { tool_name: 'simulated_firewall', target: '198.51.100.24:443', idempotency_key: 'block-1', status: 'blocked', before_state: { firewall_status: 'open' }, after_state: { firewall_status: 'blocked' }, error_code: null },
         verification: { blocked: true, connection_stopped: true, observed_at: NOW, evidence_ids: [ID] },
       }))
@@ -101,7 +101,8 @@ describe('InvestigationPage', () => {
     expect(screen.getByText('已闭环')).toBeVisible()
     expect(screen.getAllByText('198.51.100.24:443')).not.toHaveLength(0)
     expect(screen.getByText('连接已停止')).toBeVisible()
-    expect(screen.getByText('完整性已校验')).toBeVisible()
+    expect(screen.getByText('完整性校验失败')).toBeVisible()
+    expect(screen.queryByText('完整性已校验')).not.toBeInTheDocument()
     expect(screen.getByText('simulation://network')).toBeVisible()
     expect(screen.getByText('status_changed')).toBeVisible()
     expect(api.getIncident).toHaveBeenCalledWith(ID, expect.any(AbortSignal))

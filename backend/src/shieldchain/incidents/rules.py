@@ -3,6 +3,7 @@ from __future__ import annotations
 from ipaddress import IPv4Address
 
 from shieldchain.incidents.domain import Assessment, Conclusion, Evidence, RiskLevel
+from shieldchain.incidents.integrity import verify_evidence_integrity
 
 _EVIDENCE_TYPES = (
     "alert",
@@ -93,6 +94,8 @@ def _valid_payloads(items: dict[str, Evidence]) -> bool:
 
 
 def assess(evidence: tuple[Evidence, ...]) -> Assessment:
+    if any(not verify_evidence_integrity(item) for item in evidence):
+        return _unknown()
     if len(evidence) != len(_EVIDENCE_TYPES) or not all(item.confirmed for item in evidence):
         return _unknown()
     items = {item.evidence_type: item for item in evidence}

@@ -135,8 +135,10 @@ def test_shutdown_is_idempotent_cancels_pending_and_rejects_new_work(monkeypatch
                 InvestigationStatus.INTERRUPTED
                 if status
                 in {
+                    InvestigationStatus.PENDING,
                     InvestigationStatus.COLLECTING,
                     InvestigationStatus.ANALYZING,
+                    InvestigationStatus.ACTION_PLANNED,
                     InvestigationStatus.EXECUTING,
                     InvestigationStatus.VERIFYING,
                 }
@@ -145,8 +147,10 @@ def test_shutdown_is_idempotent_cancels_pending_and_rejects_new_work(monkeypatch
             int(
                 status
                 in {
+                    InvestigationStatus.PENDING,
                     InvestigationStatus.COLLECTING,
                     InvestigationStatus.ANALYZING,
+                    InvestigationStatus.ACTION_PLANNED,
                     InvestigationStatus.EXECUTING,
                     InvestigationStatus.VERIFYING,
                 }
@@ -155,7 +159,7 @@ def test_shutdown_is_idempotent_cancels_pending_and_rejects_new_work(monkeypatch
         for status in InvestigationStatus
     ],
 )
-def test_recover_interrupted_marks_only_four_in_progress_statuses(
+def test_recover_interrupted_marks_every_database_active_status(
     original_status, expected_status, expected_count
 ) -> None:
     engine = create_engine_from_url("sqlite:///:memory:")

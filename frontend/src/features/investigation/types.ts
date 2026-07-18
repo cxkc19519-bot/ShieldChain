@@ -71,6 +71,7 @@ export interface EvidenceView {
   integrity_sha256: string
   confidence: number
   confirmed: boolean
+  integrity_verified: boolean
   payload: JsonObject
 }
 

@@ -4,6 +4,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.incidents.domain import Evidence
+from shieldchain.incidents.integrity import verify_evidence_integrity
 from shieldchain.incidents.persistence import (
     AuditEventRow,
     EvidenceRecordRow,
@@ -157,6 +159,20 @@ class IncidentQueryService:
                         integrity_sha256=row.integrity_sha256,
                         confidence=row.confidence,
                         confirmed=row.confirmed,
+                        integrity_verified=verify_evidence_integrity(
+                            Evidence(
+                                id=UUID(row.id),
+                                evidence_type=row.evidence_type,
+                                source=row.source,
+                                observed_at=_utc(row.observed_at),
+                                summary=row.summary,
+                                raw_reference=row.raw_reference,
+                                integrity_sha256=row.integrity_sha256,
+                                confidence=row.confidence,
+                                confirmed=row.confirmed,
+                                payload=dict(row.payload_json),
+                            )
+                        ),
                         payload=dict(row.payload_json),
                     )
                     for row in evidence

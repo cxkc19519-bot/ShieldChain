@@ -72,7 +72,7 @@ flowchart LR
 
 ### 3.2 证据模型
 
-证据包含证据 ID、类型、来源工具、观察时间、结构化摘要、原始数据引用、完整性哈希、可信度和确认状态。阶段二至少产生：
+证据包含证据 ID、类型、来源工具、观察时间、结构化摘要、原始数据引用、完整性哈希、可信度和确认状态。完整性采用键排序、紧凑分隔符的 canonical UTF-8 JSON；字段集合为 `evidence_type`、`source`、规范化 aware UTC `observed_at`、`summary`、`raw_reference`、`confidence`、`confirmed` 和完整 `payload`。SHA-256 摘要同时派生完整性值和确定性 UUID5 证据 ID。仓储写入、确定性规则和查询展示三个边界共用同一验证函数；查询返回服务端计算的 `integrity_verified`，无需迁移。阶段二至少产生：
 
 1. 流量告警证据；
 2. 终端进程证据；
@@ -181,7 +181,7 @@ ID 使用 UUID。时间以 UTC 存储。证据只能追加。同一幂等键只�
 - API 创建运行记录后启动受控的进程内后台任务。
 - 每一步完成后立即持久化。
 - 应用关闭时停止接收新任务。
-- 应用启动时将遗留的 `collecting`、`analyzing`、`executing` 和 `verifying` 标记为 `interrupted`。
+- 用户批准的可靠性修订：一个有序公开领域常量定义全部数据库活动状态 `pending`、`collecting`、`analyzing`、`action_planned`、`executing`、`verifying`，活动判断、部分唯一索引、冲突查询和启动恢复均由它派生。应用启动时将这六态遗留运行标记为 `interrupted`，释放活动索引并允许安全 reset/start。
 - 未来可替换为持久化任务队列，但不改变工作流端口和 API 模型。
 
 ## 11. 测试
@@ -235,4 +235,3 @@ ID 使用 UUID。时间以 UTC 存储。证据只能追加。同一幂等键只�
 - 前后端、迁移、PowerShell 合约和端到端冒烟通过。
 - 文档和开发日志同步更新。
 - 阶段二使用独立分支和独立 PR，不重写阶段一提交历史。
-
