@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     rag_max_extracted_characters: int = Field(2_000_000, ge=1, le=2_000_000)
     rag_max_zip_members: int = Field(10_000, ge=1, le=10_000)
     rag_max_upload_chunks: int = Field(100_000, ge=1, le=262_144)
+    rag_max_parse_pages: int = Field(10_000, ge=1, le=10_000)
+    rag_max_parse_rows: int = Field(200_000, ge=1, le=200_000)
+    rag_max_parse_cells: int = Field(1_000_000, ge=1, le=1_000_000)
+    rag_max_parse_elements: int = Field(100_000, ge=1, le=100_000)
+    rag_parse_timeout_seconds: float = Field(15.0, ge=0.001, le=30.0)
 
 
 @lru_cache

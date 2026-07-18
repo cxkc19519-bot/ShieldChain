@@ -17,6 +17,7 @@ from shieldchain.rag.domain import (
     KnowledgeBase,
     KnowledgeChunk,
     KnowledgeDocument,
+    ParsingStatus,
 )
 
 
@@ -46,6 +47,30 @@ class ParserUnavailableError(ParserError):
 
 class UnsupportedDocumentError(ParserError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedElement:
+    """One source-addressable, deterministic document fragment."""
+
+    kind: str
+    text: str
+    source_location: str
+    page_number: int | None = None
+    heading: str | None = None
+    worksheet: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.kind, "kind")
+        if not isinstance(self.text, str):
+            raise TypeError("text must be a string")
+        _require_non_empty(self.source_location, "source_location")
+        if self.page_number is not None:
+            _require_positive_int(self.page_number, "page_number")
+        for field_name in ("heading", "worksheet"):
+            value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{field_name} must be a non-empty string when provided")
 
 
 class ChunkOptimizationError(RagPortError):
@@ -181,10 +206,17 @@ class ParsedContent:
     text: str
     media_type: str
     metadata: Mapping[str, str | int]
+    elements: tuple[ParsedElement, ...] = ()
+    status: ParsingStatus = ParsingStatus.SUCCEEDED
 
     def __post_init__(self) -> None:
-        _require_non_empty(self.text, "text")
+        if not isinstance(self.text, str) or (
+            not self.text.strip() and self.status is ParsingStatus.SUCCEEDED
+        ):
+            raise ValueError("text must not be empty for successfully parsed content")
         _require_non_empty(self.media_type, "media_type")
+        if not isinstance(self.status, ParsingStatus):
+            raise TypeError("status must be a ParsingStatus")
         if not isinstance(self.metadata, Mapping):
             raise TypeError("metadata must be a mapping")
         copied_metadata = dict(self.metadata)
@@ -193,6 +225,10 @@ class ParsedContent:
             if not isinstance(value, str | int):
                 raise TypeError("metadata values must be strings or integers")
         object.__setattr__(self, "metadata", MappingProxyType(copied_metadata))
+        copied_elements = tuple(self.elements)
+        if not all(isinstance(element, ParsedElement) for element in copied_elements):
+            raise TypeError("elements must contain ParsedElement values")
+        object.__setattr__(self, "elements", copied_elements)
 
 
 @dataclass(frozen=True, slots=True)
