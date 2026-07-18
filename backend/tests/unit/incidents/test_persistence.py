@@ -31,6 +31,14 @@ PHASE_TWO_TABLES = {
     "simulation_tool_calls",
     "audit_events",
 }
+RAG_CONTROL_PLANE_TABLES = {
+    "knowledge_bases",
+    "knowledge_documents",
+    "document_versions",
+    "knowledge_chunks",
+    "knowledge_base_acl",
+    "rag_index_records",
+}
 
 EXPECTED_COLUMNS = {
     "simulation_instances": {
@@ -546,12 +554,23 @@ def test_migration_upgrade_and_downgrade_round_trip(tmp_path: Path) -> None:
             row[1]: row for row in connection.execute("PRAGMA table_info(incidents)")
         }
     assert PHASE_TWO_TABLES <= upgraded_tables
+    assert RAG_CONTROL_PLANE_TABLES <= upgraded_tables
     assert incident_columns["alert_status"][3] == 1
     assert incident_columns["next_audit_sequence"][3] == 1
     assert incident_columns["next_audit_sequence"][4] == "1"
+    with sqlite3.connect(database_path) as connection:
+        document_foreign_keys = {
+            row[3]: row[2]
+            for row in connection.execute("PRAGMA foreign_key_list(knowledge_documents)")
+        }
+        document_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(knowledge_documents)")
+        }
+    assert document_foreign_keys["current_version_id"] == "document_versions"
+    assert "ix_document_tenant_status" in document_indexes
 
     subprocess.run(
-        [*command, "downgrade", "-1"],
+        [*command, "downgrade", "20260713_01"],
         cwd=repository_root,
         env=environment,
         check=True,
@@ -563,4 +582,21 @@ def test_migration_upgrade_and_downgrade_round_trip(tmp_path: Path) -> None:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-    assert PHASE_TWO_TABLES.isdisjoint(downgraded_tables)
+    assert PHASE_TWO_TABLES <= downgraded_tables
+    assert RAG_CONTROL_PLANE_TABLES.isdisjoint(downgraded_tables)
+
+    subprocess.run(
+        [*command, "upgrade", "head"],
+        cwd=repository_root,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        reupgraded_tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert PHASE_TWO_TABLES <= reupgraded_tables
+    assert RAG_CONTROL_PLANE_TABLES <= reupgraded_tables

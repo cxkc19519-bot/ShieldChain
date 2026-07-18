@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from inspect import signature
 from types import MappingProxyType
 from typing import Protocol
 from uuid import uuid4
@@ -43,6 +44,10 @@ def test_external_ports_are_runtime_independent_protocols() -> None:
         KnowledgeRepository,
     ):
         assert issubclass(port, Protocol)
+
+
+def test_repository_index_writes_require_a_server_tenant_boundary() -> None:
+    assert "tenant_id" in signature(KnowledgeRepository.save_index_records).parameters
 
 
 def test_external_errors_are_categorized_without_sdk_dependencies() -> None:
