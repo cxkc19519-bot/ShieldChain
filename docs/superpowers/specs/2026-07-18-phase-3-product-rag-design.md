@@ -114,6 +114,15 @@ RAG 文本始终是不可信数据，必须与系统指令隔离。文档中的�
 
 日志只记录文档/块/请求标识、大小、耗时、模型、Token/调用计数和错误类别，不记录 API Key、整段原文、完整查询或敏感引用。
 
+## 11.1 Local content-store threat model
+
+The local content root must be owned and writable only by the application account. Static and
+operation-boundary checks for reparse points, resolved containment, and file identity are defense
+in depth; they do not claim to eliminate races against a local concurrent attacker who can modify
+the root or any ancestor. Such write access is outside the Phase 3 threat model. A future
+object-store adapter or Windows handle-based adapter should provide the stronger production
+boundary if that attacker is in scope.
+
 ## 12. 验收与退出门槛
 
 - 七种格式都有成功、边界和恶意输入测试；OCR 缺失被明确报告。
