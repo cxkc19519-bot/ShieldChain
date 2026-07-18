@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, inspect
 
 from shieldchain.db.base import Base
 from shieldchain.rag.persistence import (
+    ChunkSourceRow,
     DocumentVersionRow,
     KnowledgeBaseAclRow,
     KnowledgeBaseRow,
@@ -23,6 +24,7 @@ def test_rag_control_plane_declares_relationships_constraints_and_indexes() -> N
         "knowledge_documents",
         "document_versions",
         "knowledge_chunks",
+        "chunk_sources",
         "knowledge_base_acl",
         "rag_index_records",
     }.issubset(inspector.get_table_names())
@@ -46,6 +48,10 @@ def test_rag_control_plane_declares_relationships_constraints_and_indexes() -> N
         foreign_key["referred_table"]
         for foreign_key in inspector.get_foreign_keys("knowledge_chunks")
     } == {"document_versions"}
+    assert any(
+        item["name"] == "uq_chunk_source_occurrence"
+        for item in inspector.get_unique_constraints("chunk_sources")
+    )
 
 
 def test_persistence_rows_keep_utc_datetime_columns_and_required_foreign_keys() -> None:
@@ -54,6 +60,7 @@ def test_persistence_rows_keep_utc_datetime_columns_and_required_foreign_keys() 
     assert DocumentVersionRow.published_at.type.timezone is True
     assert RagIndexRecordRow.updated_at.type.timezone is True
     assert KnowledgeChunkRow.document_version_id.nullable is False
+    assert ChunkSourceRow.chunk_id.nullable is False
     assert KnowledgeBaseAclRow.knowledge_base_id.nullable is False
 
 

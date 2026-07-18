@@ -294,6 +294,46 @@ class DocumentVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class ChunkSource:
+    """One immutable occurrence of a chunk in deterministic parsed content."""
+
+    chunk_id: UUID
+    occurrence_ordinal: int
+    parsed_element_ordinal: int
+    start_offset: int
+    end_offset: int
+    heading_path: Iterable[str]
+    page_number: int | None
+    structural_location: str | None
+
+    def __post_init__(self) -> None:
+        _require_uuid(self.chunk_id, "chunk_id")
+        for field_name in ("occurrence_ordinal", "parsed_element_ordinal", "start_offset"):
+            value = getattr(self, field_name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
+        if (
+            not isinstance(self.end_offset, int)
+            or isinstance(self.end_offset, bool)
+            or self.end_offset <= self.start_offset
+        ):
+            raise ValueError("end_offset must be greater than start_offset")
+        object.__setattr__(self, "heading_path", _freeze_heading_path(self.heading_path))
+        if self.page_number is not None and (
+            not isinstance(self.page_number, int)
+            or isinstance(self.page_number, bool)
+            or self.page_number < 1
+        ):
+            raise ValueError("page_number must be at least 1")
+        if self.structural_location is not None:
+            _require_non_empty(self.structural_location, "structural_location")
+            if len(self.structural_location) > 512:
+                raise ValueError("structural_location must not exceed 512 characters")
+        if self.page_number is None and self.structural_location is None:
+            raise ValueError("a chunk source must include a page_number or structural_location")
+
+
+@dataclass(frozen=True, slots=True)
 class KnowledgeChunk:
     id: UUID
     document_version_id: UUID
@@ -308,6 +348,7 @@ class KnowledgeChunk:
     permission_tags: Iterable[str]
     chunking_mode: str
     is_degraded: bool
+    sources: Iterable[ChunkSource] = ()
 
     def __post_init__(self) -> None:
         _require_uuid(self.id, "id")
@@ -323,6 +364,8 @@ class KnowledgeChunk:
             raise ValueError("page_number must be at least 1")
         if self.structural_location is not None:
             _require_non_empty(self.structural_location, "structural_location")
+            if len(self.structural_location) > 512:
+                raise ValueError("structural_location must not exceed 512 characters")
         if self.page_number is None and self.structural_location is None:
             raise ValueError("a chunk must include a page_number or structural_location")
         _require_non_empty(self.text, "text")
@@ -341,6 +384,17 @@ class KnowledgeChunk:
         _require_non_empty(self.chunking_mode, "chunking_mode")
         if not isinstance(self.is_degraded, bool):
             raise TypeError("is_degraded must be a bool")
+        try:
+            sources = tuple(self.sources)
+        except TypeError as error:
+            raise TypeError("sources must be iterable") from error
+        if not all(isinstance(source, ChunkSource) for source in sources):
+            raise TypeError("sources must contain ChunkSource values")
+        if any(source.chunk_id != self.id for source in sources):
+            raise ValueError("each chunk source must belong to this chunk")
+        if len({source.occurrence_ordinal for source in sources}) != len(sources):
+            raise ValueError("chunk source occurrence ordinals must be unique")
+        object.__setattr__(self, "sources", sources)
 
 
 @dataclass(frozen=True, slots=True)

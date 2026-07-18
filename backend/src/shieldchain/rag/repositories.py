@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from shieldchain.rag.domain import (
     AccessScope,
     ChunkingStatus,
+    ChunkSource,
     Citation,
     DocumentStatus,
     DocumentVersion,
@@ -25,6 +26,7 @@ from shieldchain.rag.domain import (
     SensitivityLevel,
 )
 from shieldchain.rag.persistence import (
+    ChunkSourceRow,
     DocumentVersionRow,
     KnowledgeBaseRow,
     KnowledgeChunkRow,
@@ -101,7 +103,12 @@ def _version_from_row(row: DocumentVersionRow) -> DocumentVersion:
     )
 
 
-def _chunk_from_row(row: KnowledgeChunkRow) -> KnowledgeChunk:
+_SOURCE_NAMESPACE = UUID("6f9d9e3a-3f4b-568b-9ad7-91b11f3d9454")
+
+
+def _chunk_from_row(
+    row: KnowledgeChunkRow, sources: Sequence[ChunkSourceRow] = ()
+) -> KnowledgeChunk:
     return KnowledgeChunk(
         id=UUID(row.id),
         document_version_id=UUID(row.document_version_id),
@@ -116,6 +123,19 @@ def _chunk_from_row(row: KnowledgeChunkRow) -> KnowledgeChunk:
         permission_tags=frozenset(row.permission_tags_json),
         chunking_mode=row.chunking_mode,
         is_degraded=row.is_degraded,
+        sources=tuple(
+            ChunkSource(
+                chunk_id=UUID(source.chunk_id),
+                occurrence_ordinal=source.occurrence_ordinal,
+                parsed_element_ordinal=source.parsed_element_ordinal,
+                start_offset=source.start_offset,
+                end_offset=source.end_offset,
+                heading_path=tuple(source.heading_path_json),
+                page_number=source.page_number,
+                structural_location=source.structural_location,
+            )
+            for source in sorted(sources, key=lambda item: item.occurrence_ordinal)
+        ),
     )
 
 
@@ -228,7 +248,9 @@ class SqlAlchemyKnowledgeRepository:
         ).scalar_one_or_none()
         if existing is not None:
             return _version_from_row(existing)
-        if not chunks or any(chunk.document_version_id != version.id for chunk in chunks):
+        if not chunks or any(
+            chunk.document_version_id != version.id or not chunk.sources for chunk in chunks
+        ):
             raise InvalidDocumentLifecycle("a version must persist its own non-empty chunks")
         self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
@@ -268,6 +290,27 @@ class SqlAlchemyKnowledgeRepository:
                         is_degraded=chunk.is_degraded,
                     )
                     for chunk in chunks
+                ]
+            )
+            session.add_all(
+                [
+                    ChunkSourceRow(
+                        id=str(
+                            uuid5(
+                                _SOURCE_NAMESPACE, f"{source.chunk_id}:{source.occurrence_ordinal}"
+                            )
+                        ),
+                        chunk_id=str(source.chunk_id),
+                        occurrence_ordinal=source.occurrence_ordinal,
+                        parsed_element_ordinal=source.parsed_element_ordinal,
+                        start_offset=source.start_offset,
+                        end_offset=source.end_offset,
+                        heading_path_json=list(source.heading_path),
+                        page_number=source.page_number,
+                        structural_location=source.structural_location,
+                    )
+                    for chunk in chunks
+                    for source in chunk.sources
                 ]
             )
             session.flush()
@@ -311,17 +354,33 @@ class SqlAlchemyKnowledgeRepository:
     def list_chunks(
         self, session: Session, document_version_id: UUID, *, tenant_id: UUID
     ) -> Sequence[KnowledgeChunk]:
-        rows = session.execute(
-            select(KnowledgeChunkRow)
-            .join(DocumentVersionRow)
-            .join(KnowledgeDocumentRow, DocumentVersionRow.document_id == KnowledgeDocumentRow.id)
-            .where(
-                KnowledgeChunkRow.document_version_id == str(document_version_id),
-                KnowledgeDocumentRow.tenant_id == str(tenant_id),
+        rows = (
+            session.execute(
+                select(KnowledgeChunkRow)
+                .join(DocumentVersionRow)
+                .join(
+                    KnowledgeDocumentRow, DocumentVersionRow.document_id == KnowledgeDocumentRow.id
+                )
+                .where(
+                    KnowledgeChunkRow.document_version_id == str(document_version_id),
+                    KnowledgeDocumentRow.tenant_id == str(tenant_id),
+                )
+                .order_by(KnowledgeChunkRow.ordinal)
             )
-            .order_by(KnowledgeChunkRow.ordinal)
-        ).scalars()
-        return tuple(_chunk_from_row(row) for row in rows)
+            .scalars()
+            .all()
+        )
+        sources = (
+            session.execute(
+                select(ChunkSourceRow).where(ChunkSourceRow.chunk_id.in_([row.id for row in rows]))
+            )
+            .scalars()
+            .all()
+        )
+        sources_by_chunk: dict[str, list[ChunkSourceRow]] = {}
+        for source in sources:
+            sources_by_chunk.setdefault(source.chunk_id, []).append(source)
+        return tuple(_chunk_from_row(row, sources_by_chunk.get(row.id, ())) for row in rows)
 
     def save_index_records(
         self, session: Session, records: Sequence[IndexRecord], *, tenant_id: UUID

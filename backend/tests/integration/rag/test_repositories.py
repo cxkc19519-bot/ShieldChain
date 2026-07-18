@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -6,9 +7,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from shieldchain.db.base import Base
+from shieldchain.rag.chunking import DeterministicChunker
 from shieldchain.rag.domain import (
     AccessScope,
     ChunkingStatus,
+    ChunkSource,
     DocumentStatus,
     DocumentVersion,
     IndexRecord,
@@ -20,6 +23,7 @@ from shieldchain.rag.domain import (
     ParsingStatus,
     SensitivityLevel,
 )
+from shieldchain.rag.parsing import BoundedDocumentParser
 from shieldchain.rag.repositories import InvalidDocumentLifecycle, SqlAlchemyKnowledgeRepository
 
 NOW = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
@@ -88,8 +92,9 @@ def make_version(
 
 
 def make_chunk(version: DocumentVersion, *, ordinal=0) -> KnowledgeChunk:
+    chunk_id = uuid4()
     return KnowledgeChunk(
-        id=uuid4(),
+        id=chunk_id,
         document_version_id=version.id,
         ordinal=ordinal,
         heading_path=("Containment",),
@@ -102,6 +107,7 @@ def make_chunk(version: DocumentVersion, *, ordinal=0) -> KnowledgeChunk:
         permission_tags={"security"},
         chunking_mode="rule",
         is_degraded=False,
+        sources=(ChunkSource(chunk_id, 0, ordinal, 0, 21, ("Containment",), None, "section:1"),),
     )
 
 
@@ -155,6 +161,65 @@ def test_version_and_chunk_writes_are_idempotent_by_request_and_content(session:
 
     assert repeated == stored
     assert repository.list_chunks(session, version.id, tenant_id=base.tenant_id) == (chunk,)
+
+
+def test_chunk_source_occurrences_round_trip_without_cross_tenant_visibility(
+    session: Session,
+) -> None:
+    repository, base, document = setup_document(session)
+    version = make_version(document)
+    chunk = make_chunk(version)
+    duplicate = ChunkSource(chunk.id, 1, 9, 0, 21, ("Containment",), None, "section:10")
+    chunk = replace(chunk, sources=chunk.sources + (duplicate,))
+    repository.create_version(
+        session, version, [chunk], tenant_id=base.tenant_id, idempotency_key="sources"
+    )
+    session.commit()
+
+    stored = repository.list_chunks(session, version.id, tenant_id=base.tenant_id)
+    assert stored == (chunk,)
+    assert repository.list_chunks(session, version.id, tenant_id=uuid4()) == ()
+
+
+def test_parsed_markdown_chunks_and_duplicate_sources_round_trip_tenant_scoped(
+    session: Session,
+) -> None:
+    repository, base, document = setup_document(session)
+    version = make_version(document)
+    parsed = BoundedDocumentParser().parse(
+        b"# Guide\n```powershell\nGet-Process\nGet-Service\n```\n"
+        b"2026-07-18 12:00:01 ERROR denied\n"
+        b"2026-07-18 12:00:01 ERROR denied\n",
+        filename="guide.md",
+        media_type="text/markdown",
+    )
+    result = DeterministicChunker().chunk(
+        parsed,
+        document_version_id=version.id,
+        sensitivity=SensitivityLevel.INTERNAL,
+        permission_tags={"security"},
+    )
+    repository.create_version(
+        session,
+        version,
+        [item.chunk for item in result.items],
+        tenant_id=base.tenant_id,
+        idempotency_key="parsed-chunks",
+    )
+    session.commit()
+
+    stored = repository.list_chunks(session, version.id, tenant_id=base.tenant_id)
+    code = next(chunk for chunk in stored if "Get-Process" in chunk.text)
+    log = next(chunk for chunk in stored if "ERROR denied" in chunk.text)
+    assert code.chunking_mode == "rule"
+    assert code.is_degraded is False
+    assert code.sources[0].parsed_element_ordinal == 1
+    assert code.sources[0].start_offset == 0
+    assert code.sources[0].end_offset == len(code.text)
+    assert code.sources[0].structural_location == "line:2-5;language:powershell"
+    assert len(log.sources) == 2
+    assert [source.parsed_element_ordinal for source in log.sources] == [2, 3]
+    assert repository.list_chunks(session, version.id, tenant_id=uuid4()) == ()
 
 
 def test_index_record_writes_are_bound_to_the_server_tenant(session: Session) -> None:

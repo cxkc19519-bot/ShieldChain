@@ -8,6 +8,7 @@ import pytest
 from shieldchain.rag.domain import (
     AccessScope,
     ChunkingStatus,
+    ChunkSource,
     Citation,
     DocumentStatus,
     DocumentVersion,
@@ -127,6 +128,26 @@ def test_domain_value_objects_are_frozen_and_copy_collections() -> None:
         scope.roles.add("admin")
     with pytest.raises(AttributeError):
         chunk.permission_tags.add("production")
+
+
+def test_chunk_sources_are_immutable_and_strictly_source_addressable() -> None:
+    chunk = make_chunk()
+    source = ChunkSource(
+        chunk_id=chunk.id,
+        occurrence_ordinal=0,
+        parsed_element_ordinal=1,
+        start_offset=2,
+        end_offset=8,
+        heading_path=("Incident response",),
+        page_number=1,
+        structural_location="line:2",
+    )
+
+    assert source.heading_path == ("Incident response",)
+    with pytest.raises(FrozenInstanceError):
+        source.end_offset = 9
+    with pytest.raises(ValueError):
+        ChunkSource(chunk.id, 0, 1, 4, 4, ("Heading",), None, "line:1")
 
 
 def test_access_scope_is_default_deny_and_cannot_expand_from_a_result() -> None:
@@ -249,3 +270,11 @@ def test_degradation_and_structured_refusal_are_explicit_and_immutable() -> None
     assert refusal.reason is RefusalReason.INSUFFICIENT_EVIDENCE
     with pytest.raises(FrozenInstanceError):
         degraded.message = "changed"
+
+
+def test_structural_locations_respect_the_persistence_contract() -> None:
+    chunk = make_chunk()
+    with pytest.raises(ValueError, match="512"):
+        replace(chunk, structural_location="x" * 513)
+    with pytest.raises(ValueError, match="512"):
+        ChunkSource(chunk.id, 0, 0, 0, 1, ("Heading",), None, "x" * 513)

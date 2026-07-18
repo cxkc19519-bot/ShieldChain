@@ -334,6 +334,13 @@ class Bm25IndexPort(Protocol):
 
 
 @runtime_checkable
+class TokenizerPort(Protocol):
+    """Deterministic tokenization boundary used by the offline BM25 implementation."""
+
+    def tokenize(self, text: str) -> Sequence[str]: ...
+
+
+@runtime_checkable
 class RerankerPort(Protocol):
     def rerank(
         self, query: str, chunks: Sequence[KnowledgeChunk], *, model: str
@@ -380,12 +387,14 @@ def index_metadata_for_chunk(
     _require_uuid(document_id, "document_id")
     if not isinstance(published, bool):
         raise TypeError("published must be a bool")
-    return MappingProxyType({
-        "tenant_id": tenant_id,
-        "knowledge_base_id": knowledge_base_id,
-        "document_id": document_id,
-        "document_version_id": chunk.document_version_id,
-        "sensitivity": chunk.sensitivity.value,
-        "permission_tags": tuple(sorted(chunk.permission_tags)),
-        "published": published,
-    })
+    return MappingProxyType(
+        {
+            "tenant_id": tenant_id,
+            "knowledge_base_id": knowledge_base_id,
+            "document_id": document_id,
+            "document_version_id": chunk.document_version_id,
+            "sensitivity": chunk.sensitivity.value,
+            "permission_tags": tuple(sorted(chunk.permission_tags)),
+            "published": published,
+        }
+    )

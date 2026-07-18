@@ -36,6 +36,7 @@ RAG_CONTROL_PLANE_TABLES = {
     "knowledge_documents",
     "document_versions",
     "knowledge_chunks",
+    "chunk_sources",
     "knowledge_base_acl",
     "rag_index_records",
 }

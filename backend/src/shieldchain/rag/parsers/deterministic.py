@@ -19,6 +19,7 @@ from pypdf import PdfReader
 
 _MAX_ELEMENTS = 100_000
 _MAX_ESTIMATED_RESULT_BYTES = 16 * 1024 * 1024
+_MAX_CODE_LANGUAGE_LENGTH = 64
 
 
 class ParseBudgetExceeded(ValueError):
@@ -46,8 +47,8 @@ class ParserBudget:
     elements: int = 0
     estimated_result_bytes: int = 0
 
-    def add_text(self, value: str) -> str:
-        normalized = _clean_text(value)
+    def add_text(self, value: str, *, preserve_whitespace: bool = False) -> str:
+        normalized = value.strip() if preserve_whitespace else _clean_text(value)
         self.characters += len(normalized)
         if self.characters > self.max_characters:
             raise ParseBudgetExceeded("document exceeds character budget")
@@ -100,8 +101,9 @@ class WorkerResult:
         page_number: int | None = None,
         heading: str | None = None,
         worksheet: str | None = None,
+        preserve_whitespace: bool = False,
     ) -> None:
-        normalized = budget.add_text(text)
+        normalized = budget.add_text(text, preserve_whitespace=preserve_whitespace)
         budget.add_element(
             kind=kind,
             text=normalized,
@@ -225,7 +227,43 @@ def _parse_markdown(content: bytes, filename: str, budget: ParserBudget) -> Work
     value = _decode_text(content)
     result = WorkerResult(title=_filename_title(filename))
     current_heading: str | None = None
-    for number, line in enumerate(value.splitlines(), start=1):
+    in_code_fence = False
+    code_lines: list[str] = []
+    code_start = 0
+    code_language = ""
+    lines = value.splitlines()
+
+    def add_code_block(end_line: int) -> None:
+        location = f"line:{code_start}-{end_line}"
+        if code_language:
+            location += f";language:{code_language}"
+        result.add(
+            budget,
+            kind="code_block",
+            text="\n".join(code_lines),
+            source_location=location,
+            heading=current_heading,
+            preserve_whitespace=True,
+        )
+
+    for number, line in enumerate(lines, start=1):
+        fence = re.match(r"^\s*```\s*([^\s`]*)?.*$", line)
+        if fence:
+            if in_code_fence:
+                add_code_block(number)
+                code_lines.clear()
+                in_code_fence = False
+            else:
+                in_code_fence = True
+                code_start = number
+                raw_language = fence.group(1) or ""
+                code_language = re.sub(r"[^A-Za-z0-9_+.#-]", "", raw_language)[
+                    :_MAX_CODE_LANGUAGE_LENGTH
+                ].lower()
+            continue
+        if in_code_fence:
+            code_lines.append(line)
+            continue
         if not _clean_text(line):
             continue
         matched = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line)
@@ -241,7 +279,12 @@ def _parse_markdown(content: bytes, filename: str, budget: ParserBudget) -> Work
                 heading=current_heading,
             )
         else:
-            kind = "list_item" if re.match(r"^\s*(?:[-*+] |\d+[.)] )", line) else "paragraph"
+            if re.match(r"^\s*(?:[-*+] |\d+[.)] )", line):
+                kind = "list_item"
+            elif _is_log_line(line):
+                kind = "log_line"
+            else:
+                kind = "paragraph"
             result.add(
                 budget,
                 kind=kind,
@@ -249,6 +292,8 @@ def _parse_markdown(content: bytes, filename: str, budget: ParserBudget) -> Work
                 source_location=f"line:{number}",
                 heading=current_heading,
             )
+    if in_code_fence:
+        add_code_block(len(lines))
     return result
 
 
@@ -257,7 +302,8 @@ def _parse_text(content: bytes, filename: str, budget: ParserBudget) -> WorkerRe
     result = WorkerResult(title=_filename_title(filename))
     for number, line in enumerate(value.splitlines() or [value], start=1):
         if _clean_text(line):
-            result.add(budget, kind="paragraph", text=line, source_location=f"line:{number}")
+            kind = "log_line" if _is_log_line(line) else "paragraph"
+            result.add(budget, kind=kind, text=line, source_location=f"line:{number}")
     return result
 
 
@@ -271,7 +317,9 @@ def _parse_html(content: bytes, filename: str, budget: ParserBudget) -> WorkerRe
     )
     current_heading: str | None = None
     ordinal = 0
-    for node in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre", "table"]):
+    for node in soup.find_all(
+        ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre", "code", "table"]
+    ):
         ordinal += 1
         if node.name == "table":
             for row_number, row in enumerate(node.find_all("tr"), start=1):
@@ -296,7 +344,14 @@ def _parse_html(content: bytes, filename: str, budget: ParserBudget) -> WorkerRe
                 result.title = current_heading
             kind = "heading"
         else:
-            kind = "list_item" if node.name == "li" else "paragraph"
+            if node.name == "li":
+                kind = "list_item"
+            elif node.name in {"pre", "code"}:
+                kind = "code_block"
+            elif _is_log_line(text):
+                kind = "log_line"
+            else:
+                kind = "paragraph"
         result.add(
             budget,
             kind=kind,
@@ -319,6 +374,19 @@ def _parse_csv(content: bytes, filename: str, budget: ParserBudget) -> WorkerRes
             source_location=f"row:{row_number}",
         )
     return result
+
+
+_LOG_LINE_PATTERN = re.compile(
+    r"^\s*(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|"
+    r"\[(?:DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\]|"
+    r"(?:DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)(?:\s*[:|-]|\s+))",
+    re.IGNORECASE,
+)
+
+
+def _is_log_line(value: str) -> bool:
+    """Conservatively identify conventional timestamp or level-prefixed log records."""
+    return _LOG_LINE_PATTERN.match(value) is not None
 
 
 def _parse_xlsx(content: bytes, filename: str, budget: ParserBudget) -> WorkerResult:

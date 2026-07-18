@@ -166,6 +166,32 @@ class KnowledgeChunkRow(Base):
 Index("ix_chunk_version_ordinal", KnowledgeChunkRow.document_version_id, KnowledgeChunkRow.ordinal)
 
 
+class ChunkSourceRow(Base):
+    __tablename__ = "chunk_sources"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", "occurrence_ordinal", name="uq_chunk_source_occurrence"),
+        CheckConstraint("occurrence_ordinal >= 0", name="ck_chunk_source_occurrence_nonnegative"),
+        CheckConstraint("parsed_element_ordinal >= 0", name="ck_chunk_source_element_nonnegative"),
+        CheckConstraint("start_offset >= 0", name="ck_chunk_source_start_nonnegative"),
+        CheckConstraint("end_offset > start_offset", name="ck_chunk_source_end_after_start"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_chunks.id", name="fk_chunk_source_chunk"), nullable=False
+    )
+    occurrence_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    parsed_element_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading_path_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    structural_location: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+Index("ix_chunk_source_chunk", ChunkSourceRow.chunk_id)
+
+
 class KnowledgeBaseAclRow(Base):
     __tablename__ = "knowledge_base_acl"
     __table_args__ = (

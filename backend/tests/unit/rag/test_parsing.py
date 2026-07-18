@@ -162,6 +162,44 @@ def test_csv_and_xlsx_preserve_table_and_worksheet_locations() -> None:
     assert "=1+1" not in workbook_result.text
 
 
+def test_markdown_html_and_text_classify_code_and_common_logs() -> None:
+    markdown = parse(
+        b"# Guide\n```powershell\nGet-Process\n```\n2026-07-18 12:00:01 ERROR denied\n",
+        "guide.md",
+        "text/markdown",
+    )
+    html = parse(b"<pre>whoami</pre><code>id</code>", "guide.html", "text/html")
+    text = parse(b"INFO startup complete\nnormal prose\n", "guide.txt", "text/plain")
+
+    assert {element.kind for element in markdown.elements} >= {"code_block", "log_line"}
+    assert all(element.kind == "code_block" for element in html.elements)
+    assert text.elements[0].kind == "log_line"
+
+
+def test_markdown_fenced_code_is_one_multiline_element_and_unclosed_fence_is_bounded() -> None:
+    parsed = parse(
+        b"# Guide\n```powershell\nGet-Process\nGet-Service\n```\n",
+        "guide.md",
+        "text/markdown",
+    )
+    unclosed = parse(b"```sh\necho one\necho two\n", "guide.md", "text/markdown")
+
+    code = next(element for element in parsed.elements if element.kind == "code_block")
+    assert code.text == "Get-Process\nGet-Service"
+    assert code.source_location == "line:2-5;language:powershell"
+    assert unclosed.elements == (unclosed.elements[0],)
+    assert unclosed.elements[0].kind == "code_block"
+    assert unclosed.elements[0].text == "echo one\necho two"
+
+
+def test_markdown_fence_language_is_storage_bounded_and_ascii_safe() -> None:
+    language = ("A" * 700 + "中文!").encode()
+    parsed = parse(b"```" + language + b"\nwhoami\n```\n", "guide.md", "text/markdown")
+
+    assert parsed.elements[0].source_location == f"line:1-3;language:{'a' * 64}"
+    assert len(parsed.elements[0].source_location or "") <= 512
+
+
 def test_blank_pdf_reports_ocr_required_with_page_location() -> None:
     writer = PdfWriter()
     writer.add_blank_page(width=100, height=100)
