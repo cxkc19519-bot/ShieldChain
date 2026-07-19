@@ -36,6 +36,7 @@ from shieldchain.rag.persistence import (
     KnowledgeDocumentRow,
     RagIndexRecordRow,
 )
+from shieldchain.rag.retrieval import TrustedChunkMetadata
 from shieldchain.rag.semantic_chunking import (
     SemanticBoundaryValidationError,
     SemanticChunkingResult,
@@ -998,6 +999,61 @@ class SqlAlchemyIndexingUnitOfWork:
             )
         ).scalars().all()
         return tuple(_index_from_row(row) for row in rows)
+
+    def get_trusted_chunks(
+        self, chunk_ids: Sequence[UUID], *, scope: AccessScope
+    ) -> Sequence[TrustedChunkMetadata]:
+        if not chunk_ids:
+            return ()
+        rows = self._session.execute(
+            select(KnowledgeChunkRow, KnowledgeDocumentRow)
+            .join(
+                DocumentVersionRow,
+                KnowledgeChunkRow.document_version_id == DocumentVersionRow.id,
+            )
+            .join(
+                KnowledgeDocumentRow,
+                DocumentVersionRow.document_id == KnowledgeDocumentRow.id,
+            )
+            .join(
+                KnowledgeBaseRow,
+                KnowledgeDocumentRow.knowledge_base_id == KnowledgeBaseRow.id,
+            )
+            .where(
+                KnowledgeChunkRow.id.in_([str(value) for value in chunk_ids]),
+                KnowledgeDocumentRow.tenant_id == str(scope.tenant_id),
+                KnowledgeDocumentRow.status == DocumentStatus.PUBLISHED.value,
+                KnowledgeDocumentRow.current_version_id == DocumentVersionRow.id,
+                KnowledgeBaseRow.status == KnowledgeBaseStatus.PUBLISHED.value,
+            )
+        ).all()
+        source_rows = self._session.execute(
+            select(ChunkSourceRow).where(
+                ChunkSourceRow.chunk_id.in_([chunk_row.id for chunk_row, _ in rows])
+            )
+        ).scalars().all()
+        sources_by_chunk: dict[str, list[ChunkSourceRow]] = {}
+        for source in source_rows:
+            sources_by_chunk.setdefault(source.chunk_id, []).append(source)
+        result: list[TrustedChunkMetadata] = []
+        for chunk_row, document in rows:
+            chunk = _chunk_from_row(chunk_row, sources_by_chunk.get(chunk_row.id, ()))
+            knowledge_base_id = UUID(document.knowledge_base_id)
+            if scope.allows(
+                UUID(document.tenant_id),
+                knowledge_base_id,
+                chunk.sensitivity,
+                chunk.permission_tags,
+            ):
+                result.append(
+                    TrustedChunkMetadata(
+                        chunk=chunk,
+                        tenant_id=UUID(document.tenant_id),
+                        knowledge_base_id=knowledge_base_id,
+                        published=True,
+                    )
+                )
+        return tuple(result)
 
     def save_index_records(
         self, records: Sequence[IndexRecord], *, tenant_id: UUID

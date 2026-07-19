@@ -711,6 +711,28 @@ def test_indexing_unit_of_work_resolves_authority_and_persists_lifecycle(
         repository.get_version(session, version.id, tenant_id=base.tenant_id).index_status
         is IndexStatus.SUCCEEDED
     )
+    repository.publish_version(
+        session, document.id, version.id, tenant_id=base.tenant_id, now=NOW
+    )
+    scope = AccessScope(
+        tenant_id=base.tenant_id,
+        principal_id=uuid4(),
+        roles=("analyst",),
+        allowed_sensitivities=(SensitivityLevel.INTERNAL,),
+        permission_tags=("security",),
+        knowledge_base_ids=(base.id,),
+    )
+    trusted = unit.get_trusted_chunks((item.id,), scope=scope)
+    assert len(trusted) == 1 and trusted[0].chunk.id == item.id
+    denied_scope = AccessScope(
+        tenant_id=base.tenant_id,
+        principal_id=uuid4(),
+        roles=("analyst",),
+        allowed_sensitivities=(SensitivityLevel.INTERNAL,),
+        permission_tags=("other",),
+        knowledge_base_ids=(base.id,),
+    )
+    assert unit.get_trusted_chunks((item.id,), scope=denied_scope) == ()
 
     unit.mark_failed(context, category="cleanup", cleanup_pending=True)
     retry = unit.resolve_indexing_context(version.id, tenant_id=base.tenant_id)
