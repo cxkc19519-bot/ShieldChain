@@ -374,6 +374,22 @@ async def test_overall_deadline_cuts_off_retry_backoff_without_real_sleep(
                 "usage": {"prompt_tokens": "3", "completion_tokens": 1},
             },
         ),
+        httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "answer"}}],
+                "model": "   ",
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+            },
+        ),
+        httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "   "}}],
+                "model": "model",
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+            },
+        ),
     ],
 )
 async def test_malformed_success_response_is_not_retried(response: httpx.Response) -> None:

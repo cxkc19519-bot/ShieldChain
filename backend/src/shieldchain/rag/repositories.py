@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid5
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from shieldchain.rag.chunking import ChunkedItem, ChunkingResult
 from shieldchain.rag.domain import (
     AccessScope,
     ChunkingStatus,
@@ -32,6 +34,13 @@ from shieldchain.rag.persistence import (
     KnowledgeChunkRow,
     KnowledgeDocumentRow,
     RagIndexRecordRow,
+)
+from shieldchain.rag.semantic_chunking import (
+    SemanticBoundaryValidationError,
+    SemanticChunkingResult,
+    build_semantic_items,
+    semantic_retry_key,
+    validate_rule_chunking_result,
 )
 
 
@@ -100,6 +109,9 @@ def _version_from_row(row: DocumentVersionRow) -> DocumentVersion:
         chunking_model=row.chunking_model,
         created_at=_utc(row.created_at),
         published_at=_utc(row.published_at) if row.published_at else None,
+        chunking_failure_category=row.chunking_failure_category,
+        chunking_retry_key=row.chunking_retry_key,
+        chunking_requested_model=row.chunking_requested_model,
     )
 
 
@@ -252,6 +264,128 @@ class SqlAlchemyKnowledgeRepository:
             chunk.document_version_id != version.id or not chunk.sources for chunk in chunks
         ):
             raise InvalidDocumentLifecycle("a version must persist its own non-empty chunks")
+        degraded_fallback = all(
+            chunk.chunking_mode == "rule_degraded" and chunk.is_degraded for chunk in chunks
+        )
+        contains_degraded_fallback = any(
+            chunk.chunking_mode == "rule_degraded" for chunk in chunks
+        )
+        if version.chunking_failure_category is not None and not degraded_fallback:
+            raise InvalidDocumentLifecycle("chunking failure audit requires degraded rule chunks")
+        if contains_degraded_fallback and (
+            not degraded_fallback
+            or version.chunking_failure_category is None
+            or version.chunking_retry_key is None
+            or version.chunking_prompt_version is None
+            or version.chunking_model is None
+            or version.chunking_requested_model is None
+        ):
+            raise InvalidDocumentLifecycle("degraded rule chunks require complete retry audit")
+        if contains_degraded_fallback:
+            if version.chunking_model != version.chunking_requested_model:
+                raise InvalidDocumentLifecycle(
+                    "degraded rule chunks must record the requested model consistently"
+                )
+            expected_retry_key = semantic_retry_key(
+                chunks,
+                version.id,
+                strategy_version=version.chunking_strategy,
+                prompt_version=version.chunking_prompt_version or "",
+                requested_model=version.chunking_requested_model or "",
+            )
+            if version.chunking_retry_key != expected_retry_key:
+                raise InvalidDocumentLifecycle("degraded rule chunk retry key is invalid")
+        contains_semantic = any(chunk.chunking_mode == "semantic" for chunk in chunks)
+        if contains_semantic:
+            raise InvalidDocumentLifecycle(
+                "semantic chunks require create_version_from_semantic_result"
+            )
+        return self._insert_version_rows(session, version, chunks, idempotency_key)
+
+    def create_version_from_semantic_result(
+        self,
+        session: Session,
+        version: DocumentVersion,
+        rule_result: ChunkingResult,
+        result: SemanticChunkingResult,
+        *,
+        tenant_id: UUID,
+        idempotency_key: str,
+    ) -> DocumentVersion:
+        if not idempotency_key.strip():
+            raise ValueError("idempotency_key must not be empty")
+        chunks = tuple(item.chunk for item in result.items)
+        audit = result.audit
+        try:
+            validate_rule_chunking_result(rule_result, version.id)
+        except ValueError as error:
+            raise InvalidDocumentLifecycle("semantic create rule input is invalid") from error
+        if (
+            not chunks
+            or audit.outcome != "semantic"
+            or audit.failure_category is not None
+            or audit.document_version_id != version.id
+            or any(chunk.document_version_id != version.id for chunk in chunks)
+            or any(
+                item.chunk.document_version_id != version.id for item in rule_result.items
+            )
+        ):
+            raise InvalidDocumentLifecycle("semantic create result is invalid")
+        expected_retry_key = semantic_retry_key(
+            rule_result.items,
+            version.id,
+            strategy_version=audit.strategy_version,
+            prompt_version=audit.prompt_version,
+            requested_model=audit.requested_model,
+        )
+        try:
+            expected_items = build_semantic_items(
+                rule_result.items, result.boundaries, document_version_id=version.id
+            )
+        except SemanticBoundaryValidationError as error:
+            raise InvalidDocumentLifecycle("semantic create boundaries are invalid") from error
+        actual_model = audit.response_model or audit.requested_model
+        if (
+            expected_items != result.items
+            or result.retry_key != expected_retry_key
+            or version.chunking_retry_key != expected_retry_key
+            or version.chunking_strategy != audit.strategy_version
+            or version.chunking_prompt_version != audit.prompt_version
+            or version.chunking_requested_model != audit.requested_model
+            or version.chunking_model != actual_model
+            or version.chunking_failure_category is not None
+        ):
+            raise InvalidDocumentLifecycle(
+                "semantic create audit does not match deterministic input"
+            )
+        document = self._require_document(session, version.document_id, tenant_id, lock=True)
+        if document.status in {DocumentStatus.DELETE_PENDING.value, DocumentStatus.DELETED.value}:
+            raise InvalidDocumentLifecycle("deleting documents cannot create semantic versions")
+        if (
+            version.parsing_status is not ParsingStatus.SUCCEEDED
+            or version.chunking_status is not ChunkingStatus.SUCCEEDED
+            or version.index_status not in {IndexStatus.PENDING, IndexStatus.FAILED}
+        ):
+            raise InvalidDocumentLifecycle(
+                "semantic create requires completed parsing/chunking and an inactive index"
+            )
+        existing = session.execute(
+            select(DocumentVersionRow).where(
+                DocumentVersionRow.document_id == document.id,
+                DocumentVersionRow.idempotency_key == idempotency_key,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _version_from_row(existing)
+        return self._insert_version_rows(session, version, chunks, idempotency_key)
+
+    def _insert_version_rows(
+        self,
+        session: Session,
+        version: DocumentVersion,
+        chunks: Sequence[KnowledgeChunk],
+        idempotency_key: str,
+    ) -> DocumentVersion:
         self._ensure_sqlite_outer_transaction(session)
         with session.begin_nested():
             session.add(
@@ -268,53 +402,219 @@ class SqlAlchemyKnowledgeRepository:
                     chunking_strategy=version.chunking_strategy,
                     chunking_prompt_version=version.chunking_prompt_version,
                     chunking_model=version.chunking_model,
+                    chunking_failure_category=version.chunking_failure_category,
+                    chunking_retry_key=version.chunking_retry_key,
+                    chunking_requested_model=version.chunking_requested_model,
                     created_at=version.created_at,
                     published_at=version.published_at,
                 )
             )
-            session.add_all(
-                [
-                    KnowledgeChunkRow(
-                        id=str(chunk.id),
-                        document_version_id=str(chunk.document_version_id),
-                        ordinal=chunk.ordinal,
-                        heading_path_json=list(chunk.heading_path),
-                        page_number=chunk.page_number,
-                        structural_location=chunk.structural_location,
-                        text=chunk.text,
-                        token_count=chunk.token_count,
-                        content_sha256=chunk.content_sha256,
-                        sensitivity=chunk.sensitivity.value,
-                        permission_tags_json=sorted(chunk.permission_tags),
-                        chunking_mode=chunk.chunking_mode,
-                        is_degraded=chunk.is_degraded,
-                    )
-                    for chunk in chunks
-                ]
-            )
-            session.add_all(
-                [
-                    ChunkSourceRow(
-                        id=str(
-                            uuid5(
-                                _SOURCE_NAMESPACE, f"{source.chunk_id}:{source.occurrence_ordinal}"
-                            )
-                        ),
-                        chunk_id=str(source.chunk_id),
-                        occurrence_ordinal=source.occurrence_ordinal,
-                        parsed_element_ordinal=source.parsed_element_ordinal,
-                        start_offset=source.start_offset,
-                        end_offset=source.end_offset,
-                        heading_path_json=list(source.heading_path),
-                        page_number=source.page_number,
-                        structural_location=source.structural_location,
-                    )
-                    for chunk in chunks
-                    for source in chunk.sources
-                ]
-            )
+            self._add_chunks(session, chunks)
             session.flush()
         return version
+
+    def upgrade_semantic_chunking(
+        self,
+        session: Session,
+        result: SemanticChunkingResult,
+        *,
+        tenant_id: UUID,
+    ) -> DocumentVersion:
+        """Atomically replace persisted rule fallback chunks with a verified semantic retry."""
+        audit = result.audit
+        chunks = tuple(item.chunk for item in result.items)
+        if (
+            not chunks
+            or audit.outcome != "semantic"
+            or audit.failure_category is not None
+            or audit.document_version_id != chunks[0].document_version_id
+        ):
+            raise InvalidDocumentLifecycle("only a successful semantic result can upgrade chunks")
+        if any(
+            chunk.document_version_id != audit.document_version_id
+            or not chunk.sources
+            or chunk.chunking_mode != "semantic"
+            or item.sources != chunk.sources
+            for item, chunk in zip(result.items, chunks, strict=True)
+        ):
+            raise InvalidDocumentLifecycle("semantic retry chunks are invalid")
+        if [chunk.ordinal for chunk in chunks] != list(range(len(chunks))):
+            raise InvalidDocumentLifecycle("semantic retry chunk ordinals must be contiguous")
+        if len({chunk.id for chunk in chunks}) != len(chunks):
+            raise InvalidDocumentLifecycle("semantic retry chunk ids must be unique")
+
+        document = session.execute(
+            self._document_for_version_lock_statement(audit.document_version_id, tenant_id)
+        ).scalar_one_or_none()
+        if document is None:
+            raise InvalidDocumentLifecycle("version is not visible to this tenant")
+        version = self._require_version(
+            session, audit.document_version_id, tenant_id, lock=True
+        )
+        if document.status in {DocumentStatus.DELETE_PENDING.value, DocumentStatus.DELETED.value}:
+            raise InvalidDocumentLifecycle("deleting documents cannot be semantically upgraded")
+        if version.index_status in {IndexStatus.DELETE_PENDING.value, IndexStatus.DELETED.value}:
+            raise InvalidDocumentLifecycle("deleting versions cannot be semantically upgraded")
+        if (
+            version.parsing_status != ParsingStatus.SUCCEEDED.value
+            or version.chunking_status != ChunkingStatus.SUCCEEDED.value
+            or version.index_status not in {IndexStatus.PENDING.value, IndexStatus.FAILED.value}
+        ):
+            raise InvalidDocumentLifecycle(
+                "semantic upgrade requires completed parsing/chunking and an inactive index"
+            )
+        if version.chunking_retry_key != result.retry_key:
+            raise InvalidDocumentLifecycle("semantic retry key does not match the version")
+        current_chunks = tuple(
+            self.list_chunks(session, audit.document_version_id, tenant_id=tenant_id)
+        )
+        audit_matches = (
+            version.chunking_strategy == audit.strategy_version
+            and version.chunking_prompt_version == audit.prompt_version
+            and version.chunking_requested_model == audit.requested_model
+            and version.chunking_model == (audit.response_model or audit.requested_model)
+        )
+        if version.chunking_failure_category is None:
+            if current_chunks == chunks and audit_matches:
+                return _version_from_row(version)
+            raise InvalidDocumentLifecycle("completed semantic chunks cannot be replaced")
+        if (
+            version.chunking_strategy != audit.strategy_version
+            or version.chunking_prompt_version != audit.prompt_version
+            or version.chunking_requested_model != audit.requested_model
+        ):
+            raise InvalidDocumentLifecycle("semantic retry audit does not match persisted intent")
+        expected_retry_key = semantic_retry_key(
+            current_chunks,
+            audit.document_version_id,
+            strategy_version=version.chunking_strategy,
+            prompt_version=version.chunking_prompt_version,
+            requested_model=version.chunking_requested_model,
+        )
+        if version.chunking_retry_key != expected_retry_key:
+            raise InvalidDocumentLifecycle("persisted semantic retry key is invalid")
+        if not current_chunks or any(
+            chunk.chunking_mode != "rule_degraded" or not chunk.is_degraded
+            for chunk in current_chunks
+        ):
+            raise InvalidDocumentLifecycle("only persisted rule fallback chunks can be upgraded")
+        expected_acl = {
+            (chunk.sensitivity, chunk.permission_tags) for chunk in current_chunks
+        }
+        replacement_acl = {(chunk.sensitivity, chunk.permission_tags) for chunk in chunks}
+        if len(expected_acl) != 1 or replacement_acl != expected_acl:
+            raise InvalidDocumentLifecycle("semantic retry cannot change chunk ACL values")
+
+        def provenance(chunk_values: Sequence[KnowledgeChunk]) -> Counter[tuple[object, ...]]:
+            return Counter(
+                (
+                    source.parsed_element_ordinal,
+                    source.start_offset,
+                    source.end_offset,
+                    source.heading_path,
+                    source.page_number,
+                    source.structural_location,
+                )
+                for chunk in chunk_values
+                for source in chunk.sources
+            )
+
+        if provenance(chunks) != provenance(current_chunks):
+            raise InvalidDocumentLifecycle("semantic retry cannot change source provenance")
+        current_items = tuple(ChunkedItem(chunk, chunk.sources) for chunk in current_chunks)
+        try:
+            expected_items = build_semantic_items(
+                current_items,
+                result.boundaries,
+                document_version_id=audit.document_version_id,
+            )
+        except SemanticBoundaryValidationError as error:
+            raise InvalidDocumentLifecycle("semantic retry boundaries are invalid") from error
+        if expected_items != result.items:
+            raise InvalidDocumentLifecycle("semantic retry output does not match its boundaries")
+        indexed = session.execute(
+            select(RagIndexRecordRow.id)
+            .where(RagIndexRecordRow.document_version_id == str(audit.document_version_id))
+            .limit(1)
+        ).scalar_one_or_none()
+        if indexed is not None:
+            raise InvalidDocumentLifecycle(
+                "semantic upgrade requires external indexes to be removed first"
+            )
+
+        old_chunk_ids = [str(chunk.id) for chunk in current_chunks]
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            session.execute(
+                delete(ChunkSourceRow).where(ChunkSourceRow.chunk_id.in_(old_chunk_ids))
+            )
+            session.execute(
+                delete(KnowledgeChunkRow).where(
+                    KnowledgeChunkRow.document_version_id == str(audit.document_version_id)
+                )
+            )
+            self._add_chunks(session, chunks)
+            version.chunking_strategy = audit.strategy_version
+            version.chunking_prompt_version = audit.prompt_version
+            version.chunking_model = audit.response_model or audit.requested_model
+            version.chunking_failure_category = None
+            version.index_status = IndexStatus.PENDING.value
+            session.flush()
+        return _version_from_row(version)
+
+    @staticmethod
+    def _document_for_version_lock_statement(version_id: UUID, tenant_id: UUID):
+        return (
+            select(KnowledgeDocumentRow)
+            .join(DocumentVersionRow, DocumentVersionRow.document_id == KnowledgeDocumentRow.id)
+            .where(
+                DocumentVersionRow.id == str(version_id),
+                KnowledgeDocumentRow.tenant_id == str(tenant_id),
+            )
+            .with_for_update(of=KnowledgeDocumentRow)
+        )
+
+    @staticmethod
+    def _add_chunks(session: Session, chunks: Sequence[KnowledgeChunk]) -> None:
+        session.add_all(
+            [
+                KnowledgeChunkRow(
+                    id=str(chunk.id),
+                    document_version_id=str(chunk.document_version_id),
+                    ordinal=chunk.ordinal,
+                    heading_path_json=list(chunk.heading_path),
+                    page_number=chunk.page_number,
+                    structural_location=chunk.structural_location,
+                    text=chunk.text,
+                    token_count=chunk.token_count,
+                    content_sha256=chunk.content_sha256,
+                    sensitivity=chunk.sensitivity.value,
+                    permission_tags_json=sorted(chunk.permission_tags),
+                    chunking_mode=chunk.chunking_mode,
+                    is_degraded=chunk.is_degraded,
+                )
+                for chunk in chunks
+            ]
+        )
+        session.add_all(
+            [
+                ChunkSourceRow(
+                    id=str(
+                        uuid5(_SOURCE_NAMESPACE, f"{source.chunk_id}:{source.occurrence_ordinal}")
+                    ),
+                    chunk_id=str(source.chunk_id),
+                    occurrence_ordinal=source.occurrence_ordinal,
+                    parsed_element_ordinal=source.parsed_element_ordinal,
+                    start_offset=source.start_offset,
+                    end_offset=source.end_offset,
+                    heading_path_json=list(source.heading_path),
+                    page_number=source.page_number,
+                    structural_location=source.structural_location,
+                )
+                for chunk in chunks
+                for source in chunk.sources
+            ]
+        )
 
     def get_knowledge_base(
         self, session: Session, knowledge_base_id: UUID, *, tenant_id: UUID

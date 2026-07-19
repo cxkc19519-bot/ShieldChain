@@ -105,6 +105,20 @@ class DocumentVersionRow(Base):
             "'delete_pending','deleted')",
             name="ck_document_version_index_status",
         ),
+        CheckConstraint(
+            "chunking_retry_key IS NULL OR "
+            "(length(chunking_retry_key) = 64 AND lower(chunking_retry_key) = chunking_retry_key)",
+            name="ck_document_version_retry_key_length",
+        ),
+        CheckConstraint(
+            "chunking_failure_category IS NULL OR chunking_failure_category IN ("
+            "'authentication','boundary_empty','boundary_limit','boundary_omission',"
+            "'boundary_order','boundary_out_of_range','boundary_overlap','candidate_integrity',"
+            "'candidate_limit','content_hash_collision','duplicate_output','empty_candidates',"
+            "'llm_error','malformed_json','prompt_limit','rate_limit','response_error',"
+            "'response_limit','schema_error','source_overlap','timeout','token_limit','unavailable')",
+            name="ck_document_version_chunking_failure_category",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -123,6 +137,9 @@ class DocumentVersionRow(Base):
     chunking_strategy: Mapped[str] = mapped_column(String(128), nullable=False)
     chunking_prompt_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chunking_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    chunking_failure_category: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    chunking_retry_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chunking_requested_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

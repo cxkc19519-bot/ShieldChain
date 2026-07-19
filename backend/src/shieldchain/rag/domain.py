@@ -69,6 +69,33 @@ class RefusalReason(StrEnum):
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+CHUNKING_FAILURE_CATEGORIES = frozenset(
+    {
+        "authentication",
+        "boundary_empty",
+        "boundary_limit",
+        "boundary_omission",
+        "boundary_order",
+        "boundary_out_of_range",
+        "boundary_overlap",
+        "candidate_integrity",
+        "candidate_limit",
+        "content_hash_collision",
+        "duplicate_output",
+        "empty_candidates",
+        "llm_error",
+        "malformed_json",
+        "prompt_limit",
+        "rate_limit",
+        "response_error",
+        "response_limit",
+        "schema_error",
+        "source_overlap",
+        "timeout",
+        "token_limit",
+        "unavailable",
+    }
+)
 
 
 def _require_uuid(value: UUID, field_name: str) -> None:
@@ -268,6 +295,9 @@ class DocumentVersion:
     chunking_model: str | None
     created_at: datetime
     published_at: datetime | None
+    chunking_failure_category: str | None = None
+    chunking_retry_key: str | None = None
+    chunking_requested_model: str | None = None
 
     def __post_init__(self) -> None:
         _require_uuid(self.id, "id")
@@ -291,6 +321,16 @@ class DocumentVersion:
         _require_aware_utc(self.created_at, "created_at")
         if self.published_at is not None:
             _require_aware_utc(self.published_at, "published_at")
+        if self.chunking_failure_category is not None:
+            _require_non_empty(self.chunking_failure_category, "chunking_failure_category")
+            if self.chunking_failure_category not in CHUNKING_FAILURE_CATEGORIES:
+                raise ValueError("chunking_failure_category is not a safe category")
+        if self.chunking_retry_key is not None:
+            _require_sha256(self.chunking_retry_key, "chunking_retry_key")
+        if self.chunking_requested_model is not None:
+            _require_non_empty(self.chunking_requested_model, "chunking_requested_model")
+            if len(self.chunking_requested_model) > 128:
+                raise ValueError("chunking_requested_model must not exceed 128 characters")
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
 
 from shieldchain.rag.domain import (
@@ -19,6 +19,10 @@ from shieldchain.rag.domain import (
     KnowledgeDocument,
     ParsingStatus,
 )
+
+if TYPE_CHECKING:
+    from shieldchain.rag.chunking import ChunkingResult
+    from shieldchain.rag.semantic_chunking import SemanticChunkingResult
 
 
 class RagPortError(Exception):
@@ -290,13 +294,12 @@ class DocumentParserPort(Protocol):
 
 @runtime_checkable
 class ChunkBoundaryOptimizer(Protocol):
-    def optimize(
+    async def optimize(
         self,
-        text: str,
-        candidates: Sequence[ChunkBoundary],
+        rule_result: ChunkingResult,
         *,
         document_version_id: UUID,
-    ) -> Sequence[ChunkBoundary]: ...
+    ) -> SemanticChunkingResult: ...
 
 
 @runtime_checkable
@@ -371,6 +374,20 @@ class KnowledgeRepository(Protocol):
     def list_citations(
         self, chunk_ids: Sequence[UUID], *, scope: AccessScope
     ) -> Sequence[Citation]: ...
+
+    def upgrade_semantic_chunking(
+        self, result: SemanticChunkingResult, *, tenant_id: UUID
+    ) -> DocumentVersion: ...
+
+    def create_version_from_semantic_result(
+        self,
+        version: DocumentVersion,
+        rule_result: ChunkingResult,
+        result: SemanticChunkingResult,
+        *,
+        tenant_id: UUID,
+        idempotency_key: str,
+    ) -> DocumentVersion: ...
 
 
 def index_metadata_for_chunk(

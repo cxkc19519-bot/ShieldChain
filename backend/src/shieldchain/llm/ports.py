@@ -74,4 +74,7 @@ class ChatResponse:
 
 
 class LlmClient(Protocol):
+    @property
+    def model(self) -> str: ...
+
     async def chat(self, request: ChatRequest) -> ChatResponse: ...

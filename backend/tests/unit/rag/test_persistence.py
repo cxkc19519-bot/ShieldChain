@@ -52,6 +52,26 @@ def test_rag_control_plane_declares_relationships_constraints_and_indexes() -> N
         item["name"] == "uq_chunk_source_occurrence"
         for item in inspector.get_unique_constraints("chunk_sources")
     )
+    version_columns = {item["name"] for item in inspector.get_columns("document_versions")}
+    assert {
+        "chunking_failure_category",
+        "chunking_retry_key",
+        "chunking_requested_model",
+    } <= version_columns
+    assert any(
+        item["name"] == "ck_document_version_retry_key_length"
+        for item in inspector.get_check_constraints("document_versions")
+    )
+    retry_constraint = next(
+        item
+        for item in inspector.get_check_constraints("document_versions")
+        if item["name"] == "ck_document_version_retry_key_length"
+    )
+    assert "lower(chunking_retry_key) = chunking_retry_key" in retry_constraint["sqltext"]
+    assert any(
+        item["name"] == "ck_document_version_chunking_failure_category"
+        for item in inspector.get_check_constraints("document_versions")
+    )
 
 
 def test_persistence_rows_keep_utc_datetime_columns_and_required_foreign_keys() -> None:

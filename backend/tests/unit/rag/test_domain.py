@@ -97,6 +97,11 @@ def make_version(**changes: object) -> DocumentVersion:
     return DocumentVersion(**values)  # type: ignore[arg-type]
 
 
+def test_document_version_rejects_unbounded_chunking_failure_text() -> None:
+    with pytest.raises(ValueError, match="safe category"):
+        make_version(chunking_failure_category="connection failed at secret.internal")
+
+
 def make_chunk(**changes: object) -> KnowledgeChunk:
     version = make_version()
     values: dict[str, object] = {

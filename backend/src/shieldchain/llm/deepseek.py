@@ -40,6 +40,11 @@ class DeepSeekClient:
         self._deadline = deadline
         self._logger = structlog.get_logger(__name__)
 
+    @property
+    def model(self) -> str:
+        """The configured request model used by this adapter."""
+        return self._model
+
     async def chat(self, request: ChatRequest) -> ChatResponse:
         try:
             return await self._deadline(
@@ -76,6 +81,12 @@ class DeepSeekClient:
                 self._log_attempt(started_at, attempt, "timeout")
                 if attempt > len(RETRY_DELAYS):
                     raise LlmUnavailableError("LLM request timed out") from None
+                await self._sleep(RETRY_DELAYS[attempt - 1])
+                continue
+            except httpx.RequestError:
+                self._log_attempt(started_at, attempt, "network_error")
+                if attempt > len(RETRY_DELAYS):
+                    raise LlmUnavailableError("LLM network request failed") from None
                 await self._sleep(RETRY_DELAYS[attempt - 1])
                 continue
 
@@ -156,7 +167,12 @@ def _parse_response(response: httpx.Response) -> ChatResponse:
     except (ValueError, KeyError, IndexError, TypeError):
         raise LlmResponseError("LLM response was malformed") from None
 
-    if not isinstance(content, str) or not isinstance(model, str):
+    if (
+        not isinstance(content, str)
+        or not content.strip()
+        or not isinstance(model, str)
+        or not model.strip()
+    ):
         raise LlmResponseError("LLM response was malformed")
     if not _is_token_count(prompt_tokens) or not _is_token_count(completion_tokens):
         raise LlmResponseError("LLM response was malformed")

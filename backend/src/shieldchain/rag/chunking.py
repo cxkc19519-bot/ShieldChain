@@ -49,6 +49,7 @@ class ChunkingResult:
 
     items: tuple[ChunkedItem, ...]
     _elements: tuple[ParsedElement, ...]
+    _heading_paths: tuple[tuple[str, ...], ...]
 
     def source_text(self, *, content_value: ParsedContent, source: ChunkSource) -> str:
         try:
@@ -68,6 +69,12 @@ class ChunkingResult:
                     source.start_offset : source.end_offset
                 ]
         return "".join(recovered)
+
+    def heading_path_for(self, element_ordinal: int) -> tuple[str, ...]:
+        try:
+            return self._heading_paths[element_ordinal]
+        except IndexError as error:
+            raise ValueError("element ordinal is outside parsed content") from error
 
     @property
     def source_spans(self) -> MappingProxyType:
@@ -103,12 +110,14 @@ class DeterministicChunker:
         permission_tags = tuple(permission_tags)
         elements = content.elements or (ParsedElement("paragraph", content.text, "document:body"),)
         path = (str(content.metadata.get("title") or "Document"),)
+        element_heading_paths: list[tuple[str, ...]] = []
         pending: list[tuple[str, tuple[str, ...], ParsedElement, int, int, int, bool]] = []
         for element_ordinal, element in enumerate(elements):
             if element.kind == "heading" and element.text.strip():
                 path = (element.heading or element.text.strip(),)
             elif element.heading:
                 path = (element.heading,)
+            element_heading_paths.append(path)
             for start, end, degraded in self._element_ranges(element):
                 pending.append(
                     (element.text[start:end], path, element, element_ordinal, start, end, degraded)
@@ -168,7 +177,7 @@ class DeterministicChunker:
             )
             by_hash[digest] = ordinal
             items.append(ChunkedItem(chunk, (source,)))
-        return ChunkingResult(tuple(items), tuple(elements))
+        return ChunkingResult(tuple(items), tuple(elements), tuple(element_heading_paths))
 
     def stable_chunk_id(self, chunk: KnowledgeChunk) -> UUID:
         """Recompute the deterministic identifier from immutable chunk identity inputs."""
