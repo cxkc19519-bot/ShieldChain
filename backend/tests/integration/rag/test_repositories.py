@@ -28,7 +28,11 @@ from shieldchain.rag.domain import (
 from shieldchain.rag.parsing import BoundedDocumentParser
 from shieldchain.rag.persistence import DocumentVersionRow, RagIndexRecordRow
 from shieldchain.rag.ports import ChunkBoundary, ParsedContent, ParsedElement
-from shieldchain.rag.repositories import InvalidDocumentLifecycle, SqlAlchemyKnowledgeRepository
+from shieldchain.rag.repositories import (
+    InvalidDocumentLifecycle,
+    SqlAlchemyIndexingUnitOfWork,
+    SqlAlchemyKnowledgeRepository,
+)
 from shieldchain.rag.semantic_chunking import (
     SemanticChunkingAudit,
     SemanticChunkingResult,
@@ -681,6 +685,38 @@ def test_index_record_writes_are_bound_to_the_server_tenant(session: Session) ->
     with pytest.raises(InvalidDocumentLifecycle):
         repository.save_index_records(session, [record], tenant_id=uuid4())
     repository.save_index_records(session, [record], tenant_id=base.tenant_id)
+
+
+def test_indexing_unit_of_work_resolves_authority_and_persists_lifecycle(
+    session: Session,
+) -> None:
+    repository, base, document = setup_document(session)
+    version = make_version(document, index_status=IndexStatus.PENDING)
+    item = make_chunk(version)
+    repository.create_version(
+        session, version, [item], tenant_id=base.tenant_id, idempotency_key="index-uow"
+    )
+    unit = SqlAlchemyIndexingUnitOfWork(session, repository=repository, clock=lambda: NOW)
+
+    context = unit.resolve_indexing_context(version.id, tenant_id=base.tenant_id)
+    assert context is not None and context.published is False
+    assert unit.resolve_indexing_context(version.id, tenant_id=uuid4()) is None
+    unit.mark_processing(context, index_version="1")
+    unit.save_index_records([make_index_record(version, item)], tenant_id=base.tenant_id)
+    unit.mark_succeeded(context, index_version="1")
+
+    assert unit.list_chunks(version.id, tenant_id=base.tenant_id) == (item,)
+    assert len(unit.list_index_records(version.id, tenant_id=base.tenant_id)) == 1
+    assert (
+        repository.get_version(session, version.id, tenant_id=base.tenant_id).index_status
+        is IndexStatus.SUCCEEDED
+    )
+
+    unit.mark_failed(context, category="cleanup", cleanup_pending=True)
+    retry = unit.resolve_indexing_context(version.id, tenant_id=base.tenant_id)
+    assert retry is not None and retry.cleanup_pending is True
+    unit.delete_index_records(version.id, tenant_id=base.tenant_id)
+    assert unit.list_index_records(version.id, tenant_id=base.tenant_id) == ()
 
 
 def test_publish_rollback_and_delete_pending_are_atomic_tenant_bound_transitions(

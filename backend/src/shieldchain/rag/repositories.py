@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid5
 
@@ -27,6 +27,7 @@ from shieldchain.rag.domain import (
     ParsingStatus,
     SensitivityLevel,
 )
+from shieldchain.rag.indexing import IndexingContext
 from shieldchain.rag.persistence import (
     ChunkSourceRow,
     DocumentVersionRow,
@@ -926,3 +927,143 @@ class SqlAlchemyKnowledgeRepository:
         driver_connection = connection.connection.driver_connection
         if not driver_connection.in_transaction:
             connection.exec_driver_sql("BEGIN")
+
+
+class SqlAlchemyIndexingUnitOfWork:
+    """Session-bound production adapter for the indexing service and lifecycle."""
+
+    def __init__(
+        self,
+        session: Session,
+        *,
+        repository: SqlAlchemyKnowledgeRepository | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._session = session
+        self._repository = repository or SqlAlchemyKnowledgeRepository()
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    def resolve_indexing_context(
+        self, document_version_id: UUID, *, tenant_id: UUID
+    ) -> IndexingContext | None:
+        row = self._session.execute(
+            select(DocumentVersionRow, KnowledgeDocumentRow, KnowledgeBaseRow)
+            .join(KnowledgeDocumentRow, DocumentVersionRow.document_id == KnowledgeDocumentRow.id)
+            .join(KnowledgeBaseRow, KnowledgeDocumentRow.knowledge_base_id == KnowledgeBaseRow.id)
+            .where(
+                DocumentVersionRow.id == str(document_version_id),
+                KnowledgeDocumentRow.tenant_id == str(tenant_id),
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        version, document, base = row
+        published = (
+            document.status == DocumentStatus.PUBLISHED.value
+            and document.current_version_id == version.id
+            and base.status == KnowledgeBaseStatus.PUBLISHED.value
+        )
+        return IndexingContext(
+            tenant_id=UUID(document.tenant_id),
+            knowledge_base_id=UUID(document.knowledge_base_id),
+            document_id=UUID(document.id),
+            document_version_id=UUID(version.id),
+            published=published,
+            cleanup_pending=version.index_status == IndexStatus.DELETE_PENDING.value,
+        )
+
+    def list_chunks(
+        self, document_version_id: UUID, *, tenant_id: UUID
+    ) -> Sequence[KnowledgeChunk]:
+        return self._repository.list_chunks(
+            self._session, document_version_id, tenant_id=tenant_id
+        )
+
+    def list_index_records(
+        self, document_version_id: UUID, *, tenant_id: UUID
+    ) -> Sequence[IndexRecord]:
+        rows = self._session.execute(
+            select(RagIndexRecordRow)
+            .join(
+                DocumentVersionRow,
+                RagIndexRecordRow.document_version_id == DocumentVersionRow.id,
+            )
+            .join(
+                KnowledgeDocumentRow,
+                DocumentVersionRow.document_id == KnowledgeDocumentRow.id,
+            )
+            .where(
+                RagIndexRecordRow.document_version_id == str(document_version_id),
+                KnowledgeDocumentRow.tenant_id == str(tenant_id),
+            )
+        ).scalars().all()
+        return tuple(_index_from_row(row) for row in rows)
+
+    def save_index_records(
+        self, records: Sequence[IndexRecord], *, tenant_id: UUID
+    ) -> None:
+        self._repository.save_index_records(self._session, records, tenant_id=tenant_id)
+
+    def delete_index_records(self, document_version_id: UUID, *, tenant_id: UUID) -> None:
+        visible = self.resolve_indexing_context(document_version_id, tenant_id=tenant_id)
+        if visible is None:
+            raise InvalidDocumentLifecycle("version is not visible to this tenant")
+        self._session.execute(
+            delete(RagIndexRecordRow).where(
+                RagIndexRecordRow.document_version_id == str(document_version_id)
+            )
+        )
+        self._session.flush()
+
+    def mark_processing(self, context: IndexingContext, *, index_version: str) -> None:
+        self._set_version_status(context, IndexStatus.PROCESSING)
+
+    def mark_succeeded(self, context: IndexingContext, *, index_version: str) -> None:
+        records = self.list_index_records(
+            context.document_version_id, tenant_id=context.tenant_id
+        )
+        if not records or any(
+            record.index_version != index_version
+            or record.status is not IndexStatus.SUCCEEDED
+            or record.vector_id is None
+            or record.bm25_key is None
+            for record in records
+        ):
+            raise InvalidDocumentLifecycle("cannot complete an incomplete index")
+        self._set_version_status(context, IndexStatus.SUCCEEDED)
+
+    def mark_failed(
+        self, context: IndexingContext, *, category: str, cleanup_pending: bool
+    ) -> None:
+        status = IndexStatus.DELETE_PENDING if cleanup_pending else IndexStatus.FAILED
+        self._set_version_status(context, status)
+        if cleanup_pending:
+            self._session.execute(
+                update(RagIndexRecordRow)
+                .where(RagIndexRecordRow.document_version_id == str(context.document_version_id))
+                .values(
+                    status=IndexStatus.DELETE_PENDING.value,
+                    error_category=category,
+                    updated_at=_utc(self._clock()),
+                )
+            )
+            self._session.flush()
+
+    def mark_delete_pending(self, context: IndexingContext) -> None:
+        self._set_version_status(context, IndexStatus.DELETE_PENDING)
+
+    def mark_deleted(self, context: IndexingContext) -> None:
+        self._set_version_status(context, IndexStatus.DELETED)
+
+    def _set_version_status(self, context: IndexingContext, status: IndexStatus) -> None:
+        result = self._session.execute(
+            update(DocumentVersionRow)
+            .where(
+                DocumentVersionRow.id == str(context.document_version_id),
+                DocumentVersionRow.document_id == str(context.document_id),
+            )
+            .values(index_status=status.value)
+        )
+        if result.rowcount != 1:
+            raise InvalidDocumentLifecycle("indexing context is stale")
+        self._session.flush()
