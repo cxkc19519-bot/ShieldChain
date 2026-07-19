@@ -724,6 +724,10 @@ def test_indexing_unit_of_work_resolves_authority_and_persists_lifecycle(
     )
     trusted = unit.get_trusted_chunks((item.id,), scope=scope)
     assert len(trusted) == 1 and trusted[0].chunk.id == item.id
+    citation_sources = unit.get_trusted_citation_sources((item.id,), scope=scope)
+    assert len(citation_sources) == 1
+    assert citation_sources[0].document_id == document.id
+    assert citation_sources[0].chunk == item
     denied_scope = AccessScope(
         tenant_id=base.tenant_id,
         principal_id=uuid4(),
@@ -733,6 +737,7 @@ def test_indexing_unit_of_work_resolves_authority_and_persists_lifecycle(
         knowledge_base_ids=(base.id,),
     )
     assert unit.get_trusted_chunks((item.id,), scope=denied_scope) == ()
+    assert unit.get_trusted_citation_sources((item.id,), scope=denied_scope) == ()
 
     unit.mark_failed(context, category="cleanup", cleanup_pending=True)
     retry = unit.resolve_indexing_context(version.id, tenant_id=base.tenant_id)

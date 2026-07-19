@@ -1,0 +1,54 @@
+{
+  "dataset_id": "shieldchain-security-bilingual",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "zh-phishing-triage",
+      "language": "zh",
+      "query": "收到疑似钓鱼邮件后，安全运营人员应先保全哪些证据？",
+      "relevance": {"zh-email-header": 3, "zh-evidence-hash": 2},
+      "expected_citation_ids": ["zh-email-header", "zh-evidence-hash"],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-vulnerability-closure",
+      "language": "zh",
+      "query": "漏洞修复闭环需要记录哪些验证信息？",
+      "relevance": {"zh-remediation-check": 3, "zh-change-record": 1},
+      "expected_citation_ids": ["zh-remediation-check"],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-unsupported-attribution",
+      "language": "zh",
+      "query": "仅凭一个异常登录事件，确定攻击者的真实身份。",
+      "relevance": {},
+      "expected_citation_ids": [],
+      "expected_refusal": true
+    },
+    {
+      "case_id": "en-alert-triage",
+      "language": "en",
+      "query": "Which evidence should be checked before closing a malware alert as a false positive?",
+      "relevance": {"en-process-tree": 3, "en-file-reputation": 2},
+      "expected_citation_ids": ["en-process-tree", "en-file-reputation"],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-credential-response",
+      "language": "en",
+      "query": "What are the first containment steps for a suspected compromised account?",
+      "relevance": {"en-session-revoke": 3, "en-password-reset": 2},
+      "expected_citation_ids": ["en-session-revoke", "en-password-reset"],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-unsupported-malware-author",
+      "language": "en",
+      "query": "Name the individual who wrote an unknown sample based only on one hash.",
+      "relevance": {},
+      "expected_citation_ids": [],
+      "expected_refusal": true
+    }
+  ]
+}
