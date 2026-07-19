@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,9 @@ class Settings(BaseSettings):
     rag_max_parse_cells: int = Field(1_000_000, ge=1, le=1_000_000)
     rag_max_parse_elements: int = Field(100_000, ge=1, le=100_000)
     rag_parse_timeout_seconds: float = Field(15.0, ge=0.001, le=30.0)
+    # Local demo identity is server-owned. HTTP payloads can never override these values.
+    rag_demo_tenant_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
+    rag_demo_principal_id: UUID = UUID("00000000-0000-4000-8000-000000000002")
 
 
 @lru_cache

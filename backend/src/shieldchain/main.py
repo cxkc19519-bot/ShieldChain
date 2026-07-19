@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException
 
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
+from shieldchain.api.knowledge import router as knowledge_router
 from shieldchain.core.config import Settings, get_settings
 from shieldchain.core.errors import (
     ApiError,
@@ -28,6 +29,7 @@ from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.incidents.tools import SimulatedFirewall
 from shieldchain.incidents.workflow import InvestigationWorkflow
+from shieldchain.rag.api_service import KnowledgeApiService, UnconfiguredKnowledgeApiService
 
 
 def create_app(
@@ -37,6 +39,7 @@ def create_app(
     incident_repository: IncidentRepository | None = None,
     investigation_runner: InvestigationRunner | None = None,
     incident_query_service: IncidentQueryService | None = None,
+    knowledge_api_service: KnowledgeApiService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.environment)
@@ -76,6 +79,9 @@ def create_app(
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
     app.state.investigation_runner = runner
+    app.state.knowledge_api_service = knowledge_api_service or UnconfiguredKnowledgeApiService()
+    app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
+    app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(RequestIdMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(HTTPException, http_error_handler)
@@ -83,4 +89,5 @@ def create_app(
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(incidents_router, prefix="/api/v1")
+    app.include_router(knowledge_router, prefix="/api/v1")
     return app

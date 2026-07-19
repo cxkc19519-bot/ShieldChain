@@ -91,7 +91,7 @@ describe('dashboard health', () => {
 })
 
 describe('future routes', () => {
-  it.each(['/agents', '/knowledge', '/response', '/reports'])(
+  it.each(['/agents', '/response', '/reports'])(
     'marks %s as not implemented',
     (path) => {
       renderRoute(path)
@@ -101,6 +101,13 @@ describe('future routes', () => {
       expect(screen.queryByRole('button')).not.toBeInTheDocument()
     },
   )
+
+  it('renders the knowledge page at /knowledge', () => {
+    renderRoute('/knowledge')
+
+    expect(screen.getByRole('heading', { name: '知识库', level: 2 })).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
 
   it('renders the investigation page at /events', () => {
     renderRoute('/events')
