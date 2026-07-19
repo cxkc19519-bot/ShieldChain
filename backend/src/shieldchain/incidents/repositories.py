@@ -55,6 +55,40 @@ from shieldchain.incidents.ports import (
 )
 
 
+def append_incident_audit(
+    session: Session,
+    *,
+    incident_id: UUID,
+    run_id: UUID | None,
+    event_type: str,
+    request_id: str,
+    occurred_at: datetime,
+    payload: dict[str, Any],
+) -> None:
+    """Append an audit event using the incident's atomic sequence allocator."""
+    next_sequence = session.execute(
+        update(IncidentRow)
+        .where(IncidentRow.id == str(incident_id))
+        .values(next_audit_sequence=IncidentRow.next_audit_sequence + 1)
+        .returning(IncidentRow.next_audit_sequence)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
+    if next_sequence is None:
+        raise IncidentNotFound(incident_id)
+    session.add(
+        AuditEventRow(
+            id=str(uuid4()),
+            incident_id=str(incident_id),
+            run_id=str(run_id) if run_id is not None else None,
+            sequence=next_sequence - 1,
+            event_type=event_type,
+            request_id=request_id,
+            occurred_at=occurred_at,
+            payload_json=payload,
+        )
+    )
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=UTC)
@@ -682,26 +716,14 @@ class SqlAlchemyIncidentRepository:
         occurred_at: datetime,
         payload: dict[str, Any],
     ) -> None:
-        next_sequence = session.execute(
-            update(IncidentRow)
-            .where(IncidentRow.id == str(incident_id))
-            .values(next_audit_sequence=IncidentRow.next_audit_sequence + 1)
-            .returning(IncidentRow.next_audit_sequence)
-            .execution_options(synchronize_session=False)
-        ).scalar_one_or_none()
-        if next_sequence is None:
-            raise IncidentNotFound(incident_id)
-        session.add(
-            AuditEventRow(
-                id=str(uuid4()),
-                incident_id=str(incident_id),
-                run_id=str(run_id) if run_id is not None else None,
-                sequence=next_sequence - 1,
-                event_type=event_type,
-                request_id=request_id,
-                occurred_at=occurred_at,
-                payload_json=payload,
-            )
+        append_incident_audit(
+            session,
+            incident_id=incident_id,
+            run_id=run_id,
+            event_type=event_type,
+            request_id=request_id,
+            occurred_at=occurred_at,
+            payload=payload,
         )
 
     @staticmethod
