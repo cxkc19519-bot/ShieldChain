@@ -55,6 +55,7 @@ EXPECTED_COLUMNS = {
     },
     "incidents": {
         "id",
+        "tenant_id",
         "external_id",
         "simulation_instance_id",
         "alert_id",
@@ -73,6 +74,7 @@ EXPECTED_COLUMNS = {
     },
     "investigation_runs": {
         "id",
+        "tenant_id",
         "incident_id",
         "simulation_instance_id",
         "status",
@@ -151,7 +153,8 @@ def test_phase_two_tables_and_exact_columns_are_registered() -> None:
 def test_named_unique_and_check_constraints_exist() -> None:
     expected_unique = {
         "simulation_instances": {"uq_simulation_scenario_generation"},
-        "incidents": {"uq_incident_simulation_instance"},
+        "incidents": {"uq_incident_simulation_instance", "uq_incident_id_tenant"},
+        "investigation_runs": {"uq_investigation_run_id_tenant"},
         "investigation_steps": {"uq_investigation_step_run_key"},
         "evidence_records": {"uq_evidence_run_integrity"},
         "simulation_tool_calls": {"uq_tool_call_idempotency_key"},
@@ -195,7 +198,11 @@ def test_foreign_keys_have_exact_targets_and_are_not_cascading() -> None:
         ),
         ("investigation_runs", "incident_id"): (
             "incidents.id",
-            "fk_investigation_run_incident",
+            "fk_investigation_run_incident_tenant",
+        ),
+        ("investigation_runs", "tenant_id"): (
+            "incidents.tenant_id",
+            "fk_investigation_run_incident_tenant",
         ),
         ("investigation_runs", "simulation_instance_id"): (
             "simulation_instances.id",
@@ -242,8 +249,10 @@ def test_uuid_json_and_timestamp_column_contracts() -> None:
     uuid_columns = {
         ("simulation_instances", "id"),
         ("incidents", "id"),
+        ("incidents", "tenant_id"),
         ("incidents", "simulation_instance_id"),
         ("investigation_runs", "id"),
+        ("investigation_runs", "tenant_id"),
         ("investigation_runs", "incident_id"),
         ("investigation_runs", "simulation_instance_id"),
         ("investigation_steps", "id"),

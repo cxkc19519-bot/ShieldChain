@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -22,6 +23,7 @@ from shieldchain.db.base import Base
 from shieldchain.incidents.domain import ACTIVE_INVESTIGATION_STATUSES
 
 ACTIVE_VALUES = tuple(status.value for status in ACTIVE_INVESTIGATION_STATUSES)
+DEMO_TENANT_ID = "00000000-0000-4000-8000-000000000001"
 
 
 class SimulationInstanceRow(Base):
@@ -55,6 +57,7 @@ class IncidentRow(Base):
     __tablename__ = "incidents"
     __table_args__ = (
         UniqueConstraint("simulation_instance_id", name="uq_incident_simulation_instance"),
+        UniqueConstraint("id", "tenant_id", name="uq_incident_id_tenant"),
         CheckConstraint("remote_port BETWEEN 1 AND 65535", name="ck_incident_remote_port"),
         CheckConstraint(
             "next_audit_sequence >= 1", name="ck_incident_next_audit_sequence"
@@ -62,6 +65,9 @@ class IncidentRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, server_default=text(f"'{DEMO_TENANT_ID}'")
+    )
     external_id: Mapped[str] = mapped_column(String(64), nullable=False)
     simulation_instance_id: Mapped[str] = mapped_column(
         String(36),
@@ -88,6 +94,12 @@ class IncidentRow(Base):
 class InvestigationRunRow(Base):
     __tablename__ = "investigation_runs"
     __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_investigation_run_id_tenant"),
+        ForeignKeyConstraint(
+            ["incident_id", "tenant_id"],
+            ["incidents.id", "incidents.tenant_id"],
+            name="fk_investigation_run_incident_tenant",
+        ),
         CheckConstraint(
             "status IN ('pending','collecting','analyzing','action_planned',"
             "'executing','verifying','needs_review','failed','interrupted','closed')",
@@ -97,9 +109,11 @@ class InvestigationRunRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, server_default=text(f"'{DEMO_TENANT_ID}'")
+    )
     incident_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("incidents.id", name="fk_investigation_run_incident"),
         nullable=False,
     )
     simulation_instance_id: Mapped[str] = mapped_column(
