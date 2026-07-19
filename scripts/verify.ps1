@@ -2,7 +2,10 @@
 param(
     [string]$ProjectRoot,
     [switch]$ContractTest,
-    [string]$TestCommandDirectory
+    [string]$TestCommandDirectory,
+    [switch]$LiveProfile,
+    [ValidateRange(0, 10)]
+    [int]$LiveCallLimit = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +21,9 @@ if ($ContractTest) {
     }
     $pythonCommand = Join-Path $TestCommandDirectory "python.cmd"
     $npmCommand = Join-Path $TestCommandDirectory "npm.cmd"
+    $contractCommand = Join-Path $TestCommandDirectory "contract.cmd"
     $smokeCommand = Join-Path $TestCommandDirectory "smoke.cmd"
+    $contractArguments = @()
     $smokeArguments = @()
 }
 else {
@@ -29,16 +34,74 @@ else {
         exit 1
     }
     $npmCommand = $npm.Source
-    $smokeCommand = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $powerShellCommand = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $contractCommand = $powerShellCommand
+    $contractArguments = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        (Join-Path $ProjectRoot "tests\scripts\run-contract-tests.ps1")
+    )
+    $smokeCommand = $powerShellCommand
     $smokeArguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        (Join-Path $ProjectRoot "tests\scripts\run-phase2-smoke.ps1")
+        (Join-Path $ProjectRoot "tests\scripts\run-phase3-smoke.ps1")
     )
 }
 
-$inheritedLiveFlag = $env:RUN_LIVE_DEEPSEEK_TEST
-Remove-Item Env:\RUN_LIVE_DEEPSEEK_TEST -ErrorAction SilentlyContinue
+$liveConfigurationNames = @(
+    "DEEPSEEK_API_KEY",
+    "RAG_EMBEDDING_BASE_URL",
+    "RAG_EMBEDDING_API_KEY",
+    "RAG_EMBEDDING_MODEL",
+    "MILVUS_URI",
+    "MILVUS_TOKEN",
+    "MILVUS_COLLECTION",
+    "RAG_RERANKER_BASE_URL",
+    "RAG_RERANKER_API_KEY",
+    "RAG_RERANKER_MODEL"
+)
+$liveTestFlags = @(
+    "RUN_LIVE_DEEPSEEK_TEST",
+    "RUN_LIVE_EMBEDDING_TEST",
+    "RUN_LIVE_MILVUS_TEST",
+    "RUN_LIVE_RERANKER_TEST"
+)
+$savedEnvironment = @{}
+foreach ($name in @($liveTestFlags + "DATABASE_URL" + "PYTHONPATH")) {
+    $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
+
+if ($LiveProfile) {
+    $missing = @($liveConfigurationNames | Where-Object {
+        [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+    })
+    if ($missing.Count -gt 0) {
+        [Console]::Error.WriteLine(
+            "Live profile configuration is incomplete. Missing: " + ($missing -join ", ")
+        )
+        exit 2
+    }
+    Write-Host "Live profile configuration is present. LIVE_CALL_LIMIT=$LiveCallLimit"
+    Write-Host "REAL_CLOUD_PATHS_TESTED=False"
+}
+
+foreach ($name in $liveTestFlags) {
+    [Environment]::SetEnvironmentVariable($name, $null, "Process")
+}
+$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "shieldchain-phase3-verify-" + [guid]::NewGuid()
+)
+$systemTemporaryRoot = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::GetTempPath()
+).TrimEnd("\", "/")
 try {
+    New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+    $temporaryRoot = (Resolve-Path -LiteralPath $temporaryRoot).Path
+    $databasePath = Join-Path $temporaryRoot "migration-roundtrip.db"
+    $migrationDatabaseUrl = "sqlite:///" + ($databasePath -replace "\\", "/")
+    $env:PYTHONPATH = Join-Path $ProjectRoot "backend\src"
+    $alembicConfig = Join-Path $ProjectRoot "backend\alembic.ini"
+    $evaluationTest = Join-Path $ProjectRoot "backend\tests\unit\rag\test_evaluation.py"
+
     $commands = @(
         @{ File = $pythonCommand; Arguments = @("-m", "ruff", "check", (Join-Path $ProjectRoot "backend")) },
         @{ File = $pythonCommand; Arguments = @("-m", "pytest", (Join-Path $ProjectRoot "backend\tests"), "-q") },
@@ -46,10 +109,18 @@ try {
         @{ File = $npmCommand; Arguments = @("run", "typecheck", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("test", "--prefix", (Join-Path $ProjectRoot "frontend"), "--", "--run") },
         @{ File = $npmCommand; Arguments = @("run", "build", "--prefix", (Join-Path $ProjectRoot "frontend")) },
+        @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "upgrade", "head") },
+        @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "downgrade", "base") },
+        @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "upgrade", "head") },
+        @{ File = $pythonCommand; Arguments = @("-m", "pytest", $evaluationTest, "-q") },
+        @{ File = $contractCommand; Arguments = $contractArguments },
         @{ File = $smokeCommand; Arguments = $smokeArguments }
     )
 
     foreach ($command in $commands) {
+        if ($command.Arguments -contains "alembic") {
+            $env:DATABASE_URL = $migrationDatabaseUrl
+        }
         & $command.File @($command.Arguments)
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -57,11 +128,26 @@ try {
     }
 }
 finally {
-    if ($null -eq $inheritedLiveFlag) {
-        Remove-Item Env:\RUN_LIVE_DEEPSEEK_TEST -ErrorAction SilentlyContinue
+    foreach ($name in $savedEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable(
+            $name, $savedEnvironment[$name], "Process"
+        )
     }
-    else {
-        $env:RUN_LIVE_DEEPSEEK_TEST = $inheritedLiveFlag
+    if (Test-Path -LiteralPath $temporaryRoot) {
+        $resolvedTemporaryRoot = [System.IO.Path]::GetFullPath($temporaryRoot)
+        $temporaryParent = [System.IO.Path]::GetDirectoryName(
+            $resolvedTemporaryRoot
+        ).TrimEnd("\", "/")
+        $temporaryName = [System.IO.Path]::GetFileName($resolvedTemporaryRoot)
+        if (
+            $temporaryParent -eq $systemTemporaryRoot -and
+            $temporaryName -match '^shieldchain-phase3-verify-[0-9a-fA-F-]{36}$'
+        ) {
+            Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
+        }
+        else {
+            Write-Warning "Refusing to remove an unexpected verification directory."
+        }
     }
 }
 

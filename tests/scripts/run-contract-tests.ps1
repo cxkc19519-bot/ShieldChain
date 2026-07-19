@@ -81,7 +81,8 @@ try {
         (Join-Path $repositoryRoot "scripts\dev.ps1"),
         (Join-Path $repositoryRoot "scripts\test.ps1"),
         (Join-Path $repositoryRoot "scripts\verify.ps1"),
-        (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1")
+        (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1"),
+        (Join-Path $repositoryRoot "tests\scripts\run-phase3-smoke.ps1")
     )
     $devScriptText = Get-Content -Raw -LiteralPath $productionScripts[0]
     $smokeScriptText = Get-Content -Raw -LiteralPath $productionScripts[3]
@@ -163,7 +164,8 @@ try {
             "-File", (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1")
         )
         Assert-True ($occupiedResult.ExitCode -ne 0) "smoke fails safely when port 8000 is occupied"
-        Assert-True ($occupiedResult.Output -match "Port 8000" -and $occupiedResult.Output -match "unknown process") "occupied-port failure is actionable"
+        # Windows PowerShell may wrap native stderr between characters.
+        Assert-True ($occupiedResult.Output -match "8000" -and $occupiedResult.Output -match "unknown process") "occupied-port failure is actionable"
         Assert-True $occupiedPort.Server.IsBound "smoke never stops the controlled port owner"
         Assert-True ((Test-Path -LiteralPath $smokeEnvironmentPath) -eq $environmentExistedBeforePortFixture) "occupied-port failure leaves .env existence unchanged"
     }
@@ -177,9 +179,15 @@ try {
     $pythonWrapper = @'
 @echo off
 if defined RUN_LIVE_DEEPSEEK_TEST exit /b 91
-if "%2"=="ruff" (echo ruff>>"%SHIELDCHAIN_CONTRACT_LOG%") else (echo pytest>>"%SHIELDCHAIN_CONTRACT_LOG%")
-if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="ruff" if "%2"=="ruff" exit /b 42
-if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="pytest" if not "%2"=="ruff" exit /b 42
+if defined RUN_LIVE_EMBEDDING_TEST exit /b 91
+if defined RUN_LIVE_MILVUS_TEST exit /b 91
+if defined RUN_LIVE_RERANKER_TEST exit /b 91
+set token=pytest
+if "%2"=="ruff" set token=ruff
+if "%2"=="alembic" set token=migration-%5
+if "%2"=="pytest" if /i "%~x3"==".py" set token=rag-evaluation
+echo %token%>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="%token%" exit /b 42
 exit /b 0
 '@
     $npmWrapper = @'
@@ -192,11 +200,21 @@ exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $wrapperRoot "python.cmd") -Value $pythonWrapper
     Set-Content -LiteralPath (Join-Path $wrapperRoot "npm.cmd") -Value $npmWrapper
+    $contractWrapper = @'
+@echo off
+echo contract>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="contract" exit /b 42
+exit /b 0
+'@
+    Set-Content -LiteralPath (Join-Path $wrapperRoot "contract.cmd") -Value $contractWrapper
     $smokeWrapper = @'
 @echo off
 if defined RUN_LIVE_DEEPSEEK_TEST exit /b 91
-echo smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
-if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="smoke" exit /b 42
+if defined RUN_LIVE_EMBEDDING_TEST exit /b 91
+if defined RUN_LIVE_MILVUS_TEST exit /b 91
+if defined RUN_LIVE_RERANKER_TEST exit /b 91
+echo phase3-smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="phase3-smoke" exit /b 42
 exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $wrapperRoot "smoke.cmd") -Value $smokeWrapper
@@ -219,7 +237,8 @@ exit /b 0
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($verifyResult.ExitCode -eq 0) "verify succeeds when every command succeeds"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck,vitest,build,smoke") "verify uses the required deterministic order with smoke last"
+    $expectedGateOrder = "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade,migration-upgrade,rag-evaluation,contract,phase3-smoke"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "verify uses the required deterministic phase 3 gate order"
 
     Clear-Content -LiteralPath $callLog
     $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "typecheck"
@@ -232,14 +251,40 @@ exit /b 0
     Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck") "verify stops immediately after the first failure"
 
     Clear-Content -LiteralPath $callLog
-    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "smoke"
+    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "migration-downgrade"
+    $migrationFailureResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
+        "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
+        "-ProjectRoot", $repositoryRoot
+    )
+    Assert-True ($migrationFailureResult.ExitCode -eq 42) "verify returns a migration failure exit code"
+    Assert-True (
+        (Get-Content -LiteralPath $callLog) -join "," -eq
+        "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade"
+    ) "verify stops before later gates after migration failure"
+
+    Clear-Content -LiteralPath $callLog
+    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "phase3-smoke"
     $smokeFailureResult = Invoke-CapturedPowerShell -Arguments @(
         "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
         "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($smokeFailureResult.ExitCode -eq 42) "verify returns the smoke failure exit code"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq "ruff,pytest,lint,typecheck,vitest,build,smoke") "smoke failure occurs only after every earlier gate"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "phase 3 smoke failure occurs only after every earlier gate"
+
+    Clear-Content -LiteralPath $callLog
+    $env:RUN_LIVE_EMBEDDING_TEST = "1"
+    $env:RUN_LIVE_MILVUS_TEST = "1"
+    $env:RUN_LIVE_RERANKER_TEST = "1"
+    Remove-Item Env:\SHIELDCHAIN_CONTRACT_FAIL_TOKEN -ErrorAction SilentlyContinue
+    $liveProfileResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
+        "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
+        "-ProjectRoot", $repositoryRoot, "-LiveProfile", "-LiveCallLimit", "1"
+    )
+    Assert-True ($liveProfileResult.ExitCode -eq 2) "live profile fails closed when cloud configuration is incomplete"
+    Assert-True ($liveProfileResult.Output -match "Missing:" -and $liveProfileResult.Output -notmatch "contract-secret-must-not-appear") "live profile reports only missing variable names, never secret values"
 
     $readme = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "README.md")
     $localDevelopment = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot "docs\operations\local-development.md")
@@ -250,7 +295,14 @@ exit /b 0
 finally {
     Remove-Item Env:\SHIELDCHAIN_CONTRACT_LOG -ErrorAction SilentlyContinue
     Remove-Item Env:\SHIELDCHAIN_CONTRACT_FAIL_TOKEN -ErrorAction SilentlyContinue
-    $env:RUN_LIVE_DEEPSEEK_TEST = "1"
+    foreach ($name in @(
+        "RUN_LIVE_DEEPSEEK_TEST",
+        "RUN_LIVE_EMBEDDING_TEST",
+        "RUN_LIVE_MILVUS_TEST",
+        "RUN_LIVE_RERANKER_TEST"
+    )) {
+        Remove-Item -LiteralPath ("Env:\" + $name) -ErrorAction SilentlyContinue
+    }
     if (Test-Path -LiteralPath $fixtureRoot) {
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
     }

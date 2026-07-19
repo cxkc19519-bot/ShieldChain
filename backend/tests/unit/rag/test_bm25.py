@@ -170,6 +170,18 @@ def test_stable_ties_duplicate_input_empty_query_and_limit() -> None:
             index.search("same", scope=make_scope(), limit=invalid_limit)  # type: ignore[arg-type]
 
 
+def test_scores_are_monotonically_normalized_for_the_citation_contract() -> None:
+    index = make_index()
+    repeated = make_chunk(UUID(int=1), "term term term term")
+    single = make_chunk(UUID(int=2), "term other words here")
+    index.upsert((single, repeated))
+
+    matches = index.search("term term term", scope=make_scope(), limit=2)
+
+    assert [match.chunk_id for match in matches] == [repeated.id, single.id]
+    assert all(0 < match.score < 1 for match in matches)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

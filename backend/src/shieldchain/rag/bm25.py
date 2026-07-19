@@ -206,7 +206,9 @@ class DeterministicBm25Index:
                     * query_frequency
                 )
             if score > 0:
-                scores.append(Bm25Match(entry.chunk.id, score))
+                # Raw BM25 is unbounded, while downstream citation scores have a
+                # stable [0, 1] contract. This monotonic transform preserves rank.
+                scores.append(Bm25Match(entry.chunk.id, score / (1.0 + score)))
         scores.sort(key=lambda match: (-match.score, str(match.chunk_id)))
         return tuple(scores[:limit])
 

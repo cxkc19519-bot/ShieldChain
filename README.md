@@ -1,6 +1,6 @@
 # 盾链智御（ShieldChain）
 
-盾链智御是一个面向网络安全运营的智能体研究项目。当前阶段 2 提供 Windows 本地可运行的 FastAPI 后端、React 调查页面和基于 SQLite 的确定性钓鱼事件闭环。它是仿真演示，不是真实防护设备：不会调用真实防火墙、EDR、SIEM、DeepSeek 或其他外部服务。RAG、多智能体和真实设备集成等后续能力尚未实现。
+盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环，以及阶段 3 产品级 RAG 的解析、分块、混合检索、重排、引用、拒答、评测核心和知识库页面。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker 与安全设备尚未授权和接线，知识 API 默认失败关闭，不会伪造云调用成功。多智能体仍属于后续阶段。
 
 ## 前置条件
 
@@ -24,12 +24,13 @@ Copy-Item .env.example .env
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。独立 smoke 会迁移临时 SQLite、启动真实后端和 Vite 严格端口代理，并仅通过 5173 完成 reset/start/poll/audit 闭环；它会清理自己创建的进程和临时文件。`verify.ps1` 在既有质量门禁全部成功后运行同一 smoke。所有默认门禁都会清除继承的实时测试开关，不产生付费 DeepSeek 调用。
+前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2 smoke 启动真实本地服务验证事件闭环；阶段 3 smoke 在临时 SQLite 和内容目录中使用离线云替身验证 RAG 全链路。`verify.ps1` 还执行迁移往返、固定 RAG 评测和脚本契约。完整 `verify.ps1` 与阶段 3 smoke 会清除并恢复四类实时测试开关，不产生 DeepSeek、Embedding、Milvus 或 Reranker 云调用。
 
 ## 文档导航
 
