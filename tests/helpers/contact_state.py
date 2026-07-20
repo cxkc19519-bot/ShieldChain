@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Barrier, Lock, Thread
+from typing import TypeVar
 
 from saga.domain import AgentId, ContactCommit, ContactSnapshot
 from saga.ports.contact_state import (
@@ -14,6 +15,28 @@ from saga.ports.contact_state import (
 )
 
 _Mutation = ContactCommit | PolicyReplaceCommit | OtkAppendCommit | DeactivateCommit
+_Result = TypeVar("_Result")
+
+
+def run_barrier_workers(participants: int, operation: Callable[[], _Result]) -> tuple[_Result, ...]:
+    """Run contenders from one deterministic barrier, without timing sleeps."""
+    if type(participants) is not int or participants < 2:
+        raise ValueError("barrier participants invalid")
+    barrier = Barrier(participants)
+    results: list[_Result | None] = [None] * participants
+
+    def run(index: int) -> None:
+        barrier.wait(timeout=10)
+        results[index] = operation()
+
+    threads = tuple(Thread(target=run, args=(index,)) for index in range(participants))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    if any(thread.is_alive() for thread in threads) or any(result is None for result in results):
+        raise RuntimeError("barrier operation incomplete")
+    return tuple(results)  # type: ignore[return-value]
 
 
 class ConflictContactStateStore:
@@ -109,4 +132,5 @@ __all__ = (
     "BarrierConflictContactStateStore",
     "ConflictContactStateStore",
     "PolicyBlindContactStateStore",
+    "run_barrier_workers",
 )
