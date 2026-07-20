@@ -23,8 +23,6 @@ PHASE_TWO_REGISTRATION_MODULES = (
     "ports/transactions.py",
     "protocols/user_registration.py",
     "protocols/agent_registration.py",
-    "adapters/persistence/memory.py",
-    "adapters/persistence/sqlite.py",
 )
 FORBIDDEN_PHASE_TWO_SURFACES = (
     # Phase 3: contact-policy evaluation and pair-counting state.
@@ -96,9 +94,9 @@ def test_phase_two_scope_scan_recursively_covers_all_owned_production_packages()
         "ports/registries.py",
         "protocols/user_registration.py",
         "protocols/agent_registration.py",
-        "adapters/persistence/memory.py",
-        "adapters/persistence/sqlite.py",
     } <= scanned_relative_paths
+    assert "adapters/persistence/memory.py" not in scanned_relative_paths
+    assert "adapters/persistence/sqlite.py" not in scanned_relative_paths
 
 
 def test_registration_packages_exclude_later_phase_and_innovation_surfaces() -> None:
@@ -121,6 +119,16 @@ def test_scope_scan_and_forbidden_check_cannot_be_bypassed_by_nested_module(
 
     assert nested_module in scanned
     assert _forbidden_tokens_by_path(scanned) == {nested_module: ("policyengine",)}
+
+
+def test_shared_persistence_is_not_misclassified_as_a_phase_two_only_root() -> None:
+    saga_root = Path(__file__).parents[2] / "src" / "saga"
+    scanned_relative_paths = {
+        path.relative_to(saga_root).as_posix() for path in _phase_two_source_files(saga_root)
+    }
+
+    assert "adapters/persistence/memory.py" not in scanned_relative_paths
+    assert "adapters/persistence/sqlite.py" not in scanned_relative_paths
 
 
 def test_registration_services_keep_time_and_randomness_explicitly_injected() -> None:

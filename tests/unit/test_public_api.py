@@ -148,7 +148,13 @@ def test_ports_public_api_is_exact() -> None:
 
 
 def test_protocols_public_api_is_exact() -> None:
-    expected = ("AgentRegistrationService", "UserRegistrationService")
+    expected = (
+        "AgentRegistrationService",
+        "ContactBundleVerifier",
+        "ContactManagementService",
+        "ContactResolutionService",
+        "UserRegistrationService",
+    )
     assert protocols.__all__ == expected
     assert len(protocols.__all__) == len(set(protocols.__all__))
     assert all(hasattr(protocols, name) for name in expected)

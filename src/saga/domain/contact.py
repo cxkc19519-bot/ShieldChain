@@ -126,6 +126,7 @@ class ContactBundle:
     receiving_endpoint: EndpointValue | None
     receiving_agent_certificate_der: bytes
     receiving_access_control_public_key: bytes
+    user_metadata_signature: bytes
     public_otk: AvailablePublicOtk
 
     def __post_init__(self) -> None:
@@ -142,6 +143,7 @@ class ContactBundle:
         ):
             raise InvalidContactInput()
         _bytes(self.receiving_access_control_public_key, 32)
+        _bytes(self.user_metadata_signature, 64)
 
     def __repr__(self) -> str:
         return f"ContactBundle(receiving_agent_id={self.receiving_agent_id!r}, redacted=True)"

@@ -121,6 +121,7 @@ def test_bundle_redacts_certificate_and_signatures() -> None:
         receiving_endpoint=None,
         receiving_agent_certificate_der=b"agent-certificate",
         receiving_access_control_public_key=b"k" * 32,
+        user_metadata_signature=b"m" * 64,
         public_otk=_otk(),
     )
     assert "certificate" not in repr(bundle)
