@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import saga.adapters.persistence.sqlite as sqlite_adapter
-from saga.adapters.persistence.sqlite import SQLiteUserRegistry
+from saga.adapters.persistence.sqlite import SQLiteAgentRegistry, SQLiteUserRegistry
 from saga.domain import UserId
 
 
@@ -75,3 +75,22 @@ def test_every_adapter_connection_sets_and_checks_foreign_keys(
     assert registry.get(UserId("alice")) is None
 
     assert observed == [1, 1]
+
+
+def test_agent_registry_adds_an_independent_contact_state_v1_schema(tmp_path: Path) -> None:
+    database = tmp_path / "registration.sqlite3"
+    SQLiteUserRegistry(database)
+    SQLiteAgentRegistry(database)
+
+    with sqlite3.connect(database) as connection:
+        agent_columns = {row[1] for row in connection.execute("PRAGMA table_info(agents)")}
+        otk_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(registered_public_otks)")
+        }
+        state_versions = connection.execute(
+            "SELECT schema_version FROM saga_contact_state_schema"
+        ).fetchall()
+
+    assert {"active", "agent_revision", "policy_version", "otk_pool_revision"} <= agent_columns
+    assert "issued" in otk_columns
+    assert state_versions == [(1,)]
