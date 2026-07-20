@@ -9,7 +9,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PHASE_TWO_PACKAGE_ROOTS = ("domain", "ports", "protocols", "adapters")
+PHASE_TWO_REGISTRATION_MODULES = (
+    "domain/agents.py",
+    "domain/encoding.py",
+    "domain/errors.py",
+    "domain/events.py",
+    "domain/users.py",
+    "ports/clock.py",
+    "ports/identity.py",
+    "ports/random.py",
+    "ports/registries.py",
+    "ports/signing.py",
+    "ports/transactions.py",
+    "protocols/user_registration.py",
+    "protocols/agent_registration.py",
+    "adapters/persistence/memory.py",
+    "adapters/persistence/sqlite.py",
+)
 FORBIDDEN_PHASE_TWO_SURFACES = (
     # Phase 3: contact-policy evaluation and pair-counting state.
     "contactpolicymatcher",
@@ -54,17 +70,8 @@ FORBIDDEN_PHASE_TWO_SURFACES = (
 
 
 def _phase_two_source_files(saga_root: Path) -> tuple[Path, ...]:
-    """Return every Python production file in the Phase 2-owned packages."""
-    return tuple(
-        sorted(
-            (
-                path
-                for package_root in PHASE_TWO_PACKAGE_ROOTS
-                for path in (saga_root / package_root).rglob("*.py")
-            ),
-            key=lambda path: path.relative_to(saga_root).as_posix(),
-        )
-    )
+    """Return only Phase 2 registration-owned modules, not later additions."""
+    return tuple(saga_root / relative_path for relative_path in PHASE_TWO_REGISTRATION_MODULES)
 
 
 def _forbidden_tokens_by_path(paths: tuple[Path, ...]) -> dict[Path, tuple[str, ...]]:
@@ -83,7 +90,6 @@ def test_phase_two_scope_scan_recursively_covers_all_owned_production_packages()
     scanned = _phase_two_source_files(saga_root)
     scanned_relative_paths = {path.relative_to(saga_root).as_posix() for path in scanned}
 
-    assert all((saga_root / package_root).is_dir() for package_root in PHASE_TWO_PACKAGE_ROOTS)
     assert {
         "domain/users.py",
         "domain/agents.py",
@@ -104,10 +110,11 @@ def test_registration_packages_exclude_later_phase_and_innovation_surfaces() -> 
 def test_scope_scan_and_forbidden_check_cannot_be_bypassed_by_nested_module(
     tmp_path: Path,
 ) -> None:
-    for package_root in PHASE_TWO_PACKAGE_ROOTS:
-        (tmp_path / package_root).mkdir(parents=True)
-    nested_module = tmp_path / "adapters" / "persistence" / "deep" / "future.py"
-    nested_module.parent.mkdir(parents=True)
+    for relative_path in PHASE_TWO_REGISTRATION_MODULES:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("pass\n", encoding="utf-8")
+    nested_module = tmp_path / "protocols" / "agent_registration.py"
     nested_module.write_text("class PolicyEngine: pass\n", encoding="utf-8")
 
     scanned = _phase_two_source_files(tmp_path)

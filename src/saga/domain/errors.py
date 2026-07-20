@@ -39,13 +39,73 @@ class RegistrationPersistenceError(RegistrationError):
     _message = "registration persistence failed"
 
 
+class ContactError(Exception):
+    """Base class for the closed public contact-state failure surface."""
+
+    _message = "contact operation failed"
+
+    def __init__(self) -> None:
+        super().__init__(self._message)
+
+
+class InvalidContactInput(ContactError):
+    _message = "invalid contact input"
+
+
+class InvalidContactPolicy(ContactError):
+    _message = "invalid contact policy"
+
+
+class ContactPolicyNoMatch(ContactError):
+    _message = "contact policy has no match"
+
+
+class ContactPolicyDenied(ContactError):
+    _message = "contact policy denied"
+
+
+class PairBudgetExhausted(ContactError):
+    _message = "contact pair budget exhausted"
+
+
+class PublicOtkPoolExhausted(ContactError):
+    _message = "public OTK pool exhausted"
+
+
+class AgentInactive(ContactError):
+    _message = "receiving Agent is inactive"
+
+
+class ContactBundleVerificationFailed(ContactError):
+    _message = "contact bundle verification failed"
+
+
+class ConcurrentContactConflict(ContactError):
+    _message = "concurrent contact conflict"
+
+
+class ContactPersistenceError(ContactError):
+    _message = "contact persistence failed"
+
+
 __all__ = (
     "AgentEndpointExists",
     "AgentIdentifierExists",
     "AgentOwnerAuthenticationFailed",
     "AgentRegistrationVerificationFailed",
+    "AgentInactive",
+    "ConcurrentContactConflict",
+    "ContactBundleVerificationFailed",
+    "ContactError",
+    "ContactPersistenceError",
+    "ContactPolicyDenied",
+    "ContactPolicyNoMatch",
     "IdentityVerificationRejected",
+    "InvalidContactInput",
+    "InvalidContactPolicy",
     "InvalidRegistrationInput",
+    "PairBudgetExhausted",
+    "PublicOtkPoolExhausted",
     "RegistrationError",
     "RegistrationPersistenceError",
     "UserRegistrationExists",
