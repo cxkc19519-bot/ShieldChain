@@ -34,7 +34,10 @@ from shieldchain.agents.ports import (
     PrivateContextAccessDenied,
     StaleContextRevision,
 )
-from shieldchain.agents.repositories import SqlAlchemyAgentContextRepository
+from shieldchain.agents.repositories import (
+    SqlAlchemyAgentContextRepository,
+    SqlAlchemyAgentContextUnitOfWork,
+)
 from shieldchain.db.base import Base
 from shieldchain.incidents.persistence import (
     AuditEventRow,
@@ -602,3 +605,19 @@ def test_same_incident_supports_multiple_runs_and_unknown_stored_kind_fails(
             acting_role=AgentRole.ALERT_TRIAGE,
             role=AgentRole.ALERT_TRIAGE,
         )
+
+
+def test_unit_of_work_reresolves_handoff_references_in_trusted_run(session: Session) -> None:
+    unit = SqlAlchemyAgentContextUnitOfWork(session, tenant_id=TENANT, run_id=RUN)
+    valid = evidence_ref()
+
+    assert unit.resolve(case_id=CASE, references=(valid,), knowledge_scope=None) == (valid,)
+
+    with pytest.raises(InvalidTrustedReference, match="absent, unconfirmed, or invalid"):
+        unit.resolve(
+            case_id=CASE,
+            references=(evidence_ref(integrity_sha256="f" * 64),),
+            knowledge_scope=None,
+        )
+    with pytest.raises(InvalidTrustedReference, match="different case"):
+        unit.resolve(case_id=uuid4(), references=(valid,), knowledge_scope=None)

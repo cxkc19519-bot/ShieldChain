@@ -743,6 +743,26 @@ class SqlAlchemyAgentContextUnitOfWork:
             knowledge_scope=knowledge_scope,
         )
 
+    def resolve(
+        self,
+        *,
+        case_id: UUID,
+        references: tuple[Reference, ...],
+        knowledge_scope: AccessScope | None,
+    ) -> tuple[Reference, ...]:
+        """Re-resolve references inside the same trusted tenant/run boundary."""
+        run = self._repository._run(self._session, self._tenant_id, self._run_id)
+        if UUID(run.incident_id) != case_id:
+            raise InvalidTrustedReference("handoff belongs to a different case")
+        self._repository._validate_references(
+            self._session,
+            run,
+            case_id,
+            references,
+            knowledge_scope,
+        )
+        return references
+
     def append_handoff(
         self, handoff: HandoffPacket, *, request_id: str, knowledge_scope: AccessScope | None = None
     ) -> None:
