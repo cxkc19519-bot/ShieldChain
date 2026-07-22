@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 from collections.abc import Mapping
 from typing import Any
@@ -15,22 +16,34 @@ SENSITIVE_KEY_PARTS = (
     "cookie",
 )
 
+_SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(
+        r"(?i)\b(authorization|api[_-]?key|token|password|secret)\s*[:=]\s*"
+        r"[^\s,;]+"
+    ),
+)
+
 
 def _is_sensitive_key(key: object) -> bool:
     normalized_key = str(key).lower()
     return any(part in normalized_key for part in SENSITIVE_KEY_PARTS)
 
 
-def _redact(value: object) -> object:
+def redact_sensitive_data(value: object) -> object:
+    """Recursively redact sensitive keys and common inline credential forms."""
     if isinstance(value, Mapping):
         return {
-            key: REDACTED_VALUE if _is_sensitive_key(key) else _redact(item)
+            key: REDACTED_VALUE if _is_sensitive_key(key) else redact_sensitive_data(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_redact(item) for item in value]
+        return [redact_sensitive_data(item) for item in value]
     if isinstance(value, tuple):
-        return tuple(_redact(item) for item in value)
+        return tuple(redact_sensitive_data(item) for item in value)
+    if isinstance(value, str):
+        for pattern in _SENSITIVE_VALUE_PATTERNS:
+            value = pattern.sub(REDACTED_VALUE, value)
     return value
 
 
@@ -40,7 +53,7 @@ def redact_sensitive_fields(
     event_dict: dict[str, object],
 ) -> dict[str, object]:
     return {
-        key: REDACTED_VALUE if _is_sensitive_key(key) else _redact(value)
+        key: REDACTED_VALUE if _is_sensitive_key(key) else redact_sensitive_data(value)
         for key, value in event_dict.items()
     }
 
