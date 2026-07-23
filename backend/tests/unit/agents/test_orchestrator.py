@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+import pytest
+
 from shieldchain.agents.context import ContextAssemblyService
 from shieldchain.agents.domain import (
     AgentOutput,
@@ -26,6 +28,7 @@ from shieldchain.agents.roles import (
 )
 from shieldchain.agents.security import ServerAccessContext
 from shieldchain.rag.domain import SensitivityLevel
+from shieldchain.react.domain import ReactDecision
 from shieldchain.tools.domain import (
     ToolVerification,
     TrustedToolCall,
@@ -232,3 +235,69 @@ def test_unverified_trusted_execution_terminal_goes_to_manual_review() -> None:
     assert resumed.state.phase is CasePhase.NEEDS_REVIEW
     assert resumed.state.status is OrchestrationStatus.NEEDS_REVIEW
     assert resumed.state.reason is SupervisorReason.TRUSTED_EXECUTION_NOT_VERIFIED
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [ReactDecision.QUERY_STATUS, ReactDecision.RETRY_READ_ONLY, ReactDecision.REPLAN],
+)
+def test_controlled_react_decision_keeps_unverified_call_at_trusted_boundary(
+    decision: ReactDecision,
+) -> None:
+    subject = orchestrator()
+    waiting = OrchestrationState(
+        CASE,
+        CasePhase.AWAITING_EXECUTION,
+        OrchestrationStatus.AWAITING_TRUSTED_EXECUTION,
+        budget(),
+        1,
+        False,
+        SupervisorReason.TRUSTED_EXECUTION_REQUIRED,
+    )
+    call, _ = trusted_execution(status=TrustedToolCallStatus.NEEDS_REVIEW)
+    resumed = subject.resume_after_execution(
+        waiting, call=call, verification=None, react_decision=decision, now=NOW
+    )
+    assert resumed.state.phase is CasePhase.AWAITING_EXECUTION
+    assert resumed.state.status is OrchestrationStatus.AWAITING_TRUSTED_EXECUTION
+    assert resumed.state.reason is SupervisorReason.REACT_RECOVERY_REQUIRED
+
+
+def test_manual_react_decision_cannot_bypass_review() -> None:
+    call, _ = trusted_execution(status=TrustedToolCallStatus.NEEDS_REVIEW)
+    result = orchestrator().resume_after_execution(
+        OrchestrationState(
+            CASE,
+            CasePhase.AWAITING_EXECUTION,
+            OrchestrationStatus.AWAITING_TRUSTED_EXECUTION,
+            budget(),
+            1,
+            False,
+        ),
+        call=call,
+        verification=None,
+        react_decision=ReactDecision.MANUAL_REVIEW,
+        now=NOW,
+    )
+    assert result.state.status is OrchestrationStatus.NEEDS_REVIEW
+
+
+def test_verified_execution_wins_over_recovery_signal() -> None:
+    waiting = OrchestrationState(
+        CASE,
+        CasePhase.AWAITING_EXECUTION,
+        OrchestrationStatus.AWAITING_TRUSTED_EXECUTION,
+        budget(),
+        1,
+        False,
+    )
+    call, verification = trusted_execution()
+    result = orchestrator().resume_after_execution(
+        waiting,
+        call=call,
+        verification=verification,
+        react_decision=ReactDecision.REPLAN,
+        now=NOW,
+    )
+    assert result.state.phase is CasePhase.VERIFICATION
+    assert result.state.status is OrchestrationStatus.RUNNING

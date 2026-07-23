@@ -22,6 +22,7 @@ from shieldchain.agents.roles import (
     RoleExecutionResult,
     RoleExecutionStatus,
 )
+from shieldchain.react.domain import ReactDecision
 from shieldchain.tools.domain import (
     ToolVerification,
     TrustedToolCall,
@@ -50,6 +51,7 @@ class SupervisorReason(StrEnum):
     COMMIT_FAILED = "commit_failed"
     TRUSTED_EXECUTION_REQUIRED = "trusted_execution_required"
     TRUSTED_EXECUTION_NOT_VERIFIED = "trusted_execution_not_verified"
+    REACT_RECOVERY_REQUIRED = "react_recovery_required"
 
 
 _ROLE_BY_PHASE = {
@@ -261,6 +263,7 @@ class SuperagentOrchestrator:
         *,
         call: TrustedToolCall,
         verification: ToolVerification | None,
+        react_decision: ReactDecision | None = None,
         now: datetime,
     ) -> AdvanceResult:
         _utc(now, "now")
@@ -277,14 +280,25 @@ class SuperagentOrchestrator:
             and verification.request_id == call.request.id
             and verification.outcome is VerificationOutcome.VERIFIED
         )
-        if not verified:
-            target_phase = CasePhase.NEEDS_REVIEW
-            target_status = OrchestrationStatus.NEEDS_REVIEW
-            reason = SupervisorReason.TRUSTED_EXECUTION_NOT_VERIFIED
-        else:
+        if react_decision is not None and not isinstance(react_decision, ReactDecision):
+            raise TypeError("react_decision must be a ReactDecision")
+        react_recovery = react_decision in {
+            ReactDecision.QUERY_STATUS,
+            ReactDecision.RETRY_READ_ONLY,
+            ReactDecision.REPLAN,
+        }
+        if verified:
             target_phase = CasePhase.VERIFICATION
             target_status = OrchestrationStatus.RUNNING
             reason = None
+        elif react_recovery:
+            target_phase = CasePhase.AWAITING_EXECUTION
+            target_status = OrchestrationStatus.AWAITING_TRUSTED_EXECUTION
+            reason = SupervisorReason.REACT_RECOVERY_REQUIRED
+        else:
+            target_phase = CasePhase.NEEDS_REVIEW
+            target_status = OrchestrationStatus.NEEDS_REVIEW
+            reason = SupervisorReason.TRUSTED_EXECUTION_NOT_VERIFIED
         bundle = self._bundle(
             state,
             state.budget,
