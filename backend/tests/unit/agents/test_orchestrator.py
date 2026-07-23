@@ -26,6 +26,13 @@ from shieldchain.agents.roles import (
 )
 from shieldchain.agents.security import ServerAccessContext
 from shieldchain.rag.domain import SensitivityLevel
+from shieldchain.tools.domain import (
+    ToolVerification,
+    TrustedToolCall,
+    TrustedToolCallStatus,
+    TrustedToolRequest,
+    VerificationOutcome,
+)
 
 NOW = datetime(2026, 7, 23, 2, tzinfo=UTC)
 CASE = UUID("10000000-0000-0000-0000-000000000001")
@@ -44,6 +51,35 @@ def state(phase=CasePhase.TRIAGE, *, retrieval=True, value=None):
         0,
         retrieval,
     )
+
+
+def trusted_execution(*, status=TrustedToolCallStatus.SUCCEEDED):
+    request = TrustedToolRequest(
+        UUID(int=1801),
+        CASE,
+        UUID(int=1802),
+        UUID(int=1803),
+        "phase5:orchestrator:1801",
+        AgentRole.RESPONSE_PLANNING,
+        "block_ip",
+        "1",
+        {"target_ip": "203.0.113.8", "rule_ttl_seconds": 3600},
+        {"firewall_status": "blocked"},
+        "Reverse rule.",
+        (EvidenceReference(UUID(int=1804), CASE, "siem:orchestrator", NOW, "d" * 64),),
+        NOW,
+    )
+    call = TrustedToolCall(request, status, 5, None, NOW)
+    verification = ToolVerification(
+        UUID(int=1805),
+        request.id,
+        VerificationOutcome.VERIFIED,
+        {"firewall_status": "blocked"},
+        request.evidence,
+        None,
+        NOW,
+    )
+    return call, verification
 
 
 class Contexts:
@@ -172,8 +208,27 @@ def test_response_planning_waits_at_trusted_execution_boundary() -> None:
     assert waiting.state.status is OrchestrationStatus.AWAITING_TRUSTED_EXECUTION
     assert waiting.state.reason is SupervisorReason.HIGH_RISK_ACTION
 
+    call, verification = trusted_execution()
     resumed = subject.resume_after_execution(
-        waiting.state, trusted_execution_verified=True, now=NOW
+        waiting.state, call=call, verification=verification, now=NOW
     )
     assert resumed.state.phase is CasePhase.VERIFICATION
     assert resumed.state.status is OrchestrationStatus.RUNNING
+
+
+def test_unverified_trusted_execution_terminal_goes_to_manual_review() -> None:
+    subject = orchestrator()
+    waiting = OrchestrationState(
+        CASE,
+        CasePhase.AWAITING_EXECUTION,
+        OrchestrationStatus.AWAITING_TRUSTED_EXECUTION,
+        budget(),
+        1,
+        False,
+        SupervisorReason.TRUSTED_EXECUTION_REQUIRED,
+    )
+    call, _ = trusted_execution(status=TrustedToolCallStatus.NEEDS_REVIEW)
+    resumed = subject.resume_after_execution(waiting, call=call, verification=None, now=NOW)
+    assert resumed.state.phase is CasePhase.NEEDS_REVIEW
+    assert resumed.state.status is OrchestrationStatus.NEEDS_REVIEW
+    assert resumed.state.reason is SupervisorReason.TRUSTED_EXECUTION_NOT_VERIFIED

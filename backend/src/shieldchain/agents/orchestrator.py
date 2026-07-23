@@ -22,6 +22,12 @@ from shieldchain.agents.roles import (
     RoleExecutionResult,
     RoleExecutionStatus,
 )
+from shieldchain.tools.domain import (
+    ToolVerification,
+    TrustedToolCall,
+    TrustedToolCallStatus,
+    VerificationOutcome,
+)
 
 
 class OrchestrationStatus(StrEnum):
@@ -43,6 +49,7 @@ class SupervisorReason(StrEnum):
     HIGH_RISK_ACTION = "high_risk_action"
     COMMIT_FAILED = "commit_failed"
     TRUSTED_EXECUTION_REQUIRED = "trusted_execution_required"
+    TRUSTED_EXECUTION_NOT_VERIFIED = "trusted_execution_not_verified"
 
 
 _ROLE_BY_PHASE = {
@@ -249,7 +256,12 @@ class SuperagentOrchestrator:
         )
 
     def resume_after_execution(
-        self, state: OrchestrationState, *, trusted_execution_verified: bool, now: datetime
+        self,
+        state: OrchestrationState,
+        *,
+        call: TrustedToolCall,
+        verification: ToolVerification | None,
+        now: datetime,
     ) -> AdvanceResult:
         _utc(now, "now")
         if (
@@ -257,10 +269,18 @@ class SuperagentOrchestrator:
             or state.status is not OrchestrationStatus.AWAITING_TRUSTED_EXECUTION
         ):
             raise ValueError("orchestration is not awaiting trusted execution")
-        if not trusted_execution_verified:
+        if call.request.case_id != state.case_id:
+            raise ValueError("trusted execution belongs to another case")
+        verified = (
+            call.status is TrustedToolCallStatus.SUCCEEDED
+            and verification is not None
+            and verification.request_id == call.request.id
+            and verification.outcome is VerificationOutcome.VERIFIED
+        )
+        if not verified:
             target_phase = CasePhase.NEEDS_REVIEW
             target_status = OrchestrationStatus.NEEDS_REVIEW
-            reason = SupervisorReason.TRUSTED_EXECUTION_REQUIRED
+            reason = SupervisorReason.TRUSTED_EXECUTION_NOT_VERIFIED
         else:
             target_phase = CasePhase.VERIFICATION
             target_status = OrchestrationStatus.RUNNING
