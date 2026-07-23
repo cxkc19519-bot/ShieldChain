@@ -8,6 +8,7 @@ def test_react_tables_have_tenant_bound_foreign_keys_and_constraints() -> None:
         "react_loops",
         "react_observations",
         "react_assessments",
+        "react_control_events",
         "react_plan_revisions",
         "react_decisions",
     }

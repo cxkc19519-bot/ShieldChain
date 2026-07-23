@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from shieldchain.react.domain import (
 )
 from shieldchain.react.persistence import (
     ReactAssessmentRow,
+    ReactControlEventRow,
     ReactDecisionRow,
     ReactLoopRow,
     ReactObservationRow,
@@ -248,6 +249,85 @@ class SqlAlchemyReactRepository:
         )
         if result.rowcount != 1:
             raise StaleReactLoop("react recovery claim is stale")
+        session.flush()
+        return changed
+
+    def control(
+        self,
+        session: Session,
+        *,
+        tenant_id: UUID,
+        loop_id: UUID,
+        actor_subject_id: UUID,
+        action: str,
+        reason_summary: str,
+        request_id: str,
+        now: datetime,
+    ) -> ReactLoop:
+        current = self.get(session, tenant_id=tenant_id, loop_id=loop_id)
+        if current is None:
+            raise ReactLoopNotFound("react loop not found in tenant")
+        if action == "takeover":
+            if current.status not in {
+                ReactLoopStatus.RUNNING,
+                ReactLoopStatus.AWAITING_EXECUTION,
+            }:
+                raise ValueError("react control is not allowed from current status")
+            target = ReactLoopStatus.AWAITING_HUMAN
+            reason_code = "operator_takeover"
+        elif action == "resume":
+            if current.status is not ReactLoopStatus.AWAITING_HUMAN:
+                raise ValueError("react control is not allowed from current status")
+            takeover = session.execute(
+                select(ReactControlEventRow)
+                .where(
+                    ReactControlEventRow.loop_id == str(loop_id),
+                    ReactControlEventRow.tenant_id == str(tenant_id),
+                    ReactControlEventRow.action == "takeover",
+                )
+                .order_by(ReactControlEventRow.revision.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if takeover is None or takeover.revision != current.revision:
+                raise ValueError("trusted takeover event is missing or stale")
+            target = ReactLoopStatus(takeover.from_status)
+            reason_code = "operator_resume"
+        else:
+            raise ValueError("unsupported react control")
+        changed = replace(
+            current,
+            status=target,
+            revision=current.revision + 1,
+            updated_at=now,
+        )
+        result = session.execute(
+            update(ReactLoopRow)
+            .where(
+                ReactLoopRow.id == str(loop_id),
+                ReactLoopRow.tenant_id == str(tenant_id),
+                ReactLoopRow.status == current.status.value,
+                ReactLoopRow.revision == current.revision,
+            )
+            .values(status=target.value, revision=changed.revision, updated_at=now)
+        )
+        if result.rowcount != 1:
+            raise StaleReactLoop("react control revision is stale")
+        session.add(
+            ReactControlEventRow(
+                id=str(uuid4()),
+                loop_id=str(loop_id),
+                tenant_id=str(tenant_id),
+                action=action,
+                from_status=current.status.value,
+                to_status=target.value,
+                actor_subject_id=str(actor_subject_id),
+                reason_code=reason_code,
+                reason_summary=reason_summary,
+                request_id=request_id,
+                revision=changed.revision,
+                created_at=now,
+            )
+        )
         session.flush()
         return changed
 

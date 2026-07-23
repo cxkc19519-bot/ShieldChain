@@ -176,3 +176,32 @@ class ReactDecisionRow(Base):
 
 
 Index("ix_react_decision_loop_time", ReactDecisionRow.loop_id, ReactDecisionRow.decided_at)
+
+
+class ReactControlEventRow(Base):
+    __tablename__ = "react_control_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["loop_id", "tenant_id"],
+            ["react_loops.id", "react_loops.tenant_id"],
+            name="fk_react_control_loop_tenant",
+        ),
+        UniqueConstraint("tenant_id", "request_id", name="uq_react_control_request"),
+        CheckConstraint("action IN ('takeover','resume')", name="ck_react_control_action"),
+        CheckConstraint("revision > 0", name="ck_react_control_revision"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    loop_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_subject_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+Index("ix_react_control_loop_time", ReactControlEventRow.loop_id, ReactControlEventRow.created_at)
