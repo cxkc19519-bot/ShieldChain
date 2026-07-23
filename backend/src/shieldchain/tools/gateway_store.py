@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -19,6 +19,8 @@ from shieldchain.tools.domain import (
     TrustedToolCall,
     TrustedToolCallStatus,
 )
+from shieldchain.tools.execution import ExecutionLeaseGrant, ToolExecutionLease
+from shieldchain.tools.execution_store import SqlAlchemyExecutionStore
 from shieldchain.tools.registry import BoundToolRequest
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository
 
@@ -34,6 +36,7 @@ class SqlAlchemyGatewayStore:
         self._session = session
         self._repository = repository or SqlAlchemyTrustedToolRepository()
         self._approvals = SqlAlchemyApprovalStore(session, self._repository)
+        self._execution = SqlAlchemyExecutionStore(session)
 
     @contextmanager
     def atomic(self) -> Iterator[None]:
@@ -73,6 +76,47 @@ class SqlAlchemyGatewayStore:
             request_id=request_id,
             reason=reason,
         )
+
+    def acquire_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        holder_id: UUID,
+        now: datetime,
+        duration: timedelta,
+        request_id: str,
+    ) -> ExecutionLeaseGrant:
+        return self._execution.acquire_lease(
+            tenant_id=tenant_id,
+            call=call,
+            holder_id=holder_id,
+            now=now,
+            duration=duration,
+            request_id=request_id,
+        )
+
+    def release_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        grant: ExecutionLeaseGrant,
+        now: datetime,
+        reason: str,
+        request_id: str,
+    ) -> ToolExecutionLease:
+        return self._execution.release_lease(
+            tenant_id=tenant_id,
+            call=call,
+            grant=grant,
+            now=now,
+            reason=reason,
+            request_id=request_id,
+        )
+
+    def next_attempt_number(self, *, tenant_id: UUID, request_id: UUID) -> int:
+        return self._execution.next_attempt_number(tenant_id=tenant_id, request_id=request_id)
 
     def append_attempt(self, *, tenant_id: UUID, attempt: ToolExecutionAttempt) -> None:
         self._repository.append_attempt(self._session, tenant_id=tenant_id, attempt=attempt)

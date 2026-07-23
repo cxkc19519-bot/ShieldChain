@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from shieldchain.tools.domain import (
     TrustedToolRequest,
     VerificationOutcome,
 )
+from shieldchain.tools.execution import ExecutionLeaseGrant, ToolExecutionLease
 from shieldchain.tools.gateway import AdapterExecution, TrustedToolGateway
 from shieldchain.tools.policy import ToolExecutionMode, ToolPolicyContext
 from shieldchain.tools.registry import BoundToolRequest, default_tool_registry
@@ -88,6 +90,7 @@ class Store:
         self.attempts = []
         self.verifications = []
         self.atomic_sections = 0
+        self.released_leases = []
 
     @contextmanager
     def atomic(self):
@@ -107,6 +110,37 @@ class Store:
         self.call = current.transition(target, now=now, reason=reason)
         return self.call
 
+    def acquire_lease(self, *, tenant_id, call, holder_id, now, duration, request_id):
+        token = "l" * 43
+        lease = ToolExecutionLease(
+            uuid4(),
+            call.request.id,
+            holder_id,
+            len(self.attempts) + 1,
+            hashlib.sha256(token.encode("ascii")).hexdigest(),
+            now,
+            now + duration,
+        )
+        return ExecutionLeaseGrant(lease, token)
+
+    def release_lease(self, *, tenant_id, call, grant, now, reason, request_id):
+        released = ToolExecutionLease(
+            grant.lease.id,
+            grant.lease.request_id,
+            grant.lease.holder_id,
+            grant.lease.attempt_number,
+            grant.lease.token_digest,
+            grant.lease.acquired_at,
+            grant.lease.expires_at,
+            now,
+            reason,
+        )
+        self.released_leases.append(released)
+        return released
+
+    def next_attempt_number(self, *, tenant_id, request_id):
+        return len(self.attempts) + 1
+
     def append_attempt(self, *, tenant_id, attempt):
         self.attempts.append(attempt)
 
@@ -123,7 +157,7 @@ class Store:
 class Adapter:
     def __init__(
         self,
-        execution: AdapterExecution | Exception | object | None = None,
+        execution: AdapterExecution | Exception | object | list[object] | None = None,
         verification: VerificationOutcome | Exception = VerificationOutcome.VERIFIED,
     ) -> None:
         self.execution = execution or AdapterExecution(ExecutionOutcome.SUCCEEDED, "Rule applied.")
@@ -133,9 +167,10 @@ class Adapter:
 
     def execute(self, request):
         self.executed.append(request)
-        if isinstance(self.execution, Exception):
-            raise self.execution
-        return self.execution
+        result = self.execution.pop(0) if isinstance(self.execution, list) else self.execution
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def verify(self, request, execution, *, now):
         self.verified += 1
@@ -296,3 +331,38 @@ def test_invalid_or_expired_approval_cannot_resume_execution() -> None:
             request_id="req-invalid-approval",
         )
     assert adapter.executed == []
+
+
+def test_read_only_failure_retries_only_to_registered_limit() -> None:
+    transient = Adapter(
+        [
+            AdapterExecution(ExecutionOutcome.FAILED, "Temporary failure", "temporary"),
+            AdapterExecution(ExecutionOutcome.SUCCEEDED, "Query completed"),
+        ]
+    )
+    store = Store()
+    result = submit(store, transient, tool="query_firewall_state")
+    assert result.call.status is TrustedToolCallStatus.SUCCEEDED
+    assert len(store.attempts) == len(transient.executed) == 2
+    assert [item.attempt_number for item in store.attempts] == [1, 2]
+    assert len(store.released_leases) == 1
+
+    exhausted_store, exhausted = Store(), Adapter(RuntimeError("offline"))
+    failed = submit(exhausted_store, exhausted, tool="query_firewall_state")
+    assert failed.call.status is TrustedToolCallStatus.FAILED
+    assert len(exhausted_store.attempts) == len(exhausted.executed) == 3
+
+
+def test_timeout_is_unknown_and_is_never_retried_even_for_read_only_tool() -> None:
+    store, adapter = Store(), Adapter(TimeoutError("unknown outcome"))
+    result = submit(store, adapter, tool="query_firewall_state")
+    assert result.call.status is TrustedToolCallStatus.NEEDS_REVIEW
+    assert len(adapter.executed) == len(store.attempts) == 1
+    assert store.released_leases[0].release_reason == "outcome_unknown"
+
+
+def test_state_changing_failure_is_never_blindly_retried() -> None:
+    store, adapter = Store(), Adapter(RuntimeError("device unavailable"))
+    result = submit(store, adapter, tool="block_ip")
+    assert result.call.status is TrustedToolCallStatus.FAILED
+    assert len(adapter.executed) == len(store.attempts) == 1

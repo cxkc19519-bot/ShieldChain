@@ -252,7 +252,7 @@ class SqlAlchemyTrustedToolRepository:
     def append_attempt(
         self, session: Session, *, tenant_id: UUID, attempt: ToolExecutionAttempt
     ) -> None:
-        self._require_call(session, tenant_id, attempt.request_id)
+        call = self._require_call(session, tenant_id, attempt.request_id)
         session.add(
             ToolExecutionAttemptRow(
                 id=str(attempt.id),
@@ -265,6 +265,23 @@ class SqlAlchemyTrustedToolRepository:
                 started_at=attempt.started_at,
                 completed_at=attempt.completed_at,
             )
+        )
+        append_incident_audit(
+            session,
+            incident_id=UUID(call.case_id),
+            run_id=UUID(call.run_id),
+            event_type=(
+                "trusted_tool_execution_retried"
+                if attempt.attempt_number > 1
+                else "trusted_tool_execution_attempted"
+            ),
+            request_id=f"tool-attempt:{attempt.id}",
+            occurred_at=attempt.completed_at,
+            payload={
+                "tool_call_id": str(attempt.request_id),
+                "attempt_number": attempt.attempt_number,
+                "outcome": attempt.outcome.value,
+            },
         )
 
     def append_verification(
@@ -285,15 +302,16 @@ class SqlAlchemyTrustedToolRepository:
         )
 
     @staticmethod
-    def _require_call(session: Session, tenant_id: UUID, call_id: UUID) -> None:
+    def _require_call(session: Session, tenant_id: UUID, call_id: UUID) -> TrustedToolCallRow:
         found = session.execute(
-            select(TrustedToolCallRow.id).where(
+            select(TrustedToolCallRow).where(
                 TrustedToolCallRow.id == str(call_id),
                 TrustedToolCallRow.tenant_id == str(tenant_id),
             )
         ).scalar_one_or_none()
         if found is None:
             raise TrustedToolCallNotFound("trusted tool call not found in tenant")
+        return found
 
     @staticmethod
     def _validate_evidence(session: Session, request: TrustedToolRequest) -> None:

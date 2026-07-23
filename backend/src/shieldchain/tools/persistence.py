@@ -132,6 +132,41 @@ class ToolExecutionAttemptRow(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ToolExecutionLeaseRow(Base):
+    __tablename__ = "tool_execution_leases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tool_call_id", "tenant_id"],
+            ["trusted_tool_calls.id", "trusted_tool_calls.tenant_id"],
+            name="fk_tool_execution_lease_call_tenant",
+        ),
+        UniqueConstraint("tool_call_id", "attempt_number", name="uq_tool_execution_lease_attempt"),
+        CheckConstraint("attempt_number BETWEEN 1 AND 4", name="ck_tool_execution_lease_attempt"),
+        CheckConstraint(
+            "(released_at IS NULL AND release_reason IS NULL) OR "
+            "(released_at IS NOT NULL AND release_reason IS NOT NULL)",
+            name="ck_tool_execution_lease_release",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tool_call_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    holder_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    release_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+Index(
+    "ix_tool_execution_lease_tenant_expiry",
+    ToolExecutionLeaseRow.tenant_id,
+    ToolExecutionLeaseRow.expires_at,
+)
+
+
 class ToolVerificationRow(Base):
     __tablename__ = "tool_verifications"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

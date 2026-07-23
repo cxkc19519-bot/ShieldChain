@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ from shieldchain.tools.domain import (
     TrustedToolCallStatus,
     VerificationOutcome,
 )
+from shieldchain.tools.execution import ExecutionLeaseGrant, ToolExecutionLease
 from shieldchain.tools.policy import DeterministicToolPolicy, ToolPolicyContext
 from shieldchain.tools.registry import BoundToolRequest
 
@@ -63,6 +64,30 @@ class GatewayStore(Protocol):
         request_id: str,
         reason: PolicyReason | None = None,
     ) -> TrustedToolCall: ...
+
+    def acquire_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        holder_id: UUID,
+        now: datetime,
+        duration: timedelta,
+        request_id: str,
+    ) -> ExecutionLeaseGrant: ...
+
+    def release_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        grant: ExecutionLeaseGrant,
+        now: datetime,
+        reason: str,
+        request_id: str,
+    ) -> ToolExecutionLease: ...
+
+    def next_attempt_number(self, *, tenant_id: UUID, request_id: UUID) -> int: ...
 
     def append_attempt(self, *, tenant_id: UUID, attempt: ToolExecutionAttempt) -> None: ...
 
@@ -232,6 +257,14 @@ class TrustedToolGateway:
         request_id: str,
     ) -> GatewayResult:
         with store.atomic():
+            lease = store.acquire_lease(
+                tenant_id=context.tenant_id,
+                call=call,
+                holder_id=context.principal_id,
+                now=context.now,
+                duration=timedelta(seconds=bound.registration.definition.timeout_seconds + 5),
+                request_id=request_id,
+            )
             call = store.transition(
                 tenant_id=context.tenant_id,
                 current=call,
@@ -239,61 +272,67 @@ class TrustedToolGateway:
                 now=context.now,
                 request_id=request_id,
             )
-        try:
-            raw_execution = adapter.execute(bound)
-            if not isinstance(raw_execution, AdapterExecution):
-                raise TypeError("adapter returned an invalid execution result")
-            execution = _sanitize_execution(raw_execution)
-        except TimeoutError:
-            execution = AdapterExecution(
-                ExecutionOutcome.UNKNOWN,
-                "Adapter timed out; execution outcome is unknown.",
-                "timeout",
+        while True:
+            execution = _invoke_adapter(adapter, bound)
+            attempt = ToolExecutionAttempt(
+                uuid4(),
+                call.request.id,
+                store.next_attempt_number(tenant_id=context.tenant_id, request_id=call.request.id),
+                execution.outcome,
+                execution.result_summary,
+                execution.error_category,
+                context.now,
+                context.now,
             )
-        except Exception:
-            execution = AdapterExecution(
-                ExecutionOutcome.FAILED,
-                "Adapter failed without a trusted result.",
-                "adapter_failure",
+            definition = bound.registration.definition
+            retry = (
+                execution.outcome is ExecutionOutcome.FAILED
+                and not definition.mutates_state
+                and attempt.attempt_number <= definition.max_retries
             )
-        attempt = ToolExecutionAttempt(
-            uuid4(),
-            call.request.id,
-            1,
-            execution.outcome,
-            execution.result_summary,
-            execution.error_category,
-            context.now,
-            context.now,
-        )
-        with store.atomic():
-            store.append_attempt(tenant_id=context.tenant_id, attempt=attempt)
-            if execution.outcome is ExecutionOutcome.UNKNOWN:
-                call = store.transition(
-                    tenant_id=context.tenant_id,
-                    current=call,
-                    target=TrustedToolCallStatus.NEEDS_REVIEW,
-                    now=context.now,
-                    request_id=request_id,
-                    reason=PolicyReason.EXECUTION_OUTCOME_UNKNOWN,
-                )
-            elif execution.outcome is ExecutionOutcome.FAILED:
-                call = store.transition(
-                    tenant_id=context.tenant_id,
-                    current=call,
-                    target=TrustedToolCallStatus.FAILED,
-                    now=context.now,
-                    request_id=request_id,
-                    reason=PolicyReason.EXECUTION_FAILED,
-                )
-            else:
-                call = store.transition(
-                    tenant_id=context.tenant_id,
-                    current=call,
-                    target=TrustedToolCallStatus.VERIFYING,
-                    now=context.now,
-                    request_id=request_id,
-                )
+            with store.atomic():
+                store.append_attempt(tenant_id=context.tenant_id, attempt=attempt)
+                if not retry:
+                    store.release_lease(
+                        tenant_id=context.tenant_id,
+                        call=call,
+                        grant=lease,
+                        now=context.now,
+                        reason={
+                            ExecutionOutcome.UNKNOWN: "outcome_unknown",
+                            ExecutionOutcome.FAILED: "execution_failed",
+                            ExecutionOutcome.SUCCEEDED: "adapter_succeeded",
+                        }[execution.outcome],
+                        request_id=request_id,
+                    )
+                    if execution.outcome is ExecutionOutcome.UNKNOWN:
+                        call = store.transition(
+                            tenant_id=context.tenant_id,
+                            current=call,
+                            target=TrustedToolCallStatus.NEEDS_REVIEW,
+                            now=context.now,
+                            request_id=request_id,
+                            reason=PolicyReason.EXECUTION_OUTCOME_UNKNOWN,
+                        )
+                    elif execution.outcome is ExecutionOutcome.FAILED:
+                        call = store.transition(
+                            tenant_id=context.tenant_id,
+                            current=call,
+                            target=TrustedToolCallStatus.FAILED,
+                            now=context.now,
+                            request_id=request_id,
+                            reason=PolicyReason.EXECUTION_FAILED,
+                        )
+                    else:
+                        call = store.transition(
+                            tenant_id=context.tenant_id,
+                            current=call,
+                            target=TrustedToolCallStatus.VERIFYING,
+                            now=context.now,
+                            request_id=request_id,
+                        )
+            if not retry:
+                break
         if execution.outcome in {ExecutionOutcome.UNKNOWN, ExecutionOutcome.FAILED}:
             return GatewayResult(call, created, policy, approval, attempt)
         verification = self._verify(bound, call, execution, context, adapter)
@@ -355,6 +394,26 @@ def _sanitize_execution(value: AdapterExecution) -> AdapterExecution:
     else:
         category = "tool_failure"
     return AdapterExecution(value.outcome, summary, category)
+
+
+def _invoke_adapter(adapter: TrustedToolAdapter, bound: BoundToolRequest) -> AdapterExecution:
+    try:
+        raw_execution = adapter.execute(bound)
+        if not isinstance(raw_execution, AdapterExecution):
+            raise TypeError("adapter returned an invalid execution result")
+        return _sanitize_execution(raw_execution)
+    except TimeoutError:
+        return AdapterExecution(
+            ExecutionOutcome.UNKNOWN,
+            "Adapter timed out; execution outcome is unknown.",
+            "timeout",
+        )
+    except Exception:
+        return AdapterExecution(
+            ExecutionOutcome.FAILED,
+            "Adapter failed without a trusted result.",
+            "adapter_failure",
+        )
 
 
 def _safe_summary(value: object) -> str:

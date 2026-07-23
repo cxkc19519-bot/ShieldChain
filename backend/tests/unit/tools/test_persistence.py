@@ -9,6 +9,7 @@ def test_trusted_tool_tables_have_tenant_foreign_keys_and_append_records() -> No
         "tool_policy_decisions",
         "tool_approvals",
         "tool_execution_attempts",
+        "tool_execution_leases",
         "tool_verifications",
     }
     assert expected <= set(Base.metadata.tables)

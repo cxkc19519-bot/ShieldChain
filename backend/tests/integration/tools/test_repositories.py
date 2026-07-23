@@ -29,10 +29,16 @@ from shieldchain.tools.domain import (
     TrustedToolRequest,
     VerificationOutcome,
 )
+from shieldchain.tools.execution_store import (
+    ExecutionLeaseConflict,
+    ExecutionLeaseNotFound,
+    SqlAlchemyExecutionStore,
+)
 from shieldchain.tools.gateway_store import SqlAlchemyGatewayStore
 from shieldchain.tools.persistence import (
     ToolApprovalRow,
     ToolExecutionAttemptRow,
+    ToolExecutionLeaseRow,
     ToolPolicyDecisionRow,
     ToolVerificationRow,
 )
@@ -307,3 +313,121 @@ def test_gateway_store_rolls_back_attempt_and_transition_together(session: Sessi
         session, tenant_id=TENANT, tool_call_id=call.request.id
     )
     assert stored and stored.status is TrustedToolCallStatus.EXECUTING
+
+
+def test_execution_lease_is_cas_bound_tenant_scoped_and_token_hashed(
+    session: Session,
+) -> None:
+    repo = SqlAlchemyTrustedToolRepository()
+    execution = SqlAlchemyExecutionStore(session)
+    call, _ = repo.create_or_get(
+        session, tenant_id=TENANT, bound=bound(), request_id="req-lease-create"
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.POLICY_CHECKED,
+        now=NOW,
+        request_id="req-lease-policy",
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.APPROVED,
+        now=NOW,
+        request_id="req-lease-approved",
+    )
+    grant = execution.acquire_lease(
+        tenant_id=TENANT,
+        call=call,
+        holder_id=uuid4(),
+        now=NOW,
+        duration=timedelta(seconds=10),
+        request_id="req-lease-acquire",
+    )
+    row = session.get(ToolExecutionLeaseRow, str(grant.lease.id))
+    assert row and row.token_digest != grant.token
+    assert grant.lease.matches(grant.token)
+    with pytest.raises(ExecutionLeaseConflict, match="already active"):
+        execution.acquire_lease(
+            tenant_id=TENANT,
+            call=call,
+            holder_id=uuid4(),
+            now=NOW,
+            duration=timedelta(seconds=10),
+            request_id="req-lease-duplicate",
+        )
+    with pytest.raises(ExecutionLeaseNotFound):
+        execution.release_lease(
+            tenant_id=OTHER,
+            call=call,
+            grant=grant,
+            now=NOW,
+            reason="completed",
+            request_id="req-lease-cross-tenant",
+        )
+    released = execution.release_lease(
+        tenant_id=TENANT,
+        call=call,
+        grant=grant,
+        now=NOW,
+        reason="completed",
+        request_id="req-lease-release",
+    )
+    assert released.active is False
+
+
+def test_usage_and_expired_lease_scan_are_server_counted(session: Session) -> None:
+    repo = SqlAlchemyTrustedToolRepository()
+    execution = SqlAlchemyExecutionStore(session)
+    call, _ = repo.create_or_get(
+        session, tenant_id=TENANT, bound=bound(), request_id="req-usage-create"
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.POLICY_CHECKED,
+        now=NOW,
+        request_id="req-usage-policy",
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.APPROVED,
+        now=NOW,
+        request_id="req-usage-approved",
+    )
+    grant = execution.acquire_lease(
+        tenant_id=TENANT,
+        call=call,
+        holder_id=uuid4(),
+        now=NOW,
+        duration=timedelta(seconds=1),
+        request_id="req-usage-lease",
+    )
+    repo.append_attempt(
+        session,
+        tenant_id=TENANT,
+        attempt=ToolExecutionAttempt(
+            uuid4(),
+            call.request.id,
+            1,
+            ExecutionOutcome.UNKNOWN,
+            "Outcome unknown",
+            "timeout",
+            NOW,
+            NOW,
+        ),
+    )
+    session.flush()
+    usage = execution.usage(tenant_id=TENANT, run_id=RUN)
+    assert (usage.call_count, usage.attempt_count) == (1, 1)
+    assert execution.usage(tenant_id=OTHER, run_id=RUN).call_count == 0
+    assert execution.expired_leases(tenant_id=TENANT, now=NOW + timedelta(seconds=2)) == (
+        grant.lease,
+    )
+    assert execution.expired_leases(tenant_id=OTHER, now=NOW + timedelta(seconds=2)) == ()
