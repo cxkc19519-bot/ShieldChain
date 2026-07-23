@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from shieldchain.db.base import Base
 
 _STATUSES = (
-    "'proposed','policy_checked','awaiting_approval','approved','executing','verifying',"
+    "'proposed','policy_checked','awaiting_approval','approved','paused','executing','verifying',"
     "'succeeded','failed','needs_review','rejected','cancelled','emergency_stopped'"
 )
 _RISKS = "'read_only','low','medium','high','critical'"
@@ -196,6 +197,46 @@ Index(
     "ix_tool_attempt_call_started",
     ToolExecutionAttemptRow.tool_call_id,
     ToolExecutionAttemptRow.started_at,
+)
+
+
+class ToolAutomationControlRow(Base):
+    __tablename__ = "tool_automation_controls"
+    tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    automation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    emergency_stop_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    actor_subject_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (CheckConstraint("revision >= 0", name="ck_tool_automation_control_revision"),)
+
+
+class ToolControlEventRow(Base):
+    __tablename__ = "tool_control_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    tool_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_subject_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    new_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tool_call_id", "tenant_id"],
+            ["trusted_tool_calls.id", "trusted_tool_calls.tenant_id"],
+            name="fk_tool_control_event_call_tenant",
+        ),
+    )
+
+
+Index(
+    "ix_tool_control_event_tenant_time",
+    ToolControlEventRow.tenant_id,
+    ToolControlEventRow.occurred_at,
 )
 Index(
     "ix_tool_verification_call_time",

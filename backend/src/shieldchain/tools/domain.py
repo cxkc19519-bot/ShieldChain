@@ -108,6 +108,7 @@ class TrustedToolCallStatus(StrEnum):
     POLICY_CHECKED = "policy_checked"
     AWAITING_APPROVAL = "awaiting_approval"
     APPROVED = "approved"
+    PAUSED = "paused"
     EXECUTING = "executing"
     VERIFYING = "verifying"
     SUCCEEDED = "succeeded"
@@ -409,6 +410,7 @@ class TrustedToolCall:
         TrustedToolCallStatus.PROPOSED: frozenset(
             {
                 TrustedToolCallStatus.POLICY_CHECKED,
+                TrustedToolCallStatus.PAUSED,
                 TrustedToolCallStatus.REJECTED,
                 TrustedToolCallStatus.CANCELLED,
                 TrustedToolCallStatus.EMERGENCY_STOPPED,
@@ -418,6 +420,7 @@ class TrustedToolCall:
             {
                 TrustedToolCallStatus.AWAITING_APPROVAL,
                 TrustedToolCallStatus.APPROVED,
+                TrustedToolCallStatus.PAUSED,
                 TrustedToolCallStatus.REJECTED,
                 TrustedToolCallStatus.CANCELLED,
                 TrustedToolCallStatus.EMERGENCY_STOPPED,
@@ -426,6 +429,7 @@ class TrustedToolCall:
         TrustedToolCallStatus.AWAITING_APPROVAL: frozenset(
             {
                 TrustedToolCallStatus.APPROVED,
+                TrustedToolCallStatus.PAUSED,
                 TrustedToolCallStatus.REJECTED,
                 TrustedToolCallStatus.CANCELLED,
                 TrustedToolCallStatus.EMERGENCY_STOPPED,
@@ -434,6 +438,17 @@ class TrustedToolCall:
         TrustedToolCallStatus.APPROVED: frozenset(
             {
                 TrustedToolCallStatus.EXECUTING,
+                TrustedToolCallStatus.PAUSED,
+                TrustedToolCallStatus.CANCELLED,
+                TrustedToolCallStatus.EMERGENCY_STOPPED,
+            }
+        ),
+        TrustedToolCallStatus.PAUSED: frozenset(
+            {
+                TrustedToolCallStatus.PROPOSED,
+                TrustedToolCallStatus.POLICY_CHECKED,
+                TrustedToolCallStatus.AWAITING_APPROVAL,
+                TrustedToolCallStatus.APPROVED,
                 TrustedToolCallStatus.CANCELLED,
                 TrustedToolCallStatus.EMERGENCY_STOPPED,
             }

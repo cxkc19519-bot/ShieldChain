@@ -15,6 +15,8 @@ from shieldchain.incidents.persistence import (
     InvestigationRunRow,
     SimulationInstanceRow,
 )
+from shieldchain.tools.control import TrustedToolControlService
+from shieldchain.tools.control_store import SqlAlchemyToolControlStore, StaleAutomationControl
 from shieldchain.tools.domain import (
     ApprovalDecision,
     ApprovalOutcome,
@@ -39,6 +41,8 @@ from shieldchain.tools.gateway import TrustedToolGateway
 from shieldchain.tools.gateway_store import SqlAlchemyGatewayStore
 from shieldchain.tools.persistence import (
     ToolApprovalRow,
+    ToolAutomationControlRow,
+    ToolControlEventRow,
     ToolExecutionAttemptRow,
     ToolExecutionLeaseRow,
     ToolPolicyDecisionRow,
@@ -431,12 +435,10 @@ def test_usage_and_expired_lease_scan_are_server_counted(session: Session) -> No
     usage = execution.usage(tenant_id=TENANT, run_id=RUN)
     assert (usage.call_count, usage.attempt_count) == (1, 1)
     assert execution.usage(tenant_id=OTHER, run_id=RUN).call_count == 0
-    assert execution.expired_leases(
-        tenant_id=TENANT, now=NOW + timedelta(seconds=2)
-    ) == (grant.lease,)
-    assert execution.expired_leases(
-        tenant_id=OTHER, now=NOW + timedelta(seconds=2)
-    ) == ()
+    assert execution.expired_leases(tenant_id=TENANT, now=NOW + timedelta(seconds=2)) == (
+        grant.lease,
+    )
+    assert execution.expired_leases(tenant_id=OTHER, now=NOW + timedelta(seconds=2)) == ()
 
 
 def test_offline_simulation_runs_through_policy_lease_and_verification(
@@ -484,3 +486,127 @@ def test_offline_simulation_runs_through_policy_lease_and_verification(
     assert session.scalar(select(func.count()).select_from(ToolExecutionAttemptRow)) == 1
     assert session.scalar(select(func.count()).select_from(ToolExecutionLeaseRow)) == 1
     assert session.scalar(select(func.count()).select_from(ToolVerificationRow)) == 1
+
+
+def test_control_store_persists_pause_resume_global_cas_and_lease_block(
+    session: Session,
+) -> None:
+    repo = SqlAlchemyTrustedToolRepository()
+    store = SqlAlchemyToolControlStore(session, repo)
+    service = TrustedToolControlService()
+    call, _ = repo.create_or_get(
+        session, tenant_id=TENANT, bound=bound(), request_id="req-control-create"
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.POLICY_CHECKED,
+        now=NOW,
+        request_id="req-control-policy",
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.APPROVED,
+        now=NOW,
+        request_id="req-control-approved",
+    )
+    with session.begin_nested():
+        paused = service.pause(
+            tenant_id=TENANT,
+            call=call,
+            actor_subject_id=UUID(int=1198),
+            reason="operator review",
+            now=NOW,
+            request_id="req-control-pause",
+            store=store,
+        )
+    with session.begin_nested():
+        resumed = service.resume(
+            tenant_id=TENANT,
+            call=paused,
+            actor_subject_id=UUID(int=1198),
+            reason="review complete",
+            now=NOW,
+            request_id="req-control-resume",
+            store=store,
+        )
+    with session.begin_nested():
+        disabled = service.set_global(
+            tenant_id=TENANT,
+            actor_subject_id=UUID(int=1198),
+            automation_enabled=False,
+            emergency_stop_active=False,
+            reason="maintenance",
+            now=NOW,
+            store=store,
+        )
+    assert resumed.status is TrustedToolCallStatus.APPROVED
+    assert session.scalar(select(func.count()).select_from(ToolControlEventRow)) == 3
+    assert session.scalar(select(func.count()).select_from(ToolAutomationControlRow)) == 1
+    with pytest.raises(ExecutionLeaseConflict, match="control blocks"):
+        SqlAlchemyExecutionStore(session).acquire_lease(
+            tenant_id=TENANT,
+            call=resumed,
+            holder_id=uuid4(),
+            now=NOW,
+            duration=timedelta(seconds=10),
+            request_id="req-control-blocked-lease",
+        )
+    stale = disabled
+    current = service.set_global(
+        tenant_id=TENANT,
+        actor_subject_id=UUID(int=1198),
+        automation_enabled=True,
+        emergency_stop_active=False,
+        reason="maintenance complete",
+        now=NOW,
+        store=store,
+    )
+    with pytest.raises(StaleAutomationControl):
+        store.set_control(current=stale, changed=current)
+
+
+def test_emergency_stop_leaves_dispatched_call_executing(session: Session) -> None:
+    repo = SqlAlchemyTrustedToolRepository()
+    call, _ = repo.create_or_get(
+        session, tenant_id=TENANT, bound=bound(), request_id="req-stop-create"
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.POLICY_CHECKED,
+        now=NOW,
+        request_id="req-stop-policy",
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.APPROVED,
+        now=NOW,
+        request_id="req-stop-approved",
+    )
+    call = repo.transition(
+        session,
+        tenant_id=TENANT,
+        current=call,
+        target=TrustedToolCallStatus.EXECUTING,
+        now=NOW,
+        request_id="req-stop-executing",
+    )
+    store = SqlAlchemyToolControlStore(session, repo)
+    TrustedToolControlService().set_global(
+        tenant_id=TENANT,
+        actor_subject_id=UUID(int=1198),
+        automation_enabled=False,
+        emergency_stop_active=True,
+        reason="emergency",
+        now=NOW,
+        store=store,
+    )
+    stored = repo.get(session, tenant_id=TENANT, tool_call_id=call.request.id)
+    assert stored and stored.status is TrustedToolCallStatus.EXECUTING

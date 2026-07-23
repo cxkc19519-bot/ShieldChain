@@ -18,6 +18,7 @@ from shieldchain.tools.execution import (
     ToolExecutionUsage,
 )
 from shieldchain.tools.persistence import (
+    ToolAutomationControlRow,
     ToolExecutionAttemptRow,
     ToolExecutionLeaseRow,
     TrustedToolCallRow,
@@ -69,6 +70,12 @@ class SqlAlchemyExecutionStore:
             raise ExecutionLeaseConflict("tool call is not approved for execution")
         if duration <= timedelta(0) or duration > timedelta(minutes=2):
             raise ValueError("lease duration must be between zero and two minutes")
+        control = self._session.get(ToolAutomationControlRow, str(tenant_id))
+        if control is not None and (
+            not control.automation_enabled or control.emergency_stop_active
+        ):
+            raise ExecutionLeaseConflict("server automation control blocks new execution leases")
+
         row = self._session.execute(
             select(TrustedToolCallRow).where(
                 TrustedToolCallRow.id == str(call.request.id),
