@@ -91,7 +91,7 @@ $audit = Invoke-RestMethod -Uri "$root/incidents/$($run.incident_id)/audit"
 
 `normal` 模式应依次收集固定证据、规则研判、模拟封禁和验证，最终达到 `closed`，连接和防火墙状态均为 `blocked`。开发环境还支持 `fail_block_once` 故障注入：它应达到 `failed`，保留活动连接且不得报告成功；该模式用于验证失败语义，不属于正常 smoke。生产环境明确拒绝 `fail_block_once`。
 
-## 6. 阶段 3/4 离线 smoke 与完整验证
+## 6. 阶段 3/4/5 离线 smoke 与完整验证
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
@@ -99,9 +99,10 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase5-smoke.ps1
 ```
 
-`test.ps1` 依次运行后端 Pytest 和前端 Vitest。阶段 2 smoke 使用真实本地后端和 Vite 验证调查闭环。阶段 3 smoke 使用临时 SQLite、临时内容目录和确定性离线云替身验证完整 RAG 链路。阶段 4 smoke 先复跑阶段 3 前置，再在独立临时 SQLite 上迁移到 head，执行离线多智能体状态机、原子输出/交接/审计和只读轨迹泄漏检查；两者均不联网、不占用 8000/5173，也不把离线替身描述为真实服务。
+`test.ps1` 依次运行后端 Pytest 和前端 Vitest。阶段 2 smoke 使用真实本地后端和 Vite 验证调查闭环。阶段 3 smoke 使用临时 SQLite、临时内容目录和确定性离线云替身验证完整 RAG 链路。阶段 4 smoke 验证离线多智能体状态机、原子输出/交接/审计和只读轨迹泄漏检查。阶段 5 smoke 再验证可信工具成功闭环、审批拒绝、同键冲突、变更超时未知、紧急停止、公开轨迹和编排恢复；全部路径不联网、不执行 Shell、不访问真实设备。
 
 `verify.ps1` 严格按以下顺序执行，并在首个失败处停止且返回原退出码：
 
@@ -110,9 +111,9 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
 3. 临时 SQLite 上 Alembic `upgrade head` → `downgrade base` → `upgrade head`；
 4. 固定双语 RAG 评测测试；
 5. PowerShell 脚本契约；
-6. 阶段 3 与阶段 4 离线 smoke。
+6. 阶段 3、阶段 4 与阶段 5 离线 smoke。
 
-验证脚本支持仓库路径包含空格。迁移数据库及阶段 3/4 smoke 数据均位于各自的系统临时目录并在退出时删除。完整 `verify.ps1` 与 smoke 会暂时移除全部四个已知实时测试开关，结束后恢复调用者环境，所以不会意外产生 DeepSeek、Embedding、Milvus 或 Reranker 云调用。
+验证脚本支持仓库路径包含空格。迁移数据库及阶段 3/4/5 smoke 数据均位于各自的系统临时目录并在退出时删除。完整 `verify.ps1` 与 smoke 会暂时移除全部四个已知实时测试开关，结束后恢复调用者环境，所以不会意外产生 DeepSeek、Embedding、Milvus 或 Reranker 云调用，也不会调用真实安全设备。
 
 阶段 2 smoke 完全不命名、读取、检查、创建、覆盖或删除仓库 `.env`。Alembic 和 FastAPI 后端都从唯一的系统临时工作目录启动，仅使用绝对仓库路径与子进程环境覆盖；Vite 继续从 `frontend` 工作目录启动。脚本会恢复调用者环境、停止仅由自己统一跟踪的 PID、删除自己的临时目录，并确认 8000/5173 不再监听。
 
@@ -153,4 +154,4 @@ Remove-Item Env:\DEEPSEEK_API_KEY
 - 就绪检查返回 503：检查 `DATABASE_URL` 指向的目录是否可写且已经迁移到 head。
 - 调查未在 30 秒内结束或返回畸形数据：smoke 会非零退出、停止自有进程、删除自有文件并检查端口；修复根因后重新运行完整命令。
 
-当前持久化只支持本机 SQLite，启动和 smoke 只面向单机开发；这不是并发生产数据库或部署方案。Docker 不是阶段 4 本地开发的前置条件。真实云适配器、阶段 5 可信工具网关、授权环境验证和 Docker Compose 部署仍是后续工作。
+当前持久化只支持本机 SQLite，启动和 smoke 只面向单机开发；这不是并发生产数据库或部署方案。Docker 不是阶段 5 本地开发的前置条件。真实云/安全设备适配器、授权环境验证和 Docker Compose 部署仍是后续工作。
