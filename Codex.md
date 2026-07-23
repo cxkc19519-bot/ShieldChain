@@ -15,6 +15,8 @@
 7. 开发阶段：`docs/plans/development-roadmap.md`
 8. 编码、安全、测试与文档标准：`docs/standards/`
 9. 本机开发说明：`docs/operations/local-development.md`
+12. 阶段 5 设计：`docs/superpowers/specs/2026-07-23-phase-5-trusted-tool-calling-design.md`
+13. 阶段 5 实施计划：`docs/superpowers/plans/2026-07-23-phase-5-trusted-tool-calling.md`
 10. 阶段 4 设计：`docs/superpowers/specs/2026-07-20-phase-4-multi-agent-context-design.md`
 11. 阶段 4 实施计划：`docs/superpowers/plans/2026-07-20-phase-4-multi-agent-context.md`
 
