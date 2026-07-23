@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -215,6 +215,41 @@ class SqlAlchemyReactRepository:
         )
         session.flush()
         return bundle.changed
+
+    def stale_running(
+        self, session: Session, *, tenant_id: UUID, now: datetime, stale_after: timedelta
+    ) -> tuple[ReactLoop, ...]:
+        if stale_after <= timedelta(0):
+            raise ValueError("stale_after must be positive")
+        rows = session.execute(
+            select(ReactLoopRow)
+            .where(
+                ReactLoopRow.tenant_id == str(tenant_id),
+                ReactLoopRow.status == ReactLoopStatus.RUNNING.value,
+                ReactLoopRow.updated_at <= now - stale_after,
+            )
+            .order_by(ReactLoopRow.updated_at, ReactLoopRow.id)
+        ).scalars()
+        return tuple(_loop(row) for row in rows)
+
+    def claim_recovery(
+        self, session: Session, *, tenant_id: UUID, current: ReactLoop, now: datetime
+    ) -> ReactLoop:
+        changed = replace(current, revision=current.revision + 1, updated_at=now)
+        result = session.execute(
+            update(ReactLoopRow)
+            .where(
+                ReactLoopRow.id == str(current.id),
+                ReactLoopRow.tenant_id == str(tenant_id),
+                ReactLoopRow.status == ReactLoopStatus.RUNNING.value,
+                ReactLoopRow.revision == current.revision,
+            )
+            .values(revision=changed.revision, updated_at=now)
+        )
+        if result.rowcount != 1:
+            raise StaleReactLoop("react recovery claim is stale")
+        session.flush()
+        return changed
 
     @staticmethod
     def _validate(bundle: ReactStepBundle) -> None:

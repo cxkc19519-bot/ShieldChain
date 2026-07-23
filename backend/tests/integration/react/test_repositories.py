@@ -165,3 +165,35 @@ def test_stale_step_rolls_back_all_append_records(session) -> None:
         repo.commit_step(session, tenant_id=TENANT, bundle=bundle(current))
     session.rollback()
     assert session.scalar(select(func.count()).select_from(ReactObservationRow)) == 1
+
+
+def test_stale_scan_is_tenant_bound_and_recovery_claim_is_cas(session) -> None:
+    from datetime import timedelta
+
+    repo = SqlAlchemyReactRepository()
+    current = repo.create(session, tenant_id=TENANT, loop=loop())
+    session.commit()
+    assert repo.stale_running(
+        session,
+        tenant_id=TENANT,
+        now=NOW + timedelta(seconds=10),
+        stale_after=timedelta(seconds=5),
+    ) == (current,)
+    assert (
+        repo.stale_running(
+            session,
+            tenant_id=OTHER,
+            now=NOW + timedelta(seconds=10),
+            stale_after=timedelta(seconds=5),
+        )
+        == ()
+    )
+    claimed = repo.claim_recovery(
+        session, tenant_id=TENANT, current=current, now=NOW + timedelta(seconds=10)
+    )
+    session.commit()
+    assert claimed.revision == 1
+    with pytest.raises(StaleReactLoop):
+        repo.claim_recovery(
+            session, tenant_id=TENANT, current=current, now=NOW + timedelta(seconds=11)
+        )
