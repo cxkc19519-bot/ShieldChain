@@ -13,6 +13,7 @@ from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
+from shieldchain.api.tools import router as tools_router
 from shieldchain.core.config import Settings, get_settings
 from shieldchain.core.errors import (
     ApiError,
@@ -32,6 +33,7 @@ from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.incidents.tools import SimulatedFirewall
 from shieldchain.incidents.workflow import InvestigationWorkflow
 from shieldchain.rag.api_service import KnowledgeApiService, UnconfiguredKnowledgeApiService
+from shieldchain.tools.api_service import TrustedToolApiService
 
 
 def create_app(
@@ -43,6 +45,7 @@ def create_app(
     investigation_runner: InvestigationRunner | None = None,
     incident_query_service: IncidentQueryService | None = None,
     knowledge_api_service: KnowledgeApiService | None = None,
+    trusted_tool_api_service: TrustedToolApiService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.environment)
@@ -87,6 +90,9 @@ def create_app(
     app.state.incident_query_service = query_service
     app.state.investigation_runner = runner
     app.state.knowledge_api_service = knowledge_api_service or UnconfiguredKnowledgeApiService()
+    app.state.trusted_tool_api_service = trusted_tool_api_service or TrustedToolApiService(
+        session_factory
+    )
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(RequestIdMiddleware)
@@ -97,4 +103,5 @@ def create_app(
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(incidents_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
+    app.include_router(tools_router, prefix="/api/v1")
     return app

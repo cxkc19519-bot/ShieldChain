@@ -91,7 +91,7 @@ describe('dashboard health', () => {
 })
 
 describe('future routes', () => {
-  it.each(['/response', '/reports'])(
+  it.each(['/reports'])(
     'marks %s as not implemented',
     (path) => {
       renderRoute(path)
@@ -101,6 +101,14 @@ describe('future routes', () => {
       expect(screen.queryByRole('button')).not.toBeInTheDocument()
     },
   )
+
+  it('renders the trusted tool control center at /response', () => {
+    renderRoute('/response')
+
+    expect(screen.getByRole('heading', { name: '处置中心', level: 2 })).toBeVisible()
+    expect(screen.getByText(/不展示原始结果/)).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
 
   it('renders the read-only agents workbench at /agents', () => {
     renderRoute('/agents')
