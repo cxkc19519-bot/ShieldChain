@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from 'react-router-dom'
 
+import { AgentsPage } from '../features/agents/AgentsPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { InvestigationPage } from '../features/investigation/InvestigationPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
@@ -13,7 +14,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'events', element: <InvestigationPage /> },
-      { path: 'agents', element: <FuturePage /> },
+      { path: 'agents', element: <AgentsPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
       { path: 'response', element: <FuturePage /> },
       { path: 'reports', element: <FuturePage /> },

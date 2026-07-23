@@ -43,7 +43,7 @@ else {
     $smokeCommand = $powerShellCommand
     $smokeArguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        (Join-Path $ProjectRoot "tests\scripts\run-phase3-smoke.ps1")
+        (Join-Path $ProjectRoot "tests\scripts\run-phase4-smoke.ps1")
     )
 }
 
@@ -88,7 +88,7 @@ foreach ($name in $liveTestFlags) {
     [Environment]::SetEnvironmentVariable($name, $null, "Process")
 }
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
-    "shieldchain-phase3-verify-" + [guid]::NewGuid()
+    "shieldchain-phase4-verify-" + [guid]::NewGuid()
 )
 $systemTemporaryRoot = [System.IO.Path]::GetFullPath(
     [System.IO.Path]::GetTempPath()
@@ -141,7 +141,7 @@ finally {
         $temporaryName = [System.IO.Path]::GetFileName($resolvedTemporaryRoot)
         if (
             $temporaryParent -eq $systemTemporaryRoot -and
-            $temporaryName -match '^shieldchain-phase3-verify-[0-9a-fA-F-]{36}$'
+            $temporaryName -match '^shieldchain-phase4-verify-[0-9a-fA-F-]{36}$'
         ) {
             Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
         }

@@ -82,7 +82,8 @@ try {
         (Join-Path $repositoryRoot "scripts\test.ps1"),
         (Join-Path $repositoryRoot "scripts\verify.ps1"),
         (Join-Path $repositoryRoot "tests\scripts\run-phase2-smoke.ps1"),
-        (Join-Path $repositoryRoot "tests\scripts\run-phase3-smoke.ps1")
+        (Join-Path $repositoryRoot "tests\scripts\run-phase3-smoke.ps1"),
+        (Join-Path $repositoryRoot "tests\scripts\run-phase4-smoke.ps1")
     )
     $devScriptText = Get-Content -Raw -LiteralPath $productionScripts[0]
     $smokeScriptText = Get-Content -Raw -LiteralPath $productionScripts[3]
@@ -213,8 +214,8 @@ if defined RUN_LIVE_DEEPSEEK_TEST exit /b 91
 if defined RUN_LIVE_EMBEDDING_TEST exit /b 91
 if defined RUN_LIVE_MILVUS_TEST exit /b 91
 if defined RUN_LIVE_RERANKER_TEST exit /b 91
-echo phase3-smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
-if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="phase3-smoke" exit /b 42
+echo phase4-smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="phase4-smoke" exit /b 42
 exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $wrapperRoot "smoke.cmd") -Value $smokeWrapper
@@ -237,8 +238,8 @@ exit /b 0
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($verifyResult.ExitCode -eq 0) "verify succeeds when every command succeeds"
-    $expectedGateOrder = "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade,migration-upgrade,rag-evaluation,contract,phase3-smoke"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "verify uses the required deterministic phase 3 gate order"
+    $expectedGateOrder = "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade,migration-upgrade,rag-evaluation,contract,phase4-smoke"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "verify uses the required deterministic phase 4 gate order"
 
     Clear-Content -LiteralPath $callLog
     $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "typecheck"
@@ -264,14 +265,14 @@ exit /b 0
     ) "verify stops before later gates after migration failure"
 
     Clear-Content -LiteralPath $callLog
-    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "phase3-smoke"
+    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "phase4-smoke"
     $smokeFailureResult = Invoke-CapturedPowerShell -Arguments @(
         "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
         "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($smokeFailureResult.ExitCode -eq 42) "verify returns the smoke failure exit code"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "phase 3 smoke failure occurs only after every earlier gate"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "phase 4 smoke failure occurs only after every earlier gate"
 
     Clear-Content -LiteralPath $callLog
     $env:RUN_LIVE_EMBEDDING_TEST = "1"

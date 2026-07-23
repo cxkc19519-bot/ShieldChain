@@ -1,6 +1,6 @@
 # 盾链智御（ShieldChain）
 
-盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环，以及阶段 3 产品级 RAG 的解析、分块、混合检索、重排、引用、拒答、评测核心和知识库页面。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker 与安全设备尚未授权和接线，知识 API 默认失败关闭，不会伪造云调用成功。多智能体仍属于后续阶段。
+盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环、产品级 RAG，以及租户隔离的多智能体上下文、结构化交接、确定性编排、只读协作轨迹 API 和智能体工作台。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker 与安全设备尚未授权和接线，知识 API 默认失败关闭，响应角色只生成 proposed actions，不会伪造云调用或工具执行成功。
 
 ## 前置条件
 
@@ -26,11 +26,12 @@ Copy-Item .env.example .env
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2 smoke 启动真实本地服务验证事件闭环；阶段 3 smoke 在临时 SQLite 和内容目录中使用离线云替身验证 RAG 全链路。`verify.ps1` 还执行迁移往返、固定 RAG 评测和脚本契约。完整 `verify.ps1` 与阶段 3 smoke 会清除并恢复四类实时测试开关，不产生 DeepSeek、Embedding、Milvus 或 Reranker 云调用。
+前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2 smoke 验证事件闭环；阶段 3 smoke 验证离线 RAG；阶段 4 smoke 在临时 SQLite 上继续验证迁移、离线多智能体编排、原子提交和公开轨迹泄漏边界。`verify.ps1` 执行完整测试、构建、迁移往返、固定 RAG 评测、脚本契约和阶段 3/4 smoke，不产生云调用或费用。
 
 ## 文档导航
 

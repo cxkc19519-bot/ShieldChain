@@ -8,6 +8,8 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.engine import Engine
 from starlette.exceptions import HTTPException
 
+from shieldchain.agents.trajectory import CollaborationTrajectoryQuery
+from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
@@ -36,6 +38,7 @@ def create_app(
     *,
     database_engine: Engine | None = None,
     settings: Settings | None = None,
+    agent_trajectory_query: CollaborationTrajectoryQuery | None = None,
     incident_repository: IncidentRepository | None = None,
     investigation_runner: InvestigationRunner | None = None,
     incident_query_service: IncidentQueryService | None = None,
@@ -75,6 +78,10 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
     app.state.database_engine = engine
+    app.state.agent_trajectory_query = agent_trajectory_query or CollaborationTrajectoryQuery(
+        session_factory
+    )
+    app.include_router(agents_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
