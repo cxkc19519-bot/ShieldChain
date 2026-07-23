@@ -29,6 +29,7 @@ from shieldchain.tools.domain import (
     TrustedToolRequest,
     VerificationOutcome,
 )
+from shieldchain.tools.gateway_store import SqlAlchemyGatewayStore
 from shieldchain.tools.persistence import (
     ToolApprovalRow,
     ToolExecutionAttemptRow,
@@ -252,3 +253,57 @@ def test_policy_approval_attempt_and_verification_are_append_only(session: Sessi
         ToolVerificationRow,
     ):
         assert session.scalar(select(func.count()).select_from(row_type)) == 1
+
+
+def test_gateway_store_rolls_back_attempt_and_transition_together(session: Session) -> None:
+    store = SqlAlchemyGatewayStore(session)
+    call, _ = store.create_or_get(tenant_id=TENANT, bound=bound(), request_id="req-atomic-create")
+    with store.atomic():
+        call = store.transition(
+            tenant_id=TENANT,
+            current=call,
+            target=TrustedToolCallStatus.POLICY_CHECKED,
+            now=NOW,
+            request_id="req-atomic-policy",
+        )
+        call = store.transition(
+            tenant_id=TENANT,
+            current=call,
+            target=TrustedToolCallStatus.APPROVED,
+            now=NOW,
+            request_id="req-atomic-approved",
+        )
+    with store.atomic():
+        call = store.transition(
+            tenant_id=TENANT,
+            current=call,
+            target=TrustedToolCallStatus.EXECUTING,
+            now=NOW,
+            request_id="req-atomic-executing",
+        )
+    attempt = ToolExecutionAttempt(
+        uuid4(),
+        call.request.id,
+        1,
+        ExecutionOutcome.FAILED,
+        "Sanitized failure",
+        "tool_failure",
+        NOW,
+        NOW,
+    )
+    with pytest.raises(RuntimeError, match="force rollback"):
+        with store.atomic():
+            store.append_attempt(tenant_id=TENANT, attempt=attempt)
+            store.transition(
+                tenant_id=TENANT,
+                current=call,
+                target=TrustedToolCallStatus.FAILED,
+                now=NOW,
+                request_id="req-atomic-result",
+            )
+            raise RuntimeError("force rollback")
+    assert session.scalar(select(func.count()).select_from(ToolExecutionAttemptRow)) == 0
+    stored = SqlAlchemyTrustedToolRepository().get(
+        session, tenant_id=TENANT, tool_call_id=call.request.id
+    )
+    assert stored and stored.status is TrustedToolCallStatus.EXECUTING
