@@ -24,6 +24,7 @@ from shieldchain.tools.domain import (
     PolicyReason,
     ToolExecutionAttempt,
     ToolRisk,
+    ToolTargetType,
     ToolVerification,
     TrustedToolCallStatus,
     TrustedToolRequest,
@@ -34,6 +35,7 @@ from shieldchain.tools.execution_store import (
     ExecutionLeaseNotFound,
     SqlAlchemyExecutionStore,
 )
+from shieldchain.tools.gateway import TrustedToolGateway
 from shieldchain.tools.gateway_store import SqlAlchemyGatewayStore
 from shieldchain.tools.persistence import (
     ToolApprovalRow,
@@ -42,6 +44,7 @@ from shieldchain.tools.persistence import (
     ToolPolicyDecisionRow,
     ToolVerificationRow,
 )
+from shieldchain.tools.policy import ToolExecutionMode, ToolPolicyContext
 from shieldchain.tools.registry import default_tool_registry
 from shieldchain.tools.repositories import (
     SqlAlchemyTrustedToolRepository,
@@ -49,6 +52,7 @@ from shieldchain.tools.repositories import (
     TrustedToolCallNotFound,
     TrustedToolIdempotencyConflict,
 )
+from shieldchain.tools.simulation import OfflineSimulationAdapter
 
 NOW = datetime(2026, 7, 23, 7, tzinfo=UTC)
 TENANT = UUID("00000000-0000-4000-8000-000000000001")
@@ -427,7 +431,56 @@ def test_usage_and_expired_lease_scan_are_server_counted(session: Session) -> No
     usage = execution.usage(tenant_id=TENANT, run_id=RUN)
     assert (usage.call_count, usage.attempt_count) == (1, 1)
     assert execution.usage(tenant_id=OTHER, run_id=RUN).call_count == 0
-    assert execution.expired_leases(tenant_id=TENANT, now=NOW + timedelta(seconds=2)) == (
-        grant.lease,
+    assert execution.expired_leases(
+        tenant_id=TENANT, now=NOW + timedelta(seconds=2)
+    ) == (grant.lease,)
+    assert execution.expired_leases(
+        tenant_id=OTHER, now=NOW + timedelta(seconds=2)
+    ) == ()
+
+
+def test_offline_simulation_runs_through_policy_lease_and_verification(
+    session: Session,
+) -> None:
+    registry = default_tool_registry()
+    request = bound()
+    context = ToolPolicyContext(
+        tenant_id=TENANT,
+        principal_id=UUID(int=1199),
+        case_id=CASE,
+        run_id=RUN,
+        role=AgentRole.RESPONSE_PLANNING,
+        mode=ToolExecutionMode.SIMULATION,
+        automation_enabled=True,
+        emergency_stop_active=False,
+        allowed_tools=frozenset(item.definition.identity for item in registry.registrations),
+        allowed_targets={ToolTargetType.IPV4: frozenset({"203.0.113.8"})},
+        confirmed_evidence_ids=frozenset({EVIDENCE}),
+        tool_calls_used=0,
+        tool_call_limit=5,
+        calls_in_window=0,
+        rate_limit=3,
+        simulation_auto_approve_critical=False,
+        now=NOW,
     )
-    assert execution.expired_leases(tenant_id=OTHER, now=NOW + timedelta(seconds=2)) == ()
+    adapter = OfflineSimulationAdapter(
+        initialized_at=NOW,
+        firewall_targets=frozenset({"203.0.113.8"}),
+        endpoint_targets=frozenset({"endpoint-42"}),
+        account_targets=frozenset({"user-42"}),
+    )
+    result = TrustedToolGateway().submit(
+        bound=request,
+        context=context,
+        store=SqlAlchemyGatewayStore(session),
+        adapter=adapter,
+        request_id="req-offline-simulation-gateway",
+    )
+    session.flush()
+    assert result.call.status is TrustedToolCallStatus.SUCCEEDED
+    assert result.attempt and result.attempt.outcome is ExecutionOutcome.SUCCEEDED
+    assert result.verification
+    assert result.verification.outcome is VerificationOutcome.VERIFIED
+    assert session.scalar(select(func.count()).select_from(ToolExecutionAttemptRow)) == 1
+    assert session.scalar(select(func.count()).select_from(ToolExecutionLeaseRow)) == 1
+    assert session.scalar(select(func.count()).select_from(ToolVerificationRow)) == 1
