@@ -23,17 +23,18 @@ Copy-Item .env.example .env
 ## 启动与验证
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
-powershell -ExecutionPolicy Bypass -File scripts\test.ps1
-powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase6-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase5-smoke.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase6-smoke.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase7-smoke.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2–5 smoke 依次验证事件闭环、离线 RAG、多智能体编排和可信工具；阶段 6 再验证结构化失败分类、确定性重规划、预算/循环停止、未知结果只查询和人工接管。`verify.ps1` 执行完整测试、构建、迁移往返、固定 RAG 评测、脚本契约和阶段 6 smoke，不联网、不访问真实设备、不产生费用。
+前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2–5 smoke 依次验证事件闭环、离线 RAG、多智能体编排和可信工具；阶段 6 验证受预算约束的 ReAct 闭环；阶段 7 验证运营总览、事件调查、智能体、知识库、处置、报告与审计六个工作区的离线跨页合同。`verify.ps1` 执行完整后端与前端门禁、迁移往返、固定 RAG 评测、53 项脚本契约和阶段 2–7 smoke，不联网、不访问真实设备、不产生费用。
 
 ## 文档导航
 

@@ -15,7 +15,14 @@ def test_fresh_checkout_default_sqlite_database_becomes_ready(
     placeholder = repository_root / "data" / ".gitkeep"
 
     tracked = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "data/.gitkeep"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={repository_root.as_posix()}",
+            "ls-files",
+            "--error-unmatch",
+            "data/.gitkeep",
+        ],
         cwd=repository_root,
         capture_output=True,
         text=True,

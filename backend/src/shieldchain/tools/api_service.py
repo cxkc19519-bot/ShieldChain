@@ -234,7 +234,7 @@ class TrustedToolApiService:
             reason=call.reason.value if call.reason else None,
             target=target,
             policy_outcome=policy.outcome if policy else None,
-            risk=policy.assessed_risk.value if policy else None,
+            risk=policy.assessed_risk if policy else None,
             approval_outcome=approval.outcome if approval else None,
             attempt_outcomes=[item.outcome for item in attempts],
             verification_outcome=verification.outcome if verification else None,
