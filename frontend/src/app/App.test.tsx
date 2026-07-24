@@ -33,6 +33,9 @@ describe('application shell', () => {
       expect(screen.getByRole('link', { name })).toBeVisible()
     }
 
+    expect(screen.getByText('离线仿真环境')).toBeVisible()
+    expect(screen.getByText(/所有变更动作均经策略/)).toBeVisible()
+    expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('aria-current', 'page')
     expect(await screen.findByText('系统运行正常')).toBeVisible()
   })
 
@@ -41,6 +44,8 @@ describe('application shell', () => {
     const user = userEvent.setup()
     renderRoute()
 
+    await user.tab()
+    expect(screen.getByRole('link', { name: '跳到主要内容' })).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('link', { name: '运营总览' })).toHaveFocus()
     await user.tab()
