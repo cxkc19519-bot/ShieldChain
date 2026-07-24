@@ -1,3 +1,11 @@
+from .act import (
+    ActEnvelope,
+    ActPlaintext,
+    ActUseResult,
+    EstablishActCommand,
+    UseActCommand,
+    constant_time_bytes_equal,
+)
 from .agents import (
     AgentId,
     AgentRegistered,
@@ -16,11 +24,19 @@ from .contact import (
 )
 from .encoding import EncodingError, EndpointValue, b64url_decode, b64url_encode, require_unix_ms
 from .errors import (
+    ActBindingFailed,
+    ActError,
+    ActEstablishmentFailed,
+    ActExpired,
+    ActFutureIssued,
+    ActPersistenceError,
+    ActQuotaExhausted,
     AgentEndpointExists,
     AgentIdentifierExists,
     AgentInactive,
     AgentOwnerAuthenticationFailed,
     AgentRegistrationVerificationFailed,
+    ConcurrentActConflict,
     ConcurrentContactConflict,
     ContactBundleVerificationFailed,
     ContactError,
@@ -28,6 +44,7 @@ from .errors import (
     ContactPolicyDenied,
     ContactPolicyNoMatch,
     IdentityVerificationRejected,
+    InvalidActInput,
     InvalidContactInput,
     InvalidContactPolicy,
     InvalidRegistrationInput,
@@ -35,14 +52,26 @@ from .errors import (
     PublicOtkPoolExhausted,
     RegistrationError,
     RegistrationPersistenceError,
+    SotkAlreadyConsumed,
     UserRegistrationExists,
 )
 from .events import RegistrationEvent
 from .otk import AvailablePublicOtk, PairCounter, PublicOtkId
 from .policies import ContactPolicy, PolicyMatch, PolicyRule
+from .token_state import SotkMapping, TokenRecord
 from .users import RegisterUserCommand, UserId, UserRegistered, UserRegistration
 
 __all__ = (
+    "ActBindingFailed",
+    "ActEnvelope",
+    "ActError",
+    "ActEstablishmentFailed",
+    "ActExpired",
+    "ActFutureIssued",
+    "ActPersistenceError",
+    "ActPlaintext",
+    "ActQuotaExhausted",
+    "ActUseResult",
     "AgentEndpointExists",
     "AgentId",
     "AgentIdentifierExists",
@@ -53,6 +82,7 @@ __all__ = (
     "AgentRegistrationVerificationFailed",
     "AppendPublicOtksCommand",
     "AvailablePublicOtk",
+    "ConcurrentActConflict",
     "ConcurrentContactConflict",
     "ContactBundle",
     "ContactBundleVerificationFailed",
@@ -66,7 +96,9 @@ __all__ = (
     "DeactivateAgentCommand",
     "EncodingError",
     "EndpointValue",
+    "EstablishActCommand",
     "IdentityVerificationRejected",
+    "InvalidActInput",
     "InvalidContactInput",
     "InvalidContactPolicy",
     "InvalidRegistrationInput",
@@ -83,12 +115,17 @@ __all__ = (
     "RegistrationEvent",
     "RegistrationPersistenceError",
     "ResolveContactCommand",
+    "SotkAlreadyConsumed",
+    "SotkMapping",
+    "TokenRecord",
     "UpdateContactPolicyCommand",
+    "UseActCommand",
     "UserId",
     "UserRegistered",
     "UserRegistration",
     "UserRegistrationExists",
     "b64url_decode",
     "b64url_encode",
+    "constant_time_bytes_equal",
     "require_unix_ms",
 )

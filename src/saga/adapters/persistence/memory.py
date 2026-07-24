@@ -4,10 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import RLock
+from typing import TYPE_CHECKING
 
-from saga.domain.agents import AgentId, AgentRegistration
+if TYPE_CHECKING:
+    from saga.domain.agents import AgentId, AgentRegistration
+    from saga.domain.otk import PublicOtkId
+    from saga.domain.token_state import SotkMapping, TokenRecord
+    from saga.domain.users import UserId, UserRegistration
+    from saga.ports.registration import AgentCreateOutcome, UserCreateOutcome
+    from saga.ports.token_state import SotkClaimOutcome, TokenCreateOutcome, TokenUseOutcome
+
 from saga.domain.contact import ContactCommit, ContactSnapshot
-from saga.domain.errors import ContactPersistenceError, RegistrationPersistenceError
+from saga.domain.errors import (
+    ActPersistenceError,
+    ContactPersistenceError,
+    RegistrationPersistenceError,
+)
 from saga.domain.otk import AvailablePublicOtk, PairCounter, PublicOtkId
 from saga.domain.users import UserId, UserRegistration
 from saga.ports.contact_state import (
@@ -273,4 +285,213 @@ class InMemoryAgentRegistry:
             raise ContactPersistenceError() from None
 
 
-__all__ = ("InMemoryAgentRegistry", "InMemoryUserRegistry")
+class InMemorySotkStore:
+    """Thread-safe in-memory SOTK store with atomic claim-and-delete."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._mappings: dict[PublicOtkId, bytes] = {}
+        self._consumed: set[PublicOtkId] = set()
+
+    def store(self, mapping: SotkMapping) -> None:
+        from saga.domain.token_state import SotkMapping as _SotkMapping
+
+        if type(mapping) is not _SotkMapping:
+            raise ActPersistenceError()
+        try:
+            with self._lock:
+                self._mappings[mapping.otk_id] = mapping.secret_key
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def claim_and_return(
+        self, otk_id: PublicOtkId
+    ) -> tuple[SotkClaimOutcome, bytes | None]:
+        from saga.ports.token_state import SotkClaimOutcome
+
+        if type(otk_id) is not PublicOtkId:
+            raise ActPersistenceError()
+        try:
+            with self._lock:
+                if otk_id in self._consumed:
+                    return (SotkClaimOutcome.ALREADY_CONSUMED, None)
+                secret = self._mappings.pop(otk_id, None)
+                if secret is None:
+                    return (SotkClaimOutcome.NOT_FOUND, None)
+                self._consumed.add(otk_id)
+                return (SotkClaimOutcome.CLAIMED, secret)
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def claim_and_delete(self, otk_id: PublicOtkId) -> SotkClaimOutcome:
+        outcome, _ = self.claim_and_return(otk_id)
+        return outcome
+
+    def get_secret_key(self, otk_id: PublicOtkId) -> bytes | None:
+        if type(otk_id) is not PublicOtkId:
+            raise ActPersistenceError()
+        try:
+            with self._lock:
+                return self._mappings.get(otk_id)
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+
+class InMemoryTokenStateStore:
+    """Thread-safe in-memory token state store with CAS semantics."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._records: dict[tuple[AgentId, bytes], _TokenEntry] = {}
+
+    def create(self, record: TokenRecord) -> TokenCreateOutcome:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+        from saga.ports.token_state import TokenCreateOutcome
+
+        if type(record) is not _TokenRecord:
+            raise ActPersistenceError()
+        try:
+            with self._lock:
+                key = (record.receiving_agent_id, record.token_nonce)
+                if key in self._records:
+                    return TokenCreateOutcome.DUPLICATE
+                self._records[key] = _TokenEntry(
+                    token_nonce=record.token_nonce,
+                    receiving_agent_id=record.receiving_agent_id,
+                    initiating_agent_access_control_public_key=(
+                        record.initiating_agent_access_control_public_key
+                    ),
+                    sdhk=record.sdhk,
+                    issued_at=record.issued_at,
+                    expires_at=record.expires_at,
+                    q_max=record.q_max,
+                    use_count=record.use_count,
+                    revision=record.revision,
+                )
+                return TokenCreateOutcome.CREATED
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def get(
+        self, *, receiving_agent_id: AgentId, token_nonce: bytes
+    ) -> TokenRecord | None:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+
+        try:
+            with self._lock:
+                entry = self._records.get((receiving_agent_id, token_nonce))
+                if entry is None:
+                    return None
+                return _TokenRecord(
+                    token_nonce=entry.token_nonce,
+                    receiving_agent_id=entry.receiving_agent_id,
+                    initiating_agent_access_control_public_key=(
+                        entry.initiating_agent_access_control_public_key
+                    ),
+                    sdhk=entry.sdhk,
+                    issued_at=entry.issued_at,
+                    expires_at=entry.expires_at,
+                    q_max=entry.q_max,
+                    use_count=entry.use_count,
+                    revision=entry.revision,
+                )
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def try_increment_use(
+        self,
+        *,
+        receiving_agent_id: AgentId,
+        token_nonce: bytes,
+        expected_revision: int,
+    ) -> TokenUseOutcome:
+        from saga.ports.token_state import TokenUseOutcome
+
+        try:
+            with self._lock:
+                key = (receiving_agent_id, token_nonce)
+                entry = self._records.get(key)
+                if entry is None:
+                    return TokenUseOutcome.NOT_FOUND
+                if entry.revision != expected_revision:
+                    return TokenUseOutcome.CONFLICT
+                if entry.use_count >= entry.q_max:
+                    return TokenUseOutcome.CONFLICT
+                entry.use_count += 1
+                entry.revision += 1
+                return TokenUseOutcome.INCREMENTED
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def discard(
+        self, *, receiving_agent_id: AgentId, token_nonce: bytes
+    ) -> bool:
+        try:
+            with self._lock:
+                key = (receiving_agent_id, token_nonce)
+                if key in self._records:
+                    del self._records[key]
+                    return True
+                return False
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+    def find_by_initiator(
+        self,
+        *,
+        receiving_agent_id: AgentId,
+        initiating_agent_access_control_public_key: bytes,
+    ) -> tuple[TokenRecord, ...]:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+
+        try:
+            with self._lock:
+                results = []
+                for (agent_id, _nonce), entry in self._records.items():
+                    if (
+                        agent_id == receiving_agent_id
+                        and entry.initiating_agent_access_control_public_key
+                        == initiating_agent_access_control_public_key
+                    ):
+                        results.append(
+                            _TokenRecord(
+                                token_nonce=entry.token_nonce,
+                                receiving_agent_id=entry.receiving_agent_id,
+                                initiating_agent_access_control_public_key=(
+                                    entry.initiating_agent_access_control_public_key
+                                ),
+                                sdhk=entry.sdhk,
+                                issued_at=entry.issued_at,
+                                expires_at=entry.expires_at,
+                                q_max=entry.q_max,
+                                use_count=entry.use_count,
+                                revision=entry.revision,
+                            )
+                        )
+                return tuple(results)
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise ActPersistenceError() from None
+
+
+@dataclass(slots=True)
+class _TokenEntry:
+    """Mutable internal token entry for in-memory CAS."""
+
+    token_nonce: bytes
+    receiving_agent_id: AgentId
+    initiating_agent_access_control_public_key: bytes
+    sdhk: bytes
+    issued_at: int
+    expires_at: int
+    q_max: int
+    use_count: int
+    revision: int
+
+
+__all__ = (
+    "InMemoryAgentRegistry",
+    "InMemorySotkStore",
+    "InMemoryTokenStateStore",
+    "InMemoryUserRegistry",
+)
+

@@ -6,13 +6,26 @@ import sqlite3
 from collections.abc import Callable
 from os import fspath
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from saga.domain.agents import AgentId
+    from saga.domain.otk import PublicOtkId
+    from saga.domain.registration import UserRegistration
+    from saga.domain.token_state import SotkMapping, TokenRecord
+    from saga.domain.users import UserId
+    from saga.ports.registration import UserCreateOutcome
+    from saga.ports.token_state import SotkClaimOutcome, TokenCreateOutcome, TokenUseOutcome
 
 from saga.crypto import certificates
 from saga.domain.agents import AgentId, AgentRegistration, RegisteredPublicOtk
 from saga.domain.contact import ContactCommit, ContactSnapshot
 from saga.domain.encoding import EndpointValue
-from saga.domain.errors import ContactPersistenceError, RegistrationPersistenceError
+from saga.domain.errors import (
+    ActPersistenceError,
+    ContactPersistenceError,
+    RegistrationPersistenceError,
+)
 from saga.domain.otk import AvailablePublicOtk, PairCounter, PublicOtkId
 from saga.domain.users import StoredPasswordRecord, UserId, UserRegistration
 from saga.ports.contact_state import (
@@ -90,6 +103,37 @@ _CONTACT_STATE_SCHEMA_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS idx_registered_public_otks_available
     ON registered_public_otks(agent_id, issued, ordinal)
+    """,
+)
+
+_TOKEN_STATE_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS saga_token_state_schema (
+        schema_version INTEGER PRIMARY KEY CHECK (schema_version = 1)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sotk_mappings (
+        receiving_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL,
+        secret_key BLOB NOT NULL,
+        consumed INTEGER NOT NULL CHECK (consumed IN (0, 1)),
+        PRIMARY KEY(receiving_agent_id, ordinal)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS token_records (
+        receiving_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+        token_nonce BLOB NOT NULL,
+        initiating_agent_access_control_public_key BLOB NOT NULL,
+        sdhk BLOB NOT NULL,
+        issued_at INTEGER NOT NULL CHECK (issued_at >= 0),
+        expires_at INTEGER NOT NULL CHECK (expires_at >= 0),
+        q_max INTEGER NOT NULL CHECK (q_max > 0),
+        use_count INTEGER NOT NULL CHECK (use_count >= 0),
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        PRIMARY KEY(receiving_agent_id, token_nonce)
+    )
     """,
 )
 
@@ -885,4 +929,389 @@ class SQLiteAgentRegistry:
         )
 
 
-__all__ = ("SQLiteAgentRegistry", "SQLiteUserRegistry")
+class SQLiteSotkStore:
+    """A restart-safe SQLite SotkStore with atomic claim-and-delete semantics."""
+
+    def __init__(self, database: str | Path) -> None:
+        try:
+            if type(database) is not str and not isinstance(database, Path):
+                raise ValueError("database path invalid")
+            self._database = fspath(database)
+            if not self._database or self._database == ":memory:":
+                raise ValueError("database path invalid")
+            self._initialize_schema()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            raise ActPersistenceError() from None
+
+    def _initialize_schema(self) -> None:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in _TOKEN_STATE_SCHEMA_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT OR IGNORE INTO saga_token_state_schema (schema_version) VALUES (?)",
+                (_SCHEMA_VERSION,),
+            )
+            versions = connection.execute(
+                "SELECT schema_version FROM saga_token_state_schema"
+            ).fetchall()
+            if versions != [(_SCHEMA_VERSION,)]:
+                raise sqlite3.DatabaseError("schema version invalid")
+            connection.commit()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            _close(connection)
+
+    def store(self, mapping: SotkMapping) -> None:
+        from saga.domain.token_state import SotkMapping as _SotkMapping
+
+        if type(mapping) is not _SotkMapping:
+            raise ActPersistenceError()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO sotk_mappings (receiving_agent_id, ordinal, secret_key, consumed)
+                VALUES (?, ?, ?, 0)
+                """,
+                (mapping.otk_id.receiving_agent_id.value, mapping.otk_id.ordinal, mapping.secret_key),
+            )
+            connection.commit()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def claim_and_return(
+        self, otk_id: PublicOtkId
+    ) -> tuple[SotkClaimOutcome, bytes | None]:
+        from saga.ports.token_state import SotkClaimOutcome
+
+        if type(otk_id) is not PublicOtkId:
+            raise ActPersistenceError()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT secret_key, consumed FROM sotk_mappings
+                WHERE receiving_agent_id = ? AND ordinal = ?
+                """,
+                (otk_id.receiving_agent_id.value, otk_id.ordinal),
+            ).fetchone()
+
+            if row is None:
+                _rollback(connection)
+                return (SotkClaimOutcome.NOT_FOUND, None)
+
+            secret_key, consumed = row
+            if consumed == 1:
+                _rollback(connection)
+                return (SotkClaimOutcome.ALREADY_CONSUMED, None)
+
+            connection.execute(
+                """
+                UPDATE sotk_mappings SET consumed = 1, secret_key = x''
+                WHERE receiving_agent_id = ? AND ordinal = ?
+                """,
+                (otk_id.receiving_agent_id.value, otk_id.ordinal),
+            )
+            connection.commit()
+            return (SotkClaimOutcome.CLAIMED, secret_key)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def claim_and_delete(self, otk_id: PublicOtkId) -> SotkClaimOutcome:
+        outcome, _ = self.claim_and_return(otk_id)
+        return outcome
+
+    def get_secret_key(self, otk_id: PublicOtkId) -> bytes | None:
+        if type(otk_id) is not PublicOtkId:
+            raise ActPersistenceError()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            row = connection.execute(
+                """
+                SELECT secret_key FROM sotk_mappings
+                WHERE receiving_agent_id = ? AND ordinal = ? AND consumed = 0
+                """,
+                (otk_id.receiving_agent_id.value, otk_id.ordinal),
+            ).fetchone()
+            if row is None:
+                return None
+            return row[0]
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+
+class SQLiteTokenStateStore:
+    """A restart-safe SQLite TokenStateStore with CAS semantics."""
+
+    def __init__(self, database: str | Path) -> None:
+        try:
+            if type(database) is not str and not isinstance(database, Path):
+                raise ValueError("database path invalid")
+            self._database = fspath(database)
+            if not self._database or self._database == ":memory:":
+                raise ValueError("database path invalid")
+            self._initialize_schema()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            raise ActPersistenceError() from None
+
+    def _initialize_schema(self) -> None:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in _TOKEN_STATE_SCHEMA_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT OR IGNORE INTO saga_token_state_schema (schema_version) VALUES (?)",
+                (_SCHEMA_VERSION,),
+            )
+            versions = connection.execute(
+                "SELECT schema_version FROM saga_token_state_schema"
+            ).fetchall()
+            if versions != [(_SCHEMA_VERSION,)]:
+                raise sqlite3.DatabaseError("schema version invalid")
+            connection.commit()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            _close(connection)
+
+    def create(self, record: TokenRecord) -> TokenCreateOutcome:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+        from saga.ports.token_state import TokenCreateOutcome
+
+        if type(record) is not _TokenRecord:
+            raise ActPersistenceError()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT 1 FROM token_records WHERE receiving_agent_id = ? AND token_nonce = ?",
+                (record.receiving_agent_id.value, record.token_nonce),
+            ).fetchone()
+            if existing is not None:
+                _rollback(connection)
+                return TokenCreateOutcome.DUPLICATE
+
+            connection.execute(
+                """
+                INSERT INTO token_records (
+                    receiving_agent_id, token_nonce, initiating_agent_access_control_public_key,
+                    sdhk, issued_at, expires_at, q_max, use_count, revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.receiving_agent_id.value,
+                    record.token_nonce,
+                    record.initiating_agent_access_control_public_key,
+                    record.sdhk,
+                    record.issued_at,
+                    record.expires_at,
+                    record.q_max,
+                    record.use_count,
+                    record.revision,
+                ),
+            )
+            connection.commit()
+            return TokenCreateOutcome.CREATED
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception as e:
+            _rollback(connection)
+            print("SQLITE CREATE ERROR:", repr(e))
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def get(
+        self, *, receiving_agent_id: AgentId, token_nonce: bytes
+    ) -> TokenRecord | None:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            row = connection.execute(
+                """
+                SELECT initiating_agent_access_control_public_key, sdhk, issued_at,
+                       expires_at, q_max, use_count, revision
+                FROM token_records WHERE receiving_agent_id = ? AND token_nonce = ?
+                """,
+                (receiving_agent_id.value, token_nonce),
+            ).fetchone()
+            if row is None:
+                return None
+            return _TokenRecord(
+                token_nonce=token_nonce,
+                receiving_agent_id=receiving_agent_id,
+                initiating_agent_access_control_public_key=row[0],
+                sdhk=row[1],
+                issued_at=row[2],
+                expires_at=row[3],
+                q_max=row[4],
+                use_count=row[5],
+                revision=row[6],
+            )
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def try_increment_use(
+        self,
+        *,
+        receiving_agent_id: AgentId,
+        token_nonce: bytes,
+        expected_revision: int,
+    ) -> TokenUseOutcome:
+        from saga.ports.token_state import TokenUseOutcome
+
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT use_count, q_max, revision FROM token_records
+                WHERE receiving_agent_id = ? AND token_nonce = ?
+                """,
+                (receiving_agent_id.value, token_nonce),
+            ).fetchone()
+            if row is None:
+                _rollback(connection)
+                return TokenUseOutcome.NOT_FOUND
+            use_count, q_max, revision = row
+            if revision != expected_revision or use_count >= q_max:
+                _rollback(connection)
+                return TokenUseOutcome.CONFLICT
+
+            connection.execute(
+                """
+                UPDATE token_records SET use_count = use_count + 1, revision = revision + 1
+                WHERE receiving_agent_id = ? AND token_nonce = ?
+                """,
+                (receiving_agent_id.value, token_nonce),
+            )
+            connection.commit()
+            return TokenUseOutcome.INCREMENTED
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def discard(self, *, receiving_agent_id: AgentId, token_nonce: bytes) -> bool:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "DELETE FROM token_records WHERE receiving_agent_id = ? AND token_nonce = ?",
+                (receiving_agent_id.value, token_nonce),
+            )
+            deleted = cursor.rowcount > 0
+            connection.commit()
+            return deleted
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            _rollback(connection)
+            raise
+        except Exception:
+            _rollback(connection)
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+    def find_by_initiator(
+        self,
+        *,
+        receiving_agent_id: AgentId,
+        initiating_agent_access_control_public_key: bytes,
+    ) -> tuple[TokenRecord, ...]:
+        from saga.domain.token_state import TokenRecord as _TokenRecord
+
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = _open_connection(self._database)
+            rows = connection.execute(
+                """
+                SELECT token_nonce, sdhk, issued_at, expires_at, q_max, use_count, revision
+                FROM token_records WHERE receiving_agent_id = ? AND initiating_agent_access_control_public_key = ?
+                """,
+                (receiving_agent_id.value, initiating_agent_access_control_public_key),
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                results.append(
+                    _TokenRecord(
+                        token_nonce=row[0],
+                        receiving_agent_id=receiving_agent_id,
+                        initiating_agent_access_control_public_key=initiating_agent_access_control_public_key,
+                        sdhk=row[1],
+                        issued_at=row[2],
+                        expires_at=row[3],
+                        q_max=row[4],
+                        use_count=row[5],
+                        revision=row[6],
+                    )
+                )
+            return tuple(results)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            raise ActPersistenceError() from None
+        finally:
+            _close(connection)
+
+
+__all__ = (
+    "SQLiteAgentRegistry",
+    "SQLiteSotkStore",
+    "SQLiteTokenStateStore",
+    "SQLiteUserRegistry",
+)
+

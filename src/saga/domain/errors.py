@@ -88,12 +88,65 @@ class ContactPersistenceError(ContactError):
     _message = "contact persistence failed"
 
 
+class ActError(Exception):
+    """Base class for the closed public ACT failure surface."""
+
+    _message = "ACT operation failed"
+
+    def __init__(self) -> None:
+        super().__init__(self._message)
+
+
+class InvalidActInput(ActError):
+    _message = "invalid ACT input"
+
+
+class ActEstablishmentFailed(ActError):
+    _message = "ACT establishment failed"
+
+
+class SotkAlreadyConsumed(ActError):
+    _message = "SOTK already consumed"
+
+
+class ActExpired(ActError):
+    _message = "ACT expired"
+
+
+class ActQuotaExhausted(ActError):
+    _message = "ACT quota exhausted"
+
+
+class ActBindingFailed(ActError):
+    _message = "ACT binding verification failed"
+
+
+class ActPersistenceError(ActError):
+    _message = "ACT persistence failed"
+
+
+class ConcurrentActConflict(ActError):
+    _message = "concurrent ACT conflict"
+
+
+class ActFutureIssued(ActError):
+    _message = "ACT issued in the future"
+
+
 __all__ = (
+    "ActBindingFailed",
+    "ActError",
+    "ActEstablishmentFailed",
+    "ActExpired",
+    "ActFutureIssued",
+    "ActPersistenceError",
+    "ActQuotaExhausted",
     "AgentEndpointExists",
     "AgentIdentifierExists",
     "AgentOwnerAuthenticationFailed",
     "AgentRegistrationVerificationFailed",
     "AgentInactive",
+    "ConcurrentActConflict",
     "ConcurrentContactConflict",
     "ContactBundleVerificationFailed",
     "ContactError",
@@ -101,6 +154,7 @@ __all__ = (
     "ContactPolicyDenied",
     "ContactPolicyNoMatch",
     "IdentityVerificationRejected",
+    "InvalidActInput",
     "InvalidContactInput",
     "InvalidContactPolicy",
     "InvalidRegistrationInput",
@@ -108,5 +162,6 @@ __all__ = (
     "PublicOtkPoolExhausted",
     "RegistrationError",
     "RegistrationPersistenceError",
+    "SotkAlreadyConsumed",
     "UserRegistrationExists",
 )

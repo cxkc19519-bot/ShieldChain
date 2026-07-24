@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: saga-reproduction
+Version: 0.1.0
+Summary: Independent reproduction of the base SAGA protocol
+Requires-Python: <3.15,>=3.11
+Requires-Dist: cryptography==49.0.0
+Provides-Extra: dev
+Requires-Dist: mypy==2.2.0; extra == "dev"
+Requires-Dist: pytest==9.1.1; extra == "dev"
+Requires-Dist: ruff==0.15.20; extra == "dev"

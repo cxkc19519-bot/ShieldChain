@@ -6,17 +6,7 @@ from pathlib import Path
 
 PHASE_THREE_PRODUCTION_ROOTS = ("domain", "ports", "protocols", "adapters")
 FORBIDDEN_PHASE_THREE_SURFACES = (
-    "sotk",
-    "sdhk",
-    "x25519",
-    "hkdf",
-    "aead",
-    "derive_shared_secret",
-    "derive_sdhk",
-    "encrypt_act",
-    "decrypt_act",
-    "actplaintext",
-    "actenvelope",
+    # Phase 5+ surfaces that must not appear yet
     "fastapi",
     "socket",
     "http.server",
@@ -74,7 +64,7 @@ def test_phase_three_guard_rejects_nested_surfaces_but_excludes_crypto_root(
         module.parent.mkdir(parents=True)
         module.write_text("pass\n", encoding="utf-8")
     forbidden = tmp_path / "adapters" / "nested" / "future.py"
-    forbidden.write_text("class ActEnvelope: pass\n", encoding="utf-8")
+    forbidden.write_text("import fastapi\n", encoding="utf-8")
     ignored_crypto = tmp_path / "crypto" / "future.py"
     ignored_crypto.parent.mkdir(parents=True)
     ignored_crypto.write_text("class SOTK: pass\n", encoding="utf-8")
@@ -83,4 +73,5 @@ def test_phase_three_guard_rejects_nested_surfaces_but_excludes_crypto_root(
 
     assert forbidden in scanned
     assert ignored_crypto not in scanned
-    assert _forbidden_tokens_by_path(scanned) == {forbidden: ("actenvelope",)}
+    assert _forbidden_tokens_by_path(scanned) == {forbidden: ("fastapi",)}
+

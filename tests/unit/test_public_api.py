@@ -71,6 +71,16 @@ def test_top_level_public_api_is_exact() -> None:
 
 def test_domain_public_api_is_exact() -> None:
     expected = (
+        "ActBindingFailed",
+        "ActEnvelope",
+        "ActError",
+        "ActEstablishmentFailed",
+        "ActExpired",
+        "ActFutureIssued",
+        "ActPersistenceError",
+        "ActPlaintext",
+        "ActQuotaExhausted",
+        "ActUseResult",
         "AgentEndpointExists",
         "AgentId",
         "AgentIdentifierExists",
@@ -81,6 +91,7 @@ def test_domain_public_api_is_exact() -> None:
         "AgentRegistrationVerificationFailed",
         "AppendPublicOtksCommand",
         "AvailablePublicOtk",
+        "ConcurrentActConflict",
         "ConcurrentContactConflict",
         "ContactBundle",
         "ContactBundleVerificationFailed",
@@ -94,7 +105,9 @@ def test_domain_public_api_is_exact() -> None:
         "DeactivateAgentCommand",
         "EncodingError",
         "EndpointValue",
+        "EstablishActCommand",
         "IdentityVerificationRejected",
+        "InvalidActInput",
         "InvalidContactInput",
         "InvalidContactPolicy",
         "InvalidRegistrationInput",
@@ -111,13 +124,18 @@ def test_domain_public_api_is_exact() -> None:
         "RegistrationEvent",
         "RegistrationPersistenceError",
         "ResolveContactCommand",
+        "SotkAlreadyConsumed",
+        "SotkMapping",
+        "TokenRecord",
         "UpdateContactPolicyCommand",
+        "UseActCommand",
         "UserId",
         "UserRegistered",
         "UserRegistration",
         "UserRegistrationExists",
         "b64url_decode",
         "b64url_encode",
+        "constant_time_bytes_equal",
         "require_unix_ms",
     )
     assert domain.__all__ == expected
@@ -139,6 +157,11 @@ def test_ports_public_api_is_exact() -> None:
         "PolicyReplaceCommit",
         "ProviderSigner",
         "RandomSource",
+        "SotkClaimOutcome",
+        "SotkStore",
+        "TokenCreateOutcome",
+        "TokenStateStore",
+        "TokenUseOutcome",
         "UserCreateOutcome",
         "UserRegistry",
     )
@@ -149,6 +172,8 @@ def test_ports_public_api_is_exact() -> None:
 
 def test_protocols_public_api_is_exact() -> None:
     expected = (
+        "ActEstablishmentService",
+        "ActUseService",
         "AgentRegistrationService",
         "ContactBundleVerifier",
         "ContactManagementService",
@@ -160,8 +185,12 @@ def test_protocols_public_api_is_exact() -> None:
     assert all(hasattr(protocols, name) for name in expected)
     persistence_exports = (
         "InMemoryAgentRegistry",
+        "InMemorySotkStore",
+        "InMemoryTokenStateStore",
         "InMemoryUserRegistry",
         "SQLiteAgentRegistry",
+        "SQLiteSotkStore",
+        "SQLiteTokenStateStore",
         "SQLiteUserRegistry",
     )
     for namespace in (saga, domain, ports, protocols):
