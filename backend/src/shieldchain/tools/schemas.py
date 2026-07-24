@@ -29,6 +29,7 @@ class ToolTraceItem(BaseModel):
     reason: str | None
     target: str
     policy_outcome: str | None
+    risk: str | None
     approval_outcome: str | None
     attempt_outcomes: list[str]
     verification_outcome: str | None

@@ -23,6 +23,7 @@ function traceItem(value: unknown): ToolTraceItem {
     id: text(item.id), tool_name: text(item.tool_name), tool_version: text(item.tool_version),
     status: text(item.status), reason: nullableText(item.reason), target: text(item.target),
     policy_outcome: nullableText(item.policy_outcome), approval_outcome: nullableText(item.approval_outcome),
+    risk: nullableText(item.risk),
     attempt_outcomes: (item.attempt_outcomes as unknown[]).map(text),
     verification_outcome: nullableText(item.verification_outcome),
     evidence_ids: (item.evidence_ids as unknown[]).map(text),

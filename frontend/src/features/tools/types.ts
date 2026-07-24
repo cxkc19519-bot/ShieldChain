@@ -6,6 +6,7 @@ export interface ToolTraceItem {
   reason: string | null
   target: string
   policy_outcome: string | null
+  risk: string | null
   approval_outcome: string | null
   attempt_outcomes: string[]
   verification_outcome: string | null

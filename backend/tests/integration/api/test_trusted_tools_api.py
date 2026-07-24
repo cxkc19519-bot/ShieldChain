@@ -33,6 +33,7 @@ class Service:
                     reason="approval_required",
                     target="203.0.113.8",
                     policy_outcome="approval_required",
+                    risk="high",
                     approval_outcome=None,
                     attempt_outcomes=[],
                     verification_outcome=None,
@@ -76,6 +77,7 @@ def test_trace_is_server_tenant_bound_and_has_no_private_fields() -> None:
         response = value.get(f"/api/v1/tools/runs/{RUN}/calls")
     assert response.status_code == 200
     assert service.calls[0][1]["tenant_id"] == TENANT
+    assert response.json()["calls"][0]["risk"] == "high"
     for forbidden in (
         "tenant_id",
         "principal_id",
