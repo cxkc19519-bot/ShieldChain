@@ -15,6 +15,7 @@ def test_delivery_manifest_has_every_required_artifact_and_truthful_status() -> 
         "testing",
         "performance-baseline",
         "summary",
+        "query-performance",
         "slides",
         "video",
     }

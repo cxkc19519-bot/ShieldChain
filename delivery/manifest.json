@@ -18,6 +18,11 @@
       "status": "available"
     },
     {
+      "id": "query-performance",
+      "path": "docs/reports/phase8-query-performance.md",
+      "status": "available"
+    },
+    {
       "id": "development",
       "path": "docs/delivery/development-guide.md",
       "status": "planned"

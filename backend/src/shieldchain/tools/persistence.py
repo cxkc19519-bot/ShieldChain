@@ -66,7 +66,13 @@ class TrustedToolCallRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-Index("ix_trusted_tool_call_tenant_run", TrustedToolCallRow.tenant_id, TrustedToolCallRow.run_id)
+Index(
+    "ix_trusted_tool_call_tenant_run_created",
+    TrustedToolCallRow.tenant_id,
+    TrustedToolCallRow.run_id,
+    TrustedToolCallRow.created_at,
+    TrustedToolCallRow.id,
+)
 
 
 class ToolPolicyDecisionRow(Base):

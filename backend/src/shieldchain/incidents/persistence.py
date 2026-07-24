@@ -139,6 +139,18 @@ Index(
     unique=True,
     sqlite_where=InvestigationRunRow.status.in_(ACTIVE_VALUES),
 )
+Index(
+    "ix_investigation_run_incident_created",
+    InvestigationRunRow.incident_id,
+    InvestigationRunRow.created_at,
+    InvestigationRunRow.id,
+)
+Index(
+    "ix_investigation_run_simulation_created",
+    InvestigationRunRow.simulation_instance_id,
+    InvestigationRunRow.created_at,
+    InvestigationRunRow.id,
+)
 
 
 class InvestigationStepRow(Base):
