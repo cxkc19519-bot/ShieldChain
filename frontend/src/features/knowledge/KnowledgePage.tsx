@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
+import { PageHeader } from '../../components/ui/PageHeader'
+import { EmptyState, LoadingState } from '../../components/ui/States'
 import {
   createKnowledgeBase,
   deleteDocument,
@@ -139,6 +141,7 @@ export function KnowledgePage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
   const activeRequest = useRef<AbortController | null>(null)
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -151,9 +154,10 @@ export function KnowledgePage() {
 
   useEffect(() => {
     const controller = new AbortController()
-    void load(controller.signal).catch((reason: unknown) => {
-      if (!controller.signal.aborted) setError(errorMessage(reason))
-    })
+    setInitialLoading(true)
+    void load(controller.signal)
+      .catch((reason: unknown) => { if (!controller.signal.aborted) setError(errorMessage(reason)) })
+      .finally(() => { if (!controller.signal.aborted) setInitialLoading(false) })
     return () => {
       controller.abort()
       activeRequest.current?.abort()
@@ -214,12 +218,13 @@ export function KnowledgePage() {
 
   return (
     <section aria-labelledby="knowledge-title" className="page-card knowledge-page">
-      <p className="eyebrow">可信知识与检索</p>
-      <h2 id="knowledge-title">知识库</h2>
+      <PageHeader id="knowledge-title" eyebrow="可信知识与检索" title="知识库工作台" description="管理本地文档生命周期，通过混合检索生成带引用答案；证据不足时明确拒答。" />
 
       {error && <p className="knowledge-message knowledge-message--error" role="alert">{error}</p>}
       {notice && <p className="knowledge-message" role="status">{notice}</p>}
 
+      {initialLoading && <LoadingState title="正在加载知识库" detail="正在读取公开知识库与文档状态。" />}
+      {!initialLoading && (
       <div className="knowledge-layout">
         <aside className="knowledge-bases" aria-label="知识库列表">
           <h3>知识库</h3>
@@ -280,9 +285,10 @@ export function KnowledgePage() {
             </form>
             {result && <SearchResult result={result} />}
             {evaluation && <Evaluation summary={evaluation} />}
-          </> : <p>请选择知识库。</p>}
+          </> : <EmptyState title="暂无可用知识库" detail="创建知识库后即可上传本地文档并运行安全检索。" />}
         </div>
       </div>
+      )}
     </section>
   )
 }

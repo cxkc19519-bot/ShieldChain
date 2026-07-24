@@ -64,4 +64,41 @@ describe('KnowledgePage', () => {
     view.unmount()
     expect(observed?.aborted).toBe(true)
   })
+
+  it('shows an explicit loading state before a truthful empty state', async () => {
+    let resolveBases: ((value: typeof base[]) => void) | undefined
+    api.listKnowledgeBases.mockReturnValue(new Promise((resolve) => { resolveBases = resolve }))
+
+    render(<KnowledgePage />)
+    expect(screen.getByText('正在加载知识库')).toBeVisible()
+
+    resolveBases?.([])
+    expect(await screen.findAllByText('暂无可用知识库')).toHaveLength(2)
+    expect(api.listDocuments).not.toHaveBeenCalled()
+  })
+
+  it('keeps the primary workflow keyboard reachable', async () => {
+    const user = userEvent.setup()
+    render(<KnowledgePage />)
+    await screen.findByText('guide.pdf')
+
+    await user.tab()
+    expect(screen.getByLabelText('新知识库名称')).toHaveFocus()
+    await user.type(screen.getByLabelText('新知识库名称'), '应急手册')
+    await user.tab()
+    expect(screen.getByRole('button', { name: '创建' })).toHaveFocus()
+  })
+
+  it('does not render server-only sensitive fields', async () => {
+    api.listKnowledgeBases.mockResolvedValue([{ ...base, tenant_id: 'tenant-secret', raw_prompt: 'hidden prompt' }])
+    api.listDocuments.mockResolvedValue([{ ...document, storage_path: 'C:\\private\\guide.pdf', access_token: 'token-secret' }])
+
+    render(<KnowledgePage />)
+    await screen.findByText('guide.pdf')
+
+    expect(screen.queryByText('tenant-secret')).not.toBeInTheDocument()
+    expect(screen.queryByText('hidden prompt')).not.toBeInTheDocument()
+    expect(screen.queryByText('C:\\private\\guide.pdf')).not.toBeInTheDocument()
+    expect(screen.queryByText('token-secret')).not.toBeInTheDocument()
+  })
 })

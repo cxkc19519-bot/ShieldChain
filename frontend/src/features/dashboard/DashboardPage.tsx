@@ -83,6 +83,7 @@ export function DashboardPage() {
   return (
     <section aria-labelledby="dashboard-title" className="page-card dashboard-page">
       <PageHeader
+        id="dashboard-title"
         eyebrow="Security posture"
         title="运营总览"
         description="基于当前离线仿真运行的公开调查投影，汇总风险、证据、处置与验证状态。"

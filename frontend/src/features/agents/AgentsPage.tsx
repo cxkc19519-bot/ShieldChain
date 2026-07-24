@@ -77,7 +77,7 @@ export function AgentsPage() {
   }
 
   return <section aria-labelledby="agents-title" className="page-card agents-page">
-    <PageHeader eyebrow="Shared intelligence" title="智能体与 ReAct 工作台" description="组合公开协作与受控循环轨迹；不展示私有上下文、原始提示、思维链或凭据。" />
+    <PageHeader id="agents-title" eyebrow="Shared intelligence" title="智能体与 ReAct 工作台" description="组合公开协作与受控循环轨迹；不展示私有上下文、原始提示、思维链或凭据。" />
     <form className="agent-run-form" onSubmit={load}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={runId} onChange={(event) => setRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !runId.trim()} type="submit">{busy ? '加载中…' : '查看联合轨迹'}</button></div></form>
     {!runId.trim() && <EmptyState title="尚未选择运行" detail="从调查页启动运行，或输入已有运行 ID。" />}
     {collaborationError && <p role="alert" className="agent-error">协作轨迹：{collaborationError}</p>}

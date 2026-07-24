@@ -126,7 +126,7 @@ describe('future routes', () => {
   it('renders the knowledge page at /knowledge', () => {
     renderRoute('/knowledge')
 
-    expect(screen.getByRole('heading', { name: '知识库', level: 2 })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '知识库工作台', level: 2 })).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 

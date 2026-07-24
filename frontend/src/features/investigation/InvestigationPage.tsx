@@ -107,7 +107,7 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
 
   return (
     <section aria-labelledby="investigation-title" className="page-card investigation-page">
-      <PageHeader eyebrow="模拟环境" title="事件调查" description="沿公开投影追踪攻击路径、证据、研判、受控处置、验证和审计记录。" />
+      <PageHeader id="investigation-title" eyebrow="模拟环境" title="事件调查" description="沿公开投影追踪攻击路径、证据、研判、受控处置、验证和审计记录。" />
 
       {state.scenario && (
         <div className="simulation-badge"><StatusBadge tone="info">离线仿真</StatusBadge><span>场景代次 #{state.scenario.simulation.generation}</span></div>
