@@ -158,7 +158,7 @@ Remove-Item Env:\DEEPSEEK_API_KEY
 - 后端或 Vite 启动失败：检查 smoke 输出中的阶段和退出码；脚本只在系统临时目录保留运行期日志，并在结束时删除整个自有目录。
 - 就绪检查返回 503：检查 `DATABASE_URL` 指向的目录是否可写且已经迁移到 head。
 
-## 8. HTTP 安全与生产 profile
+## 10. HTTP 安全与生产 profile
 
 开发默认只信任 `127.0.0.1`、`localhost` 和测试客户端 Host，并只允许本地 Vite 来源。可通过 JSON 数组形式的 `HTTP_ALLOWED_HOSTS` 与 `HTTP_ALLOWED_ORIGINS` 覆盖；`HTTP_MAX_REQUEST_BYTES` 控制所有声明了 `Content-Length` 的请求上限，知识上传仍受更小的专用解析与展开预算约束。
 
@@ -178,3 +178,22 @@ $env:HTTP_ALLOWED_ORIGINS = '["https://shieldchain.example.internal"]'
 - 调查未在 30 秒内结束或返回畸形数据：smoke 会非零退出、停止自有进程、删除自有文件并检查端口；修复根因后重新运行完整命令。
 
 当前持久化只支持本机 SQLite，启动和 smoke 只面向单机开发；这不是并发生产数据库或部署方案。Docker 不是阶段 7 本地开发的前置条件。真实云/安全设备适配器、真实模型自主规划、授权环境验证和 Docker Compose 部署仍是后续工作。
+
+## 11. 存活、就绪、版本与关闭
+
+三个公开运维端点职责不同：
+
+- `/api/v1/health/live` 只证明进程可以响应，不访问数据库。
+- `/api/v1/health/ready` 同时检查数据库连接、Alembic 必须精确位于 `20260724_01`，以及应用仍在接受请求；任一失败返回 503。
+- `/api/v1/health/version` 只返回服务名、安装包版本和期望 schema revision，不暴露主机名、用户名、路径、Git ref 或配置。
+
+全新 checkout 首次启动会创建 SQLite 文件，但在执行迁移前 readiness 必须保持 `not_ready/migrations=unavailable`：
+
+```powershell
+Set-Location backend
+..\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+应用 lifespan 在恢复中断运行后才标记 `accepting`；关闭开始时先切换为 `stopping`，再调用后台运行器的有界关闭。运行器停止接收新任务，等待配置的 1–30 秒超时，取消仍未完成的 asyncio 包装任务，并依赖下次启动恢复已经进入线程的短工作流。
+
+结构化日志只保留 request ID、方法、公开路径、状态、耗时和错误类型。tenant/principal/actor 标识、凭据、Cookie、提示、推理轨迹、原始 payload 与证据 payload 均在处理器中替换为 `[REDACTED]`。

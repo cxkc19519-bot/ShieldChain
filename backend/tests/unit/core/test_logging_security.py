@@ -30,3 +30,29 @@ def test_configured_logging_does_not_leak_embedded_bearer_value(capsys) -> None:
     output = capsys.readouterr().out
     assert secret not in output
     assert REDACTED_VALUE in output
+
+
+def test_redaction_removes_private_identity_prompt_reasoning_and_raw_payloads() -> None:
+    event = {
+        "tenant_id": "tenant-private",
+        "principal_id": "principal-private",
+        "actor_subject_id": "actor-private",
+        "raw_prompt": "prompt-private",
+        "chain_of_thought": "reasoning-private",
+        "evidence_payload": {"raw": "evidence-private"},
+        "request_id": "req-safe",
+        "status": 200,
+    }
+    result = redact_sensitive_fields(None, "info", event)
+    serialized = repr(result)
+    for forbidden in (
+        "tenant-private",
+        "principal-private",
+        "actor-private",
+        "prompt-private",
+        "reasoning-private",
+        "evidence-private",
+    ):
+        assert forbidden not in serialized
+    assert result["request_id"] == "req-safe"
+    assert result["status"] == 200

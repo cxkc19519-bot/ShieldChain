@@ -14,6 +14,15 @@ SENSITIVE_KEY_PARTS = (
     "password",
     "secret",
     "cookie",
+    "tenant_id",
+    "principal_id",
+    "actor_subject_id",
+    "raw_prompt",
+    "system_prompt",
+    "chain_of_thought",
+    "reasoning_trace",
+    "raw_payload",
+    "evidence_payload",
 )
 
 _SENSITIVE_VALUE_PATTERNS = (

@@ -37,3 +37,17 @@ def check_database(engine: Engine) -> bool:
         logger.warning("database_check_failed")
         return False
     return True
+
+
+def database_schema_revision(engine: Engine) -> str | None:
+    """Return the single Alembic revision, without leaking database details."""
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
+            revisions = tuple(rows)
+    except SQLAlchemyError:
+        logger.warning("database_schema_check_failed")
+        return None
+    if len(revisions) != 1 or not isinstance(revisions[0], str):
+        return None
+    return revisions[0]

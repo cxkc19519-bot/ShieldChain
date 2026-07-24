@@ -76,10 +76,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        _app.state.accepting_requests = True
         try:
             await asyncio.to_thread(runner.recover_interrupted)
             yield
         finally:
+            _app.state.accepting_requests = False
             await runner.shutdown()
             if owns_engine:
                 engine.dispose()
@@ -87,6 +89,7 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
     app.state.database_engine = engine
+    app.state.accepting_requests = False
     app.state.agent_trajectory_query = agent_trajectory_query or CollaborationTrajectoryQuery(
         session_factory
     )
