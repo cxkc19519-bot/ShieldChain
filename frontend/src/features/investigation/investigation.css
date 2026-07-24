@@ -9,6 +9,106 @@
   margin-top: 0;
 }
 
+.simulation-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.incident-overview,
+.investigation-section {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-strong);
+}
+
+.incident-overview header,
+.investigation-result__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.incident-overview header span,
+.investigation-result__header span,
+.attack-path div > span {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.attack-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.attack-path div {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: white;
+}
+
+.attack-path strong,
+.attack-path small { overflow-wrap: anywhere; }
+.attack-path small { color: var(--color-text-muted); }
+
+.investigation-result__header code {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.phase-track,
+.audit-timeline {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.phase-track li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.verification-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.verification-grid span {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: white;
+  font-weight: 700;
+}
+
+.audit-timeline li {
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-info-bg);
+}
+
+@media (max-width: 720px) {
+  .attack-path { grid-template-columns: 1fr; }
+  .attack-path > span { transform: rotate(90deg); text-align: center; }
+  .verification-grid { grid-template-columns: 1fr; }
+  .incident-overview header,
+  .investigation-result__header { flex-direction: column; }
+}
+
 .simulation-badge,
 .run-status {
   width: fit-content;

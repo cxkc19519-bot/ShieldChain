@@ -1,6 +1,9 @@
 import { useState } from 'react'
 
 import { useRunContext } from '../../app/RunContext'
+import { EmptyState } from '../../components/ui/States'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { StatusBadge } from '../../components/ui/StatusBadge'
 import type { InvestigationMode, InvestigationResponse, InvestigationStatus, JsonObject } from './types'
 import { useInvestigation } from './useInvestigation'
 import './investigation.css'
@@ -27,19 +30,21 @@ function RunResult({ run }: { run: InvestigationResponse }) {
 
   return (
     <div className="investigation-result">
-      <p className={`run-status run-status--${statusClass}`} aria-live="polite">{publicStatus}</p>
-      {run.verification?.connection_stopped === true && <p>连接已停止</p>}
+      <header className="investigation-result__header">
+        <div><span>运行状态</span><p className={`run-status run-status--${statusClass}`} aria-live="polite">{publicStatus}</p></div>
+        <code>{run.run_id}</code>
+      </header>
 
       {run.steps.length > 0 && (
-        <section aria-labelledby="steps-title">
-          <h3 id="steps-title">调查时间线</h3>
-          <ol>{run.steps.map((step) => <li key={step.step_key}><strong>{step.step_key}</strong> · {step.status}</li>)}</ol>
+        <section className="investigation-section" aria-labelledby="steps-title">
+          <h3 id="steps-title">调查阶段</h3>
+          <ol className="phase-track">{run.steps.map((step) => <li key={step.step_key}><StatusBadge tone={step.status === 'completed' ? 'success' : 'info'}>{step.status}</StatusBadge><strong>{step.step_key}</strong>{step.error_code && <code>{step.error_code}</code>}</li>)}</ol>
         </section>
       )}
 
       {run.evidence.length > 0 && (
-        <section aria-labelledby="evidence-title">
-          <h3 id="evidence-title">证据</h3>
+        <section className="investigation-section" aria-labelledby="evidence-title">
+          <h3 id="evidence-title">证据链</h3>
           <ul className="detail-list">{run.evidence.map((item) => {
             return (
               <li key={item.id}>
@@ -54,15 +59,16 @@ function RunResult({ run }: { run: InvestigationResponse }) {
       )}
 
       {run.assessment && (
-        <section aria-labelledby="assessment-title">
-          <h3 id="assessment-title">分析结论</h3>
+        <section className="investigation-section" aria-labelledby="assessment-title">
+          <h3 id="assessment-title">研判结论</h3>
+          <StatusBadge tone={run.assessment.risk_level === 'high' || run.assessment.risk_level === 'critical' ? 'danger' : 'warning'}>{run.assessment.risk_level}</StatusBadge>
           <p>{run.assessment.conclusion}</p>
           <p>{run.assessment.explanation}</p>
         </section>
       )}
 
       {run.tool_result && (
-        <section aria-labelledby="tool-title">
+        <section className="investigation-section" aria-labelledby="tool-title">
           <h3 id="tool-title">处置结果</h3>
           <dl>
             <dt>目标</dt><dd>{run.tool_result.target}</dd>
@@ -74,6 +80,12 @@ function RunResult({ run }: { run: InvestigationResponse }) {
           </dl>
         </section>
       )}
+
+      <section className="investigation-section" aria-labelledby="verification-title">
+        <h3 id="verification-title">验证</h3>
+        {!run.verification && <p>尚无验证结果。</p>}
+        {run.verification && <div className="verification-grid"><span>{run.verification.blocked ? '目标已阻断' : '目标未阻断'}</span><span>{run.verification.connection_stopped ? '连接已停止' : '连接未停止'}</span><span>{run.verification.evidence_ids.length} 条验证证据</span></div>}
+      </section>
     </div>
   )
 }
@@ -91,14 +103,14 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
     selectedRunId: context.runId,
     onRunSelected: (incidentId, runId) => context.setSelection({ incidentId, runId }),
   })
+  const activeIncident = state.incident?.incident ?? state.scenario?.incident
 
   return (
     <section aria-labelledby="investigation-title" className="page-card investigation-page">
-      <p className="eyebrow">模拟环境</p>
-      <h2 id="investigation-title">事件调查</h2>
+      <PageHeader eyebrow="模拟环境" title="事件调查" description="沿公开投影追踪攻击路径、证据、研判、受控处置、验证和审计记录。" />
 
       {state.scenario && (
-        <p className="simulation-badge">模拟环境 · #{state.scenario.simulation.generation}</p>
+        <div className="simulation-badge"><StatusBadge tone="info">离线仿真</StatusBadge><span>场景代次 #{state.scenario.simulation.generation}</span></div>
       )}
 
       <div className="investigation-controls">
@@ -117,20 +129,27 @@ export function InvestigationPage({ allowFailureMode = !production }: Investigat
       </div>
 
       {state.error && <p className="investigation-error" role="alert">{state.error}</p>}
-      {state.run && <RunResult run={state.run} />}
 
-      {state.incident && (
-        <section aria-labelledby="incident-title">
-          <h3 id="incident-title">事件</h3>
-          <p>{state.incident.incident.external_id}</p>
-          <p>{state.incident.incident.remote_ip}:{state.incident.incident.remote_port}</p>
+      {activeIncident && (
+        <section className="incident-overview" aria-labelledby="incident-title">
+          <header><div><span>当前事件</span><h3 id="incident-title">{activeIncident.external_id}</h3></div><StatusBadge tone="danger">{activeIncident.threat_label}</StatusBadge></header>
+          <div className="attack-path" aria-label="攻击路径">
+            <div><span>终端</span><strong>{activeIncident.endpoint}</strong><small>{activeIncident.username}</small></div>
+            <span aria-hidden="true">→</span>
+            <div><span>进程</span><strong>{activeIncident.process_name}</strong><small>父进程 {activeIncident.parent_process_name}</small></div>
+            <span aria-hidden="true">→</span>
+            <div><span>远端</span><strong>{activeIncident.remote_ip}:{activeIncident.remote_port}</strong><small>{activeIncident.command_summary}</small></div>
+          </div>
         </section>
       )}
 
+      {!state.run && !state.pending && <EmptyState title="尚未启动调查" detail="选择调查模式后启动离线仿真；失败模式仅用于非生产测试。" />}
+      {state.run && <RunResult run={state.run} />}
+
       {state.audit && state.audit.events.length > 0 && (
-        <section aria-labelledby="audit-title">
-          <h3 id="audit-title">审计记录</h3>
-          <ol>{[...state.audit.events].sort((left, right) => left.sequence - right.sequence).map((event) => (
+        <section className="investigation-section" aria-labelledby="audit-title">
+          <h3 id="audit-title">审计时间线</h3>
+          <ol className="audit-timeline">{[...state.audit.events].sort((left, right) => left.sequence - right.sequence).map((event) => (
             <li key={event.id}><strong>{event.event_type}</strong> · {event.occurred_at}</li>
           ))}</ol>
         </section>
