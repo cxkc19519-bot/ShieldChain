@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 
+import { useRunContext } from '../../app/RunContext'
 import { getCollaborationTrajectory } from './api'
 import './agents.css'
 import type { CollaborationTrajectory } from './types'
@@ -9,13 +10,21 @@ function Metric({ label, used, limit }: { label: string; used: number; limit: nu
 }
 
 export function AgentsPage() {
-  const [runId, setRunId] = useState('')
+  const context = useRunContext()
+  const [runId, setRunId] = useState(context.runId ?? '')
   const [trajectory, setTrajectory] = useState<CollaborationTrajectory | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const active = useRef<AbortController | null>(null)
 
   useEffect(() => () => active.current?.abort(), [])
+  useEffect(() => {
+    active.current?.abort()
+    setRunId(context.runId ?? '')
+    setTrajectory(null)
+    setError(null)
+    setBusy(false)
+  }, [context.runId])
 
   const load = async (event: FormEvent) => {
     event.preventDefault()

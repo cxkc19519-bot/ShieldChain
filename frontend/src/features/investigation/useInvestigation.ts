@@ -28,7 +28,12 @@ export interface InvestigationState {
   reset: () => Promise<void>
 }
 
-export function useInvestigation(): InvestigationState {
+export interface InvestigationOptions {
+  selectedRunId?: string | null
+  onRunSelected?: (incidentId: string, runId: string) => void
+}
+
+export function useInvestigation(options: InvestigationOptions = {}): InvestigationState {
   const [scenario, setScenario] = useState<ResetSimulationResponse | null>(null)
   const [scenarioFresh, setScenarioFresh] = useState(false)
   const [run, setRun] = useState<InvestigationResponse | null>(null)
@@ -84,14 +89,36 @@ export function useInvestigation(): InvestigationState {
         setScenarioFresh(true)
       }
       const next = await startInvestigation(loaded.simulation.id, mode, controller.signal)
-      if (!controller.signal.aborted) setRun(next)
+      if (!controller.signal.aborted) {
+        setRun(next)
+        options.onRunSelected?.(next.incident_id, next.run_id)
+      }
     } catch (failure) {
       if (!controller.signal.aborted) setError(message(failure))
     } finally {
       if (actionController.current === controller) actionController.current = null
       if (!controller.signal.aborted) setPending(false)
     }
-  }, [cancelAction, scenario, scenarioFresh])
+  }, [cancelAction, options, scenario, scenarioFresh])
+
+  const selectedRunId = options.selectedRunId
+  useEffect(() => {
+    if (!selectedRunId || selectedRunId === run?.run_id) return
+    cancelAction()
+    cancelPolling.current()
+    const controller = new AbortController()
+    actionController.current = controller
+    setPending(true)
+    setError(null)
+    void getInvestigation(selectedRunId, controller.signal).then(
+      (next) => { if (!controller.signal.aborted) setRun(next) },
+      (failure: unknown) => { if (!controller.signal.aborted) setError(message(failure)) },
+    ).finally(() => {
+      if (actionController.current === controller) actionController.current = null
+      if (!controller.signal.aborted) setPending(false)
+    })
+    return () => controller.abort()
+  }, [cancelAction, run?.run_id, selectedRunId])
 
   const runId = run?.run_id
   const runStatus = run?.status

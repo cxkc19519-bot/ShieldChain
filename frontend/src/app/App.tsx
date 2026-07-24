@@ -1,4 +1,7 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
+
+import { useRunContext } from './RunContext'
+import { RunContextSwitcher } from './RunContextSwitcher'
 
 const navigation = [
   { label: '运营总览', short: '总', to: '/' },
@@ -10,6 +13,10 @@ const navigation = [
 ]
 
 export function App() {
+  const location = useLocation()
+  const context = useRunContext()
+  const contextKey = `${context.incidentId ?? ''}:${context.runId ?? ''}`
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">跳到主要内容</a>
@@ -33,18 +40,19 @@ export function App() {
           <p className="sidebar__label">工作空间</p>
           <nav aria-label="主要导航">
             {navigation.map(({ label, short, to }) => (
-              <NavLink key={to} to={to} end={to === '/'}>
+              <NavLink key={to} to={{ pathname: to, search: location.search }} end={to === '/'}>
                 <span className="nav-mark" aria-hidden="true">{short}</span>
                 <span>{label}</span>
               </NavLink>
             ))}
           </nav>
+          <RunContextSwitcher />
           <div className="sidebar__boundary">
             <strong>安全边界</strong>
             <p>所有变更动作均经策略、审批与验证。</p>
           </div>
         </aside>
-        <main className="content-panel" id="main-content" tabIndex={-1}>
+        <main className="content-panel" id="main-content" tabIndex={-1} key={contextKey}>
           <Outlet />
         </main>
       </div>

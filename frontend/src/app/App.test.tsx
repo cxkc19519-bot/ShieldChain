@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -103,7 +103,7 @@ describe('future routes', () => {
 
       expect(screen.getByText('尚未进入该开发阶段')).toBeVisible()
       expect(getLivenessMock).not.toHaveBeenCalled()
-      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(within(screen.getByRole('main')).queryByRole('button')).not.toBeInTheDocument()
     },
   )
 

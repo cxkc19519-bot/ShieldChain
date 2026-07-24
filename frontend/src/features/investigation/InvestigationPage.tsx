@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { useRunContext } from '../../app/RunContext'
 import type { InvestigationMode, InvestigationResponse, InvestigationStatus, JsonObject } from './types'
 import { useInvestigation } from './useInvestigation'
 import './investigation.css'
@@ -85,7 +86,11 @@ const production = (import.meta as ImportMeta & { env?: { PROD?: boolean } }).en
 
 export function InvestigationPage({ allowFailureMode = !production }: InvestigationPageProps) {
   const [mode, setMode] = useState<InvestigationMode>('normal')
-  const state = useInvestigation()
+  const context = useRunContext()
+  const state = useInvestigation({
+    selectedRunId: context.runId,
+    onRunSelected: (incidentId, runId) => context.setSelection({ incidentId, runId }),
+  })
 
   return (
     <section aria-labelledby="investigation-title" className="page-card investigation-page">

@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 
+import { useRunContext } from '../../app/RunContext'
 import { controlToolCall, decideToolCall, getToolTrace, setEmergencyStop } from './api'
 import './tools.css'
 import type { ToolTrace } from './types'
@@ -9,13 +10,21 @@ const labels: Record<string, string> = {
 }
 
 export function ToolsPage() {
-  const [runId, setRunId] = useState('')
+  const context = useRunContext()
+  const [runId, setRunId] = useState(context.runId ?? '')
   const [trace, setTrace] = useState<ToolTrace | null>(null)
   const [reason, setReason] = useState('人工复核后执行')
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const active = useRef<AbortController | null>(null)
   useEffect(() => () => active.current?.abort(), [])
+  useEffect(() => {
+    active.current?.abort()
+    setRunId(context.runId ?? '')
+    setTrace(null)
+    setMessage(null)
+    setBusy(false)
+  }, [context.runId])
 
   const load = async (event?: FormEvent) => {
     event?.preventDefault()
