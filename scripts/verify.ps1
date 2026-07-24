@@ -43,7 +43,7 @@ else {
     $smokeCommand = $powerShellCommand
     $smokeArguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        (Join-Path $ProjectRoot "tests\scripts\run-phase5-smoke.ps1")
+        (Join-Path $ProjectRoot "tests\scripts\run-phase6-smoke.ps1")
     )
 }
 
@@ -88,7 +88,7 @@ foreach ($name in $liveTestFlags) {
     [Environment]::SetEnvironmentVariable($name, $null, "Process")
 }
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
-    "shieldchain-phase5-verify-" + [guid]::NewGuid()
+    "shieldchain-phase6-verify-" + [guid]::NewGuid()
 )
 $systemTemporaryRoot = [System.IO.Path]::GetFullPath(
     [System.IO.Path]::GetTempPath()
@@ -104,7 +104,7 @@ try {
 
     $commands = @(
         @{ File = $pythonCommand; Arguments = @("-m", "ruff", "check", (Join-Path $ProjectRoot "backend")) },
-        @{ File = $pythonCommand; Arguments = @("-m", "pytest", (Join-Path $ProjectRoot "backend\tests"), "-q") },
+        @{ File = $pythonCommand; Arguments = @("-m", "pytest", "--import-mode=importlib", (Join-Path $ProjectRoot "backend\tests"), "-q") },
         @{ File = $npmCommand; Arguments = @("run", "lint", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("run", "typecheck", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("test", "--prefix", (Join-Path $ProjectRoot "frontend"), "--", "--run") },
@@ -141,7 +141,7 @@ finally {
         $temporaryName = [System.IO.Path]::GetFileName($resolvedTemporaryRoot)
         if (
             $temporaryParent -eq $systemTemporaryRoot -and
-            $temporaryName -match '^shieldchain-phase5-verify-[0-9a-fA-F-]{36}$'
+            $temporaryName -match '^shieldchain-phase6-verify-[0-9a-fA-F-]{36}$'
         ) {
             Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
         }

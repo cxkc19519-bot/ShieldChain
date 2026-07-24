@@ -1,6 +1,6 @@
 # 盾链智御（ShieldChain）
 
-盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环、产品级 RAG、租户隔离的多智能体编排，以及可信工具注册、策略、审批、幂等执行、验证、恢复、紧急停止、公开轨迹 API 和最小处置中心。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker 与安全设备尚未授权和接线，知识 API 默认失败关闭，真实设备路径不会被离线成功结果替代。
+盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环、产品级 RAG、租户隔离的多智能体编排、可信工具网关，以及受预算约束的 ReAct 观察—分类—重规划—验证闭环和人工接管 API。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker、模型自主规划与安全设备尚未授权和接线，离线成功结果不替代真实链路验收。
 
 ## 前置条件
 
@@ -29,10 +29,11 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase6-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase5-smoke.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2–4 smoke 分别验证事件闭环、离线 RAG 和多智能体编排；阶段 5 smoke 验证策略、审批拒绝、幂等执行、未知结果失败关闭、验证恢复和紧急停止。`verify.ps1` 执行完整测试、构建、迁移往返、固定 RAG 评测、脚本契约和阶段 5 smoke，不联网、不访问真实设备、不产生费用。
+前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2–5 smoke 依次验证事件闭环、离线 RAG、多智能体编排和可信工具；阶段 6 再验证结构化失败分类、确定性重规划、预算/循环停止、未知结果只查询和人工接管。`verify.ps1` 执行完整测试、构建、迁移往返、固定 RAG 评测、脚本契约和阶段 6 smoke，不联网、不访问真实设备、不产生费用。
 
 ## 文档导航
 
