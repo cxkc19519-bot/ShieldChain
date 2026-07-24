@@ -1,15 +1,22 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, Field, SecretStr
+from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    environment: str = "development"
+    environment: Literal["development", "testing", "production"] = "development"
+    http_allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "testserver")
+    http_allowed_origins: tuple[str, ...] = (
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    )
+    http_max_request_bytes: int = Field(26 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     database_url: str = "sqlite:///./data/shieldchain.db"
     deepseek_base_url: AnyHttpUrl = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
@@ -31,6 +38,55 @@ class Settings(BaseSettings):
     # Local demo identity is server-owned. HTTP payloads can never override these values.
     rag_demo_tenant_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
     rag_demo_principal_id: UUID = UUID("00000000-0000-4000-8000-000000000002")
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().casefold()
+        if normalized == "test":
+            return "testing"
+        return normalized
+
+    @field_validator("http_allowed_hosts")
+    @classmethod
+    def validate_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(dict.fromkeys(item.strip().casefold() for item in value))
+        if not normalized or any(
+            not item or "://" in item or "/" in item or len(item) > 253 for item in normalized
+        ):
+            raise ValueError("http_allowed_hosts contains an invalid host")
+        return normalized
+
+    @field_validator("http_allowed_origins")
+    @classmethod
+    def validate_origins(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(dict.fromkeys(item.strip() for item in value))
+        if not normalized:
+            raise ValueError("http_allowed_origins must not be empty")
+        for item in normalized:
+            if item == "*":
+                continue
+            try:
+                parsed = AnyHttpUrl(item)
+            except ValueError as error:
+                raise ValueError("http_allowed_origins contains an invalid origin") from error
+            if (
+                parsed.path not in {None, "/"}
+                or parsed.query is not None
+                or parsed.fragment is not None
+            ):
+                raise ValueError("http_allowed_origins must contain origins without paths")
+        return normalized
+
+    @model_validator(mode="after")
+    def production_rejects_wildcard_http_trust(self) -> "Settings":
+        if self.environment == "production" and (
+            "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins
+        ):
+            raise ValueError("production HTTP trust must not contain wildcards")
+        return self
 
 
 @lru_cache

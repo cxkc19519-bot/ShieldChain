@@ -7,6 +7,8 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.engine import Engine
 from starlette.exceptions import HTTPException
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shieldchain.agents.trajectory import CollaborationTrajectoryQuery
 from shieldchain.api.agents import router as agents_router
@@ -23,6 +25,7 @@ from shieldchain.core.errors import (
     unhandled_error_handler,
     validation_error_handler,
 )
+from shieldchain.core.http_security import RequestSizeLimitMiddleware, SecurityHeadersMiddleware
 from shieldchain.core.logging import configure_logging
 from shieldchain.core.request_id import RequestIdMiddleware
 from shieldchain.db.session import create_engine_from_url, create_session_factory
@@ -99,7 +102,29 @@ def create_app(
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.http_allowed_origins),
+        allow_credentials=False,
+        allow_methods=["DELETE", "GET", "POST"],
+        allow_headers=["Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=list(settings.http_allowed_hosts),
+        www_redirect=False,
+    )
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        maximum_bytes=settings.http_max_request_bytes,
+    )
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        production=settings.environment == "production",
+    )
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(HTTPException, http_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

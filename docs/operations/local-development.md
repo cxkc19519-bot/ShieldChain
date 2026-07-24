@@ -157,6 +157,24 @@ Remove-Item Env:\DEEPSEEK_API_KEY
 - 上传接口提示 multipart 解析不可用：重新执行 `.\.venv\Scripts\python.exe -m pip install -e ".\backend[test]"`；该命令会自动安装声明的 `python-multipart`。
 - 后端或 Vite 启动失败：检查 smoke 输出中的阶段和退出码；脚本只在系统临时目录保留运行期日志，并在结束时删除整个自有目录。
 - 就绪检查返回 503：检查 `DATABASE_URL` 指向的目录是否可写且已经迁移到 head。
+
+## 8. HTTP 安全与生产 profile
+
+开发默认只信任 `127.0.0.1`、`localhost` 和测试客户端 Host，并只允许本地 Vite 来源。可通过 JSON 数组形式的 `HTTP_ALLOWED_HOSTS` 与 `HTTP_ALLOWED_ORIGINS` 覆盖；`HTTP_MAX_REQUEST_BYTES` 控制所有声明了 `Content-Length` 的请求上限，知识上传仍受更小的专用解析与展开预算约束。
+
+生产 profile 示例：
+
+```powershell
+$env:ENVIRONMENT = "production"
+$env:HTTP_ALLOWED_HOSTS = '["shieldchain.example.internal"]'
+$env:HTTP_ALLOWED_ORIGINS = '["https://shieldchain.example.internal"]'
+```
+
+生产环境拒绝 Host/Origin 通配符。API 响应统一包含 `no-store`、CSP、Permissions-Policy、Referrer-Policy、`nosniff` 和防嵌入头；生产 profile 额外发送 HSTS。CORS 不携带凭据，只允许 `GET`、`POST`、`DELETE` 和 `Content-Type`/`X-Request-ID`，并仅向允许来源暴露请求 ID。
+
+请求体超过全局上限返回稳定的 `413 request_too_large`，无效 `Content-Length` 返回 `400 invalid_content_length`；响应不回显输入值。上传接口继续要求 `Content-Length`，并对 multipart 字段数、单文件大小、扩展名、媒体类型、文件名和解压资源预算分别失败关闭。
+
+历史 `test` 会归一化为 `testing`，环境名称忽略大小写；除此之外只接受 `development`、`testing` 和 `production`。
 - 调查未在 30 秒内结束或返回畸形数据：smoke 会非零退出、停止自有进程、删除自有文件并检查端口；修复根因后重新运行完整命令。
 
 当前持久化只支持本机 SQLite，启动和 smoke 只面向单机开发；这不是并发生产数据库或部署方案。Docker 不是阶段 7 本地开发的前置条件。真实云/安全设备适配器、真实模型自主规划、授权环境验证和 Docker Compose 部署仍是后续工作。
