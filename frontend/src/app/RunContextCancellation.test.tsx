@@ -35,7 +35,7 @@ it('aborts the previous page request when the shared run changes', async () => {
   const user = userEvent.setup()
   render(<RouterProvider router={router} />)
 
-  await user.click(screen.getByRole('button', { name: '查看协作轨迹' }))
+  await user.click(screen.getByRole('button', { name: '查看联合轨迹' }))
   expect(requestSignal?.aborted).toBe(false)
 
   const switcher = screen.getByRole('form', { name: '当前案件与运行' })

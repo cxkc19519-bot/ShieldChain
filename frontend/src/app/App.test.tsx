@@ -118,7 +118,7 @@ describe('future routes', () => {
   it('renders the read-only agents workbench at /agents', () => {
     renderRoute('/agents')
 
-    expect(screen.getByRole('heading', { name: '智能体工作台', level: 2 })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '智能体与 ReAct 工作台', level: 2 })).toBeVisible()
     expect(screen.getByText(/不展示私有上下文/)).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })

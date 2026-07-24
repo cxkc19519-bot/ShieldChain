@@ -18,4 +18,12 @@
 .agent-reasons code { padding: .3rem .5rem; color: var(--color-warning); background: #fff4d7; border-radius: .4rem; }
 .agent-handoffs, .agent-citations { display: grid; gap: .65rem; padding-left: 1.25rem; }
 .agent-citations li { display: flex; flex-wrap: wrap; gap: .65rem; }
-@media (max-width: 760px) { .agent-metrics, .agent-role-grid { grid-template-columns: 1fr; } .agent-run-form > div { flex-direction: column; } }
+.collaboration-workspace, .react-workspace { padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface-strong); }
+.react-timeline { display: grid; gap: var(--space-3); padding-left: 1.25rem; }
+.react-timeline li { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 3px solid var(--color-accent); background: white; }
+.react-control { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-warning); border-radius: var(--radius-control); background: var(--color-warning-bg); }
+.react-control label { display: grid; gap: var(--space-2); }
+.react-control input { width: 100%; }
+.react-control > div { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.agent-control-message { padding: var(--space-3); color: var(--color-status-healthy); background: var(--color-status-healthy-bg); border-radius: var(--radius-control); }
+@media (max-width: 760px) { .agent-metrics, .agent-role-grid { grid-template-columns: 1fr; } .agent-run-form > div { flex-direction: column; } .agent-workspace > header { flex-direction: column; } }
