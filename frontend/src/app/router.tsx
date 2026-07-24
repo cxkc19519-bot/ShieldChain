@@ -7,12 +7,14 @@ import { ToolsPage } from '../features/tools/ToolsPage'
 import { ReportsPage } from '../features/reports/ReportsPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { App } from './App'
+import { RouteErrorPage } from './RouteErrorPage'
 import { RunContextProvider } from './RunContext'
 
 export const appRoutes: RouteObject[] = [
   {
     path: '/',
     element: <RunContextProvider><App /></RunContextProvider>,
+    errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'events', element: <InvestigationPage /> },

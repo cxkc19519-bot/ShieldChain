@@ -1,8 +1,19 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+const stylesDirectory = resolve(process.cwd(), 'src')
+
+function stylesheetFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return stylesheetFiles(path)
+    return entry.name.endsWith('.css') ? [path] : []
+  })
+}
+
+const allCss = stylesheetFiles(stylesDirectory).map((file) => readFileSync(file, 'utf8')).join('\n')
 
 function readHexToken(name: string): string {
   const value = css.match(new RegExp(`${name}:\\s*(#[\\da-f]{6})`, 'i'))?.[1]
@@ -66,5 +77,23 @@ describe('application styles', () => {
     expect(activeRule).toContain('color: var(--color-accent)')
     expect(activeRule).toContain('background: var(--color-accent-soft)')
     expect(contrastRatio(accent, readHexToken('--color-accent-soft'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('defines every CSS custom property referenced across feature styles', () => {
+    const definitions = new Set([...allCss.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((match) => match[1]))
+    const references = new Set([...allCss.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)].map((match) => match[1]))
+    const missing = [...references].filter((name) => !definitions.has(name)).sort()
+
+    expect(missing).toEqual([])
+  })
+
+  it('supports 320px layouts and reduced-motion preferences', () => {
+    expect(css).toMatch(/min-width:\s*320px/)
+    expect(css).toMatch(/@media\s*\(max-width:\s*420px\)[\s\S]*?\.sidebar nav\s*{\s*grid-template-columns:\s*1fr/)
+    const reducedMotion = css.match(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{([\s\S]*)$/)?.[1]
+
+    expect(reducedMotion).toContain('animation-duration: 0.01ms !important')
+    expect(reducedMotion).toContain('animation-iteration-count: 1 !important')
+    expect(reducedMotion).toContain('transition-duration: 0.01ms !important')
   })
 })

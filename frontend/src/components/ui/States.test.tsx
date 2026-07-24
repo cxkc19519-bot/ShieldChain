@@ -8,9 +8,12 @@ describe('shared interface states', () => {
   it('announces loading and empty states without claiming success', () => {
     const { rerender } = render(<LoadingState title="正在加载案件" />)
     expect(screen.getByRole('status')).toHaveTextContent('正在加载案件')
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true')
 
     rerender(<EmptyState title="暂无案件" detail="启动调查后将在此显示。" />)
     expect(screen.getByRole('status')).toHaveTextContent('暂无案件')
+    expect(screen.getByRole('status')).not.toHaveAttribute('aria-busy')
     expect(screen.queryByText('已完成')).not.toBeInTheDocument()
   })
 

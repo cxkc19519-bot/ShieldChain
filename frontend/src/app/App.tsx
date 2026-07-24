@@ -2,6 +2,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { useRunContext } from './RunContext'
 import { RunContextSwitcher } from './RunContextSwitcher'
+import { useRouteFocus } from './useRouteFocus'
 
 const navigation = [
   { label: '运营总览', short: '总', to: '/' },
@@ -16,6 +17,8 @@ export function App() {
   const location = useLocation()
   const context = useRunContext()
   const contextKey = `${context.incidentId ?? ''}:${context.runId ?? ''}`
+
+  const main = useRouteFocus(location.pathname)
 
   return (
     <div className="app-frame">
@@ -52,7 +55,7 @@ export function App() {
             <p>所有变更动作均经策略、审批与验证。</p>
           </div>
         </aside>
-        <main className="content-panel" id="main-content" tabIndex={-1} key={contextKey}>
+        <main className="content-panel" id="main-content" tabIndex={-1} key={contextKey} ref={main}>
           <Outlet />
         </main>
       </div>

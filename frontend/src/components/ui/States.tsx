@@ -9,7 +9,7 @@ interface StateProps {
 function StatePanel({ kind, title, detail, action }: StateProps & { kind: string }) {
   const role = kind === 'error' ? 'alert' : 'status'
   return (
-    <div className={`state-panel state-panel--${kind}`} role={role} aria-live="polite">
+    <div className={`state-panel state-panel--${kind}`} role={role} aria-live="polite" aria-atomic="true" aria-busy={kind === 'loading' || undefined}>
       <span className="state-panel__mark" aria-hidden="true" />
       <div>
         <strong>{title}</strong>
