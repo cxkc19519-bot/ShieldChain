@@ -197,3 +197,31 @@ Set-Location backend
 应用 lifespan 在恢复中断运行后才标记 `accepting`；关闭开始时先切换为 `stopping`，再调用后台运行器的有界关闭。运行器停止接收新任务，等待配置的 1–30 秒超时，取消仍未完成的 asyncio 包装任务，并依赖下次启动恢复已经进入线程的短工作流。
 
 结构化日志只保留 request ID、方法、公开路径、状态、耗时和错误类型。tenant/principal/actor 标识、凭据、Cookie、提示、推理轨迹、原始 payload 与证据 payload 均在处理器中替换为 `[REDACTED]`。
+
+## 12. Docker Compose 部署
+
+部署入口为仓库根目录的 `compose.yaml`：
+
+```powershell
+docker compose up --build
+```
+
+启动顺序与边界如下：
+
+1. `migrate` 使用和后端相同的镜像执行 `alembic upgrade head`，成功退出后才允许后端启动。
+2. `backend` 只暴露到 Compose 内部网络，以数据库、精确迁移 head 与生命周期状态组成的 readiness 作为健康检查。
+3. `frontend` 使用非 root Nginx 在容器内监听 8080，只把宿主机 `127.0.0.1:8080` 映射到外部，并将 `/api/` 反向代理到后端。
+4. 三个服务均启用只读根文件系统、移除 Linux capabilities、设置 `no-new-privileges`，仅为运行时目录配置 `tmpfs`。
+5. SQLite 位于命名卷 `shieldchain-data`；`docker compose down` 不会删除该卷。只有明确需要销毁本地容器数据时才使用 `docker compose down -v`。
+
+前端探活：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8080/healthz
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/health/ready
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/health/version
+```
+
+生产环境仍应通过平台密钥服务注入真实凭据，不得写入镜像、Compose 文件或构建参数。当前 Compose 使用 SQLite，适合单实例演示和比赛交付，不代表多副本生产数据库方案。
+
+本次开发主机未安装 Docker CLI，所以只完成了静态合同测试；没有声称镜像可构建或服务可在容器中运行：`DOCKER_RUNTIME_TESTED=False`。基础镜像标签也未通过远端 registry 拉取验证。

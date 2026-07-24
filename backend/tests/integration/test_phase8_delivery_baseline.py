@@ -12,6 +12,7 @@ def test_delivery_manifest_has_every_required_artifact_and_truthful_status() -> 
         "source",
         "design",
         "development",
+        "container-deployment",
         "testing",
         "performance-baseline",
         "summary",
@@ -29,6 +30,7 @@ def test_delivery_manifest_has_every_required_artifact_and_truthful_status() -> 
     assert manifest["boundaries"] == {
         "network_access_tested": False,
         "real_model_planning_tested": False,
+        "docker_runtime_tested": False,
         "real_device_paths_tested": False,
     }
 

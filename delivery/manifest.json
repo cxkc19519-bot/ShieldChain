@@ -18,6 +18,11 @@
       "status": "available"
     },
     {
+      "id": "container-deployment",
+      "path": "docs/reports/phase8-container-contract.md",
+      "status": "available"
+    },
+    {
       "id": "query-performance",
       "path": "docs/reports/phase8-query-performance.md",
       "status": "available"
@@ -49,6 +54,7 @@
     }
   ],
   "boundaries": {
+    "docker_runtime_tested": false,
     "network_access_tested": false,
     "real_model_planning_tested": false,
     "real_device_paths_tested": false

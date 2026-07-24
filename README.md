@@ -46,3 +46,15 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-baseline.ps1
 - [安全标准](docs/standards/security-standards.md)
 
 任何 API Key、密码、令牌、真实告警或客户数据都不得写入代码、测试夹具、日志或版本库。
+
+## Docker Compose 部署
+
+安装 Docker Engine 与 Compose v2 后，可运行：
+
+```powershell
+docker compose up --build
+```
+
+浏览器访问 `http://127.0.0.1:8080`。Compose 会先执行 Alembic 迁移，再启动仅在内部网络暴露的后端和非 root Nginx 前端；SQLite 数据保存在命名卷中。停止服务使用 `docker compose down`，该命令默认保留数据卷。
+
+本仓库仍支持不依赖 Docker 的 Windows 本地开发。本次交付环境没有 Docker CLI，因此只验证了 Dockerfile、Nginx 和 Compose 的静态安全合同，未验证镜像构建或容器运行：`DOCKER_RUNTIME_TESTED=False`。

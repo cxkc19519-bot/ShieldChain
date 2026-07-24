@@ -47,3 +47,13 @@ Liveness 只反映进程响应能力；readiness 是数据库连通、Alembic �
 
 日志采用公开字段白名单与递归脱敏：request/correlation 标识可以保留，tenant、principal、actor、凭据、提示、推理轨迹以及原始证据或适配器 payload 不得进入日志输出。
 
+
+## 容器部署拓扑
+
+Compose 部署保持模块化单体边界：浏览器只连接宿主机回环地址上的非 root Nginx；Nginx 提供前端静态资源并把 `/api/` 转发到仅存在于内部网络的 FastAPI；一次性迁移服务与 FastAPI 共享后端镜像和 SQLite 命名卷。后端 readiness 通过后，前端才开始接受依赖 API 的流量。
+
+容器默认使用只读根文件系统、删除全部 capabilities、启用 `no-new-privileges` 并使用固定非 root UID。可写目录仅限明确声明的 `tmpfs` 和 SQLite 命名卷。配置不包含密钥；真实凭据必须由目标平台在运行时注入。
+
+该拓扑面向单机比赛演示和可复现验收。SQLite 命名卷不支持多副本写入或高可用承诺，未来生产扩展需要替换为受管关系数据库，并在授权环境中完成镜像、网络、备份恢复与真实适配器验证。
+
+当前开发环境没有 Docker CLI，拓扑仅由静态合同覆盖，容器运行边界明确记录为 `DOCKER_RUNTIME_TESTED=False`。

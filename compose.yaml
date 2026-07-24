@@ -1,0 +1,93 @@
+name: shieldchain
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  DATABASE_URL: sqlite:////var/lib/shieldchain/shieldchain.db
+  RAG_CONTENT_ROOT: /var/lib/shieldchain/knowledge
+  HTTP_ALLOWED_HOSTS: '["backend","localhost","127.0.0.1"]'
+  HTTP_ALLOWED_ORIGINS: '["http://localhost:8080","http://127.0.0.1:8080"]'
+  HTTP_MAX_REQUEST_BYTES: "27262976"
+
+x-backend-security: &backend-security
+  read_only: true
+  user: "10001:10001"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: shieldchain-backend:local
+    command:
+      - python
+      - -m
+      - alembic
+      - -c
+      - /app/backend/alembic.ini
+      - upgrade
+      - head
+    environment: *backend-environment
+    volumes:
+      - shieldchain-data:/var/lib/shieldchain
+    restart: "no"
+    <<: *backend-security
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: shieldchain-backend:local
+    environment: *backend-environment
+    volumes:
+      - shieldchain-data:/var/lib/shieldchain
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 6
+    restart: unless-stopped
+    stop_grace_period: 35s
+    <<: *backend-security
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: shieldchain-frontend:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    user: "101:101"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=16m,mode=0755,uid=101,gid=101
+      - /var/run:size=1m,mode=0755,uid=101,gid=101
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  shieldchain-data:
+    name: shieldchain-data
