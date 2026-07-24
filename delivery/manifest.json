@@ -1,0 +1,51 @@
+{
+  "schema_version": "shieldchain.delivery-manifest/v1",
+  "project": "ShieldChain",
+  "artifacts": [
+    {
+      "id": "source",
+      "path": "README.md",
+      "status": "available"
+    },
+    {
+      "id": "design",
+      "path": "docs/architecture/system-design.md",
+      "status": "available"
+    },
+    {
+      "id": "performance-baseline",
+      "path": "docs/reports/phase8-baseline.md",
+      "status": "available"
+    },
+    {
+      "id": "development",
+      "path": "docs/delivery/development-guide.md",
+      "status": "planned"
+    },
+    {
+      "id": "testing",
+      "path": "docs/delivery/test-report.md",
+      "status": "planned"
+    },
+    {
+      "id": "summary",
+      "path": "docs/delivery/project-summary.md",
+      "status": "planned"
+    },
+    {
+      "id": "slides",
+      "path": "delivery/shieldchain-presentation.pptx",
+      "status": "planned"
+    },
+    {
+      "id": "video",
+      "path": "delivery/shieldchain-demo.mp4",
+      "status": "planned"
+    }
+  ],
+  "boundaries": {
+    "network_access_tested": false,
+    "real_model_planning_tested": false,
+    "real_device_paths_tested": false
+  }
+}

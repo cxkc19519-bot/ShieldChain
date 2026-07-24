@@ -99,10 +99,11 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase5-smoke.ps1
-```
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase6-smoke.ps1
 powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase7-smoke.ps1
+powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-baseline.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
+```
 
 `test.ps1` 依次运行后端 Pytest 和前端 Vitest。阶段 2 smoke 使用真实本地后端和 Vite 验证调查闭环。阶段 3 smoke 使用临时 SQLite、临时内容目录和确定性离线云替身验证完整 RAG 链路。阶段 4 smoke 验证离线多智能体状态机、原子输出/交接/审计和只读轨迹。阶段 5 smoke 验证可信工具成功闭环、审批拒绝、同键冲突、未知结果、紧急停止和编排恢复。阶段 6 smoke 验证失败重规划后经可信网关成功、未知结果只查询、循环/预算停止、审批拒绝、人工接管和安全轨迹；全部路径不联网、不执行 Shell、不访问真实设备，也不宣称真实模型自主规划已验证。
 
@@ -116,6 +117,8 @@ powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 6. 阶段 3、阶段 4、阶段 5、阶段 6 与阶段 7 离线 smoke。
 
 验证脚本支持仓库路径包含空格。迁移数据库及阶段 3/4/5/6 smoke 数据均位于各自的系统临时目录并在退出时删除。完整 `verify.ps1` 与 smoke 会暂时移除全部四个已知实时测试开关，结束后恢复调用者环境，所以不会意外产生 DeepSeek、Embedding、Milvus 或 Reranker 云调用，也不会调用真实安全设备或真实模型规划器。
+Phase 8 基线脚本使用 3 次预热和每场景 25 个样本，输出毫秒级 p50/p95 并按机器可读预算失败关闭。当前只测量进程内 liveness HTTP 与固定 RAG 数据集加载；完整结果和限制见 `docs/reports/phase8-baseline.md`。
+
 
 阶段 2 smoke 完全不命名、读取、检查、创建、覆盖或删除仓库 `.env`。Alembic 和 FastAPI 后端都从唯一的系统临时工作目录启动，仅使用绝对仓库路径与子进程环境覆盖；Vite 继续从 `frontend` 工作目录启动。脚本会恢复调用者环境、停止仅由自己统一跟踪的 PID、删除自己的临时目录，并确认 8000/5173 不再监听。
 
