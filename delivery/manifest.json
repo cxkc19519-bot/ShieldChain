@@ -50,12 +50,12 @@
     {
       "id": "summary",
       "path": "docs/delivery/project-summary.md",
-      "status": "planned"
+      "status": "available"
     },
     {
       "id": "slides",
       "path": "delivery/shieldchain-presentation.pptx",
-      "status": "planned"
+      "status": "available"
     },
     {
       "id": "video",

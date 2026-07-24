@@ -13,7 +13,7 @@ def test_delivery_documents_cover_required_topics_and_real_paths() -> None:
         "source-code-guide.md": ("backend/src/shieldchain/main.py", "frontend/src/main.tsx"),
         "overall-design.md": ("ReAct", "readiness"),
         "development-guide.md": ("scripts\\verify.ps1", "requirements-runtime.lock"),
-        "test-report.md": ("1027 passed, 1 skipped", "90 tests passed"),
+        "test-report.md": ("1029 passed, 1 skipped", "90 tests passed"),
         "deployment-guide.md": ("docker compose up --build", "docker compose down -v"),
     }
     for name, required in documents.items():
