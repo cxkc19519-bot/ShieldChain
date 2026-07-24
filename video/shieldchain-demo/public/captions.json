@@ -1,0 +1,22 @@
+[
+  {"text":"盾链智御，把智能体判断变成可授权、可验证、可审计的安全运营闭环。","startMs":0,"endMs":9000,"timestampMs":null,"confidence":null},
+  {"text":"整个项目坚持离线可复现，也诚实标记没有完成的真实链路。","startMs":9000,"endMs":18000,"timestampMs":null,"confidence":null},
+  {"text":"安全运营真正困难的，不只是分析告警，而是能否放心执行。","startMs":18000,"endMs":27000,"timestampMs":null,"confidence":null},
+  {"text":"上下文、动作与验证之间的断层，会放大模型的不确定性。","startMs":27000,"endMs":36000,"timestampMs":null,"confidence":null},
+  {"text":"系统采用模块化单体，把语义能力与确定性控制分层。","startMs":36000,"endMs":45000,"timestampMs":null,"confidence":null},
+  {"text":"模型负责语义，代码负责权限、状态、预算与执行。","startMs":45000,"endMs":54000,"timestampMs":null,"confidence":null},
+  {"text":"每次处置都必须走完证据、决策、动作和再次验证。","startMs":54000,"endMs":63000,"timestampMs":null,"confidence":null},
+  {"text":"只有实际验证成功，系统才会报告闭环。","startMs":63000,"endMs":72000,"timestampMs":null,"confidence":null},
+  {"text":"上下文工程、受信工具网关和受控 ReAct 是三项核心创新。","startMs":72000,"endMs":81000,"timestampMs":null,"confidence":null},
+  {"text":"它们共同约束不确定性，而不是单纯放大自主性。","startMs":81000,"endMs":90000,"timestampMs":null,"confidence":null},
+  {"text":"失败关闭是一项产品能力：未知状态不会继续自动执行。","startMs":90000,"endMs":99000,"timestampMs":null,"confidence":null},
+  {"text":"审批、幂等、日志脱敏和非 root 容器形成纵深边界。","startMs":99000,"endMs":108000,"timestampMs":null,"confidence":null},
+  {"text":"六个工作区把底层闭环变成完整、可演示的产品。","startMs":108000,"endMs":117000,"timestampMs":null,"confidence":null},
+  {"text":"所有页面只消费服务端公开的白名单投影。","startMs":117000,"endMs":126000,"timestampMs":null,"confidence":null},
+  {"text":"当前完整后端一千零二十九项通过，前端九十项通过。","startMs":126000,"endMs":135000,"timestampMs":null,"confidence":null},
+  {"text":"性能、脚本、迁移、容器和供应链合同都有可复现证据。","startMs":135000,"endMs":144000,"timestampMs":null,"confidence":null},
+  {"text":"但 Docker 运行、远端 CI、真实模型规划和真实设备仍未验收。","startMs":144000,"endMs":153000,"timestampMs":null,"confidence":null},
+  {"text":"离线成功不能替代真实链路验收。","startMs":153000,"endMs":162000,"timestampMs":null,"confidence":null},
+  {"text":"下一步是在授权环境补齐容器、数据库和真实适配器灰度验证。","startMs":162000,"endMs":171000,"timestampMs":null,"confidence":null},
+  {"text":"让智能体可用的关键，是让每一步都可控。","startMs":171000,"endMs":180000,"timestampMs":null,"confidence":null}
+]
