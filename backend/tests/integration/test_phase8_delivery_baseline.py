@@ -11,11 +11,13 @@ def test_delivery_manifest_has_every_required_artifact_and_truthful_status() -> 
     assert {item["id"] for item in artifacts} == {
         "source",
         "design",
+        "source-guide",
         "development",
         "container-deployment",
         "testing",
         "performance-baseline",
         "summary",
+        "deployment",
         "query-performance",
         "slides",
         "video",

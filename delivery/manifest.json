@@ -9,7 +9,7 @@
     },
     {
       "id": "design",
-      "path": "docs/architecture/system-design.md",
+      "path": "docs/delivery/overall-design.md",
       "status": "available"
     },
     {
@@ -28,14 +28,24 @@
       "status": "available"
     },
     {
+      "id": "source-guide",
+      "path": "docs/delivery/source-code-guide.md",
+      "status": "available"
+    },
+    {
       "id": "development",
       "path": "docs/delivery/development-guide.md",
-      "status": "planned"
+      "status": "available"
     },
     {
       "id": "testing",
       "path": "docs/delivery/test-report.md",
-      "status": "planned"
+      "status": "available"
+    },
+    {
+      "id": "deployment",
+      "path": "docs/delivery/deployment-guide.md",
+      "status": "available"
     },
     {
       "id": "summary",

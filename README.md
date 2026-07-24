@@ -50,6 +50,11 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-container-smok
 
 ## Docker Compose 部署
 
+- [总体设计](docs/delivery/overall-design.md)
+- [源代码说明](docs/delivery/source-code-guide.md)
+- [开发说明](docs/delivery/development-guide.md)
+- [测试报告](docs/delivery/test-report.md)
+- [部署手册](docs/delivery/deployment-guide.md)
 安装 Docker Engine 与 Compose v2 后，可运行：
 
 ```powershell
