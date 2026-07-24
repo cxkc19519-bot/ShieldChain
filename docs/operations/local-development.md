@@ -225,3 +225,26 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/health/version
 生产环境仍应通过平台密钥服务注入真实凭据，不得写入镜像、Compose 文件或构建参数。当前 Compose 使用 SQLite，适合单实例演示和比赛交付，不代表多副本生产数据库方案。
 
 本次开发主机未安装 Docker CLI，所以只完成了静态合同测试；没有声称镜像可构建或服务可在容器中运行：`DOCKER_RUNTIME_TESTED=False`。基础镜像标签也未通过远端 registry 拉取验证。
+
+## 13. Phase 8 容器 smoke 与 CI
+
+容器 smoke 始终先运行 Dockerfile、Compose、锁文件和 CI 静态合同：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\run-phase8-container-smoke.ps1
+```
+
+Docker CLI 或 daemon 不可用时，脚本以零退出码完成静态合同，并输出 `DOCKER_RUNTIME_TESTED=False` 和原因；这不是容器运行通过。Docker 可用时，脚本创建随机且受限的 Compose project，构建镜像、等待健康、经随机回环端口验证前端及三个健康端点、检查非 root UID 和只读根文件系统，最后只删除该 project 自己的容器、网络与数据卷。
+
+`-StaticOnly` 强制只跑静态合同，Windows CI 使用这一模式；Linux CI 执行真实 Compose smoke。CI 不读取仓库 `.env`、不调用真实模型或安全设备，也没有写仓库内容的权限。
+
+Python 生产镜像依赖由 `backend/requirements-runtime.lock` 固定，CI 测试环境由 `backend/requirements.lock` 固定；前端依赖由 npm v3 `package-lock.json` 固定并校验 registry 包的 SHA-512 integrity。CI 安装后运行 `pip check` 与 `npm ls`；这些是依赖一致性检查，不等同于持续更新的漏洞情报扫描。
+
+GitHub Actions 工作流仅授予 `contents: read`，checkout 不保留凭据，所有第三方 Actions 都固定到完整 40 位 commit SHA。CI 首次安装依赖和真实容器构建仍需要访问官方软件仓库与镜像 registry；应用测试路径本身保持离线，不调用真实云服务。
+
+本机结果：
+
+- 静态容器与供应链合同：`10 passed`。
+- `pip check`：`No broken requirements found`。
+- Docker CLI：不可用，`DOCKER_RUNTIME_TESTED=False`。
+- GitHub Actions：尚未推送或远端执行，`CI_RUNTIME_TESTED=False`。

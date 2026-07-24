@@ -7,8 +7,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 WORKDIR /build
 RUN python -m venv /opt/venv
 COPY backend/pyproject.toml /build/backend/pyproject.toml
+COPY backend/requirements-runtime.lock /build/backend/requirements-runtime.lock
 COPY backend/src /build/backend/src
-RUN /opt/venv/bin/python -m pip install /build/backend
+RUN /opt/venv/bin/python -m pip install -r /build/backend/requirements-runtime.lock \
+    && /opt/venv/bin/python -m pip install --no-deps /build/backend
 
 FROM python:3.14.6-slim-bookworm AS runtime
 
