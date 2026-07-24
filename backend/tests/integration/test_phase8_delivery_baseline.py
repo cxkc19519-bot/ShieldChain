@@ -21,6 +21,8 @@ def test_delivery_manifest_has_every_required_artifact_and_truthful_status() -> 
         "query-performance",
         "slides",
         "video",
+        "submission-package",
+        "submission-checksums",
     }
     for artifact in artifacts:
         assert set(artifact) == {"id", "path", "status"}

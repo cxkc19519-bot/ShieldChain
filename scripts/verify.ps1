@@ -43,7 +43,7 @@ else {
     $smokeCommand = $powerShellCommand
     $smokeArguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        (Join-Path $ProjectRoot "tests\scripts\run-phase7-smoke.ps1")
+        (Join-Path $ProjectRoot "tests\scripts\run-phase8-smoke.ps1")
     )
 }
 

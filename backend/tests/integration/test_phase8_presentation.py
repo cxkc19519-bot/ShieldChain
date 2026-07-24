@@ -26,7 +26,7 @@ def test_project_summary_matches_verified_evidence_and_boundaries() -> None:
         encoding="utf-8"
     )
     for evidence in (
-        "1029 passed, 1 skipped",
+        "1037 passed, 1 skipped",
         "90 tests passed",
         "2.499 ms",
         "0.114 ms",

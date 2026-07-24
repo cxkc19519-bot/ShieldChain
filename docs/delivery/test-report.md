@@ -3,10 +3,10 @@
 ## 本地结论（2026-07-24）
 
 - 后端 Ruff：通过。
-- 后端 Pytest：`1029 passed, 1 skipped`；跳过项为需明确授权的 live 测试，另有不可写 `.pytest_cache` 警告。
+- 后端 Pytest：`1037 passed, 1 skipped`；跳过项为需明确授权的 live 测试，另有不可写 `.pytest_cache` 警告。
 - 前端 Vitest：`24 files passed, 90 tests passed`。
 - 前端 TypeScript 与 Vite 生产构建：通过。
-- PowerShell 脚本合同：`53 passed`。
+- PowerShell 脚本合同：`54 passed`。
 - 容器与供应链静态合同：`10 passed`。
 - `pip check`：`No broken requirements found`。
 

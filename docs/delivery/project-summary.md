@@ -24,7 +24,7 @@ tenant、principal、actor 和授权上下文由服务端持有。公开 API、�
 
 ## 验证结果
 
-截至 2026-07-24，本地完整后端为 `1029 passed, 1 skipped`，前端为 `24 files / 90 tests passed`，PowerShell 脚本合同 `53 passed`，容器与供应链静态合同 `10 passed`。Liveness HTTP 固定样本 p95 为 `2.499 ms`，RAG 数据集加载 p95 为 `0.114 ms`，均低于 `100 ms` 本地预算。
+截至 2026-07-24，本地完整后端为 `1037 passed, 1 skipped`，前端为 `24 files / 90 tests passed`，PowerShell 脚本合同 `54 passed`，容器与供应链静态合同 `10 passed`。Liveness HTTP 固定样本 p95 为 `2.499 ms`，RAG 数据集加载 p95 为 `0.114 ms`，均低于 `100 ms` 本地预算。
 
 SQLite 热查询通过 `EXPLAIN QUERY PLAN` 合同使用覆盖排序索引；Alembic 当前 head 为 `20260724_01`，已有升—降—升回归。
 

@@ -61,6 +61,16 @@
       "id": "video",
       "path": "delivery/shieldchain-demo.mp4",
       "status": "available"
+    },
+    {
+      "id": "submission-package",
+      "path": "delivery/shieldchain-submission.zip",
+      "status": "available"
+    },
+    {
+      "id": "submission-checksums",
+      "path": "delivery/submission-files.sha256",
+      "status": "available"
     }
   ],
   "boundaries": {
