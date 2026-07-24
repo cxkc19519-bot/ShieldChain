@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -95,17 +95,13 @@ describe('dashboard health', () => {
   })
 })
 
-describe('future routes', () => {
-  it.each(['/reports'])(
-    'marks %s as not implemented',
-    (path) => {
-      renderRoute(path)
-
-      expect(screen.getByText('尚未进入该开发阶段')).toBeVisible()
-      expect(getLivenessMock).not.toHaveBeenCalled()
-      expect(within(screen.getByRole('main')).queryByRole('button')).not.toBeInTheDocument()
-    },
-  )
+describe('product routes', () => {
+  it('renders the read-only report workspace at /reports', () => {
+    renderRoute('/reports')
+    expect(screen.getByRole('heading', { name: '报告与审计', level: 2 })).toBeVisible()
+    expect(screen.getByText('尚未选择报告范围')).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
 
   it('renders the trusted tool control center at /response', () => {
     renderRoute('/response')

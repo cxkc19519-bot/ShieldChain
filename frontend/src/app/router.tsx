@@ -4,10 +4,10 @@ import { AgentsPage } from '../features/agents/AgentsPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { InvestigationPage } from '../features/investigation/InvestigationPage'
 import { ToolsPage } from '../features/tools/ToolsPage'
+import { ReportsPage } from '../features/reports/ReportsPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { App } from './App'
 import { RunContextProvider } from './RunContext'
-import { FuturePage } from './FuturePage'
 
 export const appRoutes: RouteObject[] = [
   {
@@ -19,7 +19,7 @@ export const appRoutes: RouteObject[] = [
       { path: 'agents', element: <AgentsPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
       { path: 'response', element: <ToolsPage /> },
-      { path: 'reports', element: <FuturePage /> },
+      { path: 'reports', element: <ReportsPage /> },
     ],
   },
 ]
