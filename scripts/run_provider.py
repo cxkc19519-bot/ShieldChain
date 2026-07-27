@@ -1,12 +1,13 @@
 import argparse
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 from saga.adapters.http.provider import router as provider_router
 from saga.adapters.http.errors import register_exception_handlers
 from saga.adapters.persistence.memory import InMemoryAgentRegistry, InMemoryUserRegistry
-from saga.protocols.agent_registration import UserRegistrationService
+from saga.protocols.user_registration import UserRegistrationService
 from saga.protocols.contact_resolution import ContactResolutionService
 from saga.ports.identity import IdentityVerifier
 from saga.ports.clock import Clock
@@ -35,6 +36,13 @@ def main():
     args = parser.parse_args()
 
     app = FastAPI(title="SAGA Provider API")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     register_exception_handlers(app)
     app.include_router(provider_router)
 

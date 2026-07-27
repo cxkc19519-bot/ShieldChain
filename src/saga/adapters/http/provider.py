@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
 from saga.domain.agents import AgentId, RegisteredPublicOtk
 from saga.domain.encoding import EndpointValue
@@ -179,3 +180,90 @@ async def get_dashboard_metrics(request: Request):
             for agent_id in getattr(agent_registry, "_registrations", {}).keys()
         ]
     }
+
+
+class SimulateAttackRequest(BaseModel):
+    attack_type: str
+
+@router.post("/api/simulate-attack")
+async def simulate_attack(req: SimulateAttackRequest):
+    import httpx
+    import ssl
+    from pathlib import Path
+    from saga.adapters.tls.config import build_agent_client_ssl_context
+    import base64
+
+    attack_type = req.attack_type
+    pki_dir = Path("tests/fixtures/pki")
+    ca_cert = pki_dir / "ca_cert.pem"
+    
+    # Simulate Bob attacking Alice
+    bob_cert = pki_dir / "agent_b_fullchain.pem"
+    bob_key = pki_dir / "agent_b_key.pem"
+    
+    if not (ca_cert.exists() and bob_cert.exists() and bob_key.exists()):
+        return {"status": "error", "message": "PKI certificates not found for simulation."}
+        
+    ctx = build_agent_client_ssl_context(
+        cert_path=bob_cert,
+        key_path=bob_key,
+        ca_cert_path=ca_cert,
+    )
+    
+    target_url = "https://127.0.0.1:8001"
+    headers = {"X-Test-Peer-Identity": "urn:saga:agent:bob:agent-b"}
+    
+    async with httpx.AsyncClient(verify=ctx) as client:
+        try:
+            if attack_type == "tamper":
+                response = await client.post(
+                    f"{target_url}/act/establish",
+                    headers=headers,
+                    json={
+                        "initiating_agent_certificate_der_b64": base64.b64encode(b"\\x02" * 100).decode("ascii"),
+                        "initiating_agent_access_control_public_key_b64": base64.b64encode(b"\\x02" * 32).decode("ascii"),
+                        "provider_attestation_signature_b64": base64.b64encode(b"\\x02" * 64).decode("ascii"),
+                        "allocated_otk_ordinal": 0,
+                        "allocated_otk_public_key_b64": base64.b64encode(b"\\x02" * 32).decode("ascii"),
+                        "allocated_otk_user_signature_b64": base64.b64encode(b"\\x02" * 64).decode("ascii"),
+                        "q_max": 10,
+                        "lifetime_ms": 60000,
+                    }
+                )
+                return {"status": response.status_code, "text": response.text, "type": "数据篡改阻断 (Tamper Blocked)"}
+                
+            elif attack_type == "mitm":
+                response = await client.post(
+                    f"{target_url}/act/use",
+                    headers=headers,
+                    json={
+                        "act_version": 1,
+                        "act_ciphertext_b64": base64.b64encode(b"stolen_ciphertext").decode("ascii"),
+                        "act_nonce_b64": base64.b64encode(b"\\x03" * 32).decode("ascii"),
+                        "initiating_agent_access_control_public_key_b64": base64.b64encode(b"\\xff" * 32).decode("ascii"),
+                        "action": "do_something",
+                        "payload_b64": "",
+                    }
+                )
+                return {"status": response.status_code, "text": response.text, "type": "身份绑定阻断 (MITM Blocked)"}
+                
+            elif attack_type == "replay":
+                response = await client.post(
+                    f"{target_url}/act/use",
+                    headers=headers,
+                    json={
+                        "act_version": 1,
+                        "act_ciphertext_b64": base64.b64encode(b"old_ciphertext").decode("ascii"),
+                        "act_nonce_b64": base64.b64encode(b"\\x01" * 32).decode("ascii"),
+                        "initiating_agent_access_control_public_key_b64": base64.b64encode(b"\\x02" * 32).decode("ascii"),
+                        "action": "transfer_funds",
+                        "payload_b64": "",
+                    }
+                )
+                return {"status": response.status_code, "text": response.text, "type": "重放/伪造拦截 (Replay Blocked)"}
+                
+            else:
+                return {"status": 400, "message": "Unknown attack type"}
+                
+        except httpx.RequestError as e:
+            return {"status": "error", "message": f"Network Error: {str(e)}"}

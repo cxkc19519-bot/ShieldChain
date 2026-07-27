@@ -1,10 +1,17 @@
+README.md
 pyproject.toml
 src/saga/__init__.py
 src/saga/adapters/__init__.py
 src/saga/adapters/crypto.py
+src/saga/adapters/http/agent.py
+src/saga/adapters/http/errors.py
+src/saga/adapters/http/provider.py
+src/saga/adapters/http/schemas.py
 src/saga/adapters/persistence/__init__.py
 src/saga/adapters/persistence/memory.py
 src/saga/adapters/persistence/sqlite.py
+src/saga/adapters/tls/config.py
+src/saga/adapters/tls/peer_identity.py
 src/saga/crypto/__init__.py
 src/saga/crypto/aead.py
 src/saga/crypto/canonical.py
@@ -14,6 +21,7 @@ src/saga/crypto/key_agreement.py
 src/saga/crypto/passwords.py
 src/saga/crypto/signatures.py
 src/saga/domain/__init__.py
+src/saga/domain/act.py
 src/saga/domain/agents.py
 src/saga/domain/contact.py
 src/saga/domain/encoding.py
@@ -21,6 +29,7 @@ src/saga/domain/errors.py
 src/saga/domain/events.py
 src/saga/domain/otk.py
 src/saga/domain/policies.py
+src/saga/domain/token_state.py
 src/saga/domain/users.py
 src/saga/ports/__init__.py
 src/saga/ports/clock.py
@@ -29,8 +38,11 @@ src/saga/ports/identity.py
 src/saga/ports/random.py
 src/saga/ports/registries.py
 src/saga/ports/signing.py
+src/saga/ports/token_state.py
 src/saga/ports/transactions.py
 src/saga/protocols/__init__.py
+src/saga/protocols/act_establishment.py
+src/saga/protocols/act_use.py
 src/saga/protocols/agent_registration.py
 src/saga/protocols/contact_management.py
 src/saga/protocols/contact_resolution.py
