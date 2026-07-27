@@ -17,12 +17,12 @@ vi.mock('../features/knowledge/api', () => ({
 }))
 
 const pages = [
-  ['/', '运营总览'],
+  ['/dashboard', '运营总览'],
   ['/events', '事件调查'],
   ['/agents', '智能体与 ReAct 工作台'],
   ['/knowledge', '知识库工作台'],
   ['/response', '处置中心'],
-  ['/reports', '报告与审计'],
+  ['/reports', '历史报告'],
 ] as const
 
 let fetchMock: ReturnType<typeof vi.fn>
@@ -49,6 +49,6 @@ describe('Phase 7 offline cross-page smoke', () => {
       expect(screen.queryByText(/raw_prompt|chain_of_thought|token_digest|tenant_id|principal_id/)).not.toBeInTheDocument()
       view.unmount()
     }
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/reports/history', expect.objectContaining({ method: 'GET' }))
   })
 })

@@ -93,4 +93,16 @@ describe('ToolsPage', () => {
     expect(screen.getByText('approved')).toBeVisible()
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument()
   })
-})
+
+  it('keeps a successful automation restore when the current run has no trusted trace', async () => {
+    api.getToolTrace.mockRejectedValue(new Error('Trusted tool trace not found'))
+    api.setEmergencyStop.mockResolvedValue({ call_id: null, status: 'automation_enabled', revision: 2 })
+    render(<ToolsPage initialRunId={ID} embedded />)
+    await screen.findByRole('alert')
+
+    const restore = screen.getByRole('button', { name: '恢复自动化' })
+    await waitFor(() => expect(restore).not.toBeDisabled())
+    fireEvent.click(restore)
+    expect(await screen.findByText(/automation_enabled/)).toBeVisible()
+    expect(api.getToolTrace).toHaveBeenCalledTimes(1)
+  })})

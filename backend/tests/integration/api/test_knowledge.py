@@ -20,6 +20,7 @@ from shieldchain.rag.schemas import (
     DocumentVersionView,
     EvaluationRequest,
     EvaluationResponse,
+    KnowledgeBaseDeleteResponse,
     KnowledgeBaseView,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentView,
@@ -89,6 +90,10 @@ class FakeKnowledgeService:
     def create_knowledge_base(self, payload: CreateKnowledgeBaseRequest, *, tenant_id: UUID):
         self.calls.append(("create_base", tenant_id, None))
         return self._base().model_copy(update={"name": payload.name})
+
+    def delete_knowledge_base(self, knowledge_base_id: UUID, *, tenant_id: UUID):
+        self.calls.append(('delete_base', tenant_id, knowledge_base_id))
+        return KnowledgeBaseDeleteResponse(id=knowledge_base_id, status='completed')
 
     def upload_document(
         self, knowledge_base_id: UUID, upload: UploadedDocument, *, tenant_id: UUID
@@ -193,6 +198,16 @@ def test_base_document_and_upload_contract_is_server_tenant_bound(knowledge_clie
     )
     assert all(call[1] == TENANT for call in service.calls if call[0] != "evaluate")
 
+
+
+def test_delete_knowledge_base_contract_is_server_tenant_bound(knowledge_client) -> None:
+    client, service = knowledge_client
+
+    deleted = client.delete(f'/api/v1/knowledge-bases/{BASE}')
+
+    assert deleted.status_code == 202
+    assert deleted.json() == {'id': str(BASE), 'status': 'completed'}
+    assert ('delete_base', TENANT, BASE) in service.calls
 
 def test_versions_lifecycle_retrieval_and_evaluation_contract(knowledge_client) -> None:
     client, service = knowledge_client

@@ -116,6 +116,14 @@ textarea:focus-visible {
   font-weight: 800;
 }
 
+.brand-mark-img {
+  width: 3.4rem;
+  height: 3.4rem;
+  object-fit: contain;
+  border-radius: 0.8rem;
+  box-shadow: var(--shadow-control);
+}
+
 .environment-state {
   display: flex;
   align-items: center;
@@ -137,6 +145,10 @@ textarea:focus-visible {
   padding: 1.5rem clamp(1rem, 4vw, 3rem);
   border-bottom: 1px solid var(--color-border);
   background: rgb(248 252 255 / 92%);
+}
+
+.brand-lockup .brand-kicker {
+  margin-left: 0.15rem; /* Visually align with the character below */
 }
 
 .brand-kicker,
@@ -190,7 +202,8 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
-.sidebar a {
+.sidebar a,
+.top-nav a {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -202,28 +215,109 @@ textarea:focus-visible {
 }
 
 .sidebar a:hover,
-.sidebar a.active {
+.sidebar a.active,
+.top-nav a:hover,
+.top-nav a.active {
   color: var(--color-accent);
   background: var(--color-accent-soft);
   font-weight: 700;
 }
 
-.nav-mark {
-  display: grid;
-  flex: 0 0 1.8rem;
-  height: 1.8rem;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 0.55rem;
-  background: white;
-  font-size: 0.75rem;
-  font-weight: 800;
+.nav-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: transform var(--transition-fast), color var(--transition-fast);
 }
 
-.sidebar a.active .nav-mark {
-  border-color: var(--color-accent);
-  color: white;
-  background: var(--color-accent);
+.top-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.65rem;
+  color: var(--color-text);
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.top-nav-item:hover,
+.top-nav-item.active {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.top-nav-item:hover .nav-icon,
+.top-nav-item.active .nav-icon {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.nav-dropdown-container {
+  position: relative;
+}
+
+.nav-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 14rem;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  z-index: 100;
+}
+
+.nav-dropdown-container:hover .nav-dropdown-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.nav-dropdown-menu a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0.75rem 1rem;
+  border-radius: 0.65rem;
+  color: var(--color-text);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.nav-dropdown-menu a:hover,
+.nav-dropdown-menu a.active {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: 700;
+}
+
+.nav-dropdown-menu a:hover .nav-icon,
+.nav-dropdown-menu a.active .nav-icon {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .sidebar__boundary {
@@ -518,3 +612,9 @@ textarea {
     transition-delay: 0ms !important;
   }
 }
+
+.run-context__summary { margin: 0; color: var(--color-text-muted); font-size: 0.85rem; }
+.run-context__advanced summary { cursor: pointer; color: var(--color-text-muted); font-size: 0.78rem; }
+.run-context__advanced[open] { display: grid; gap: var(--space-2); }
+
+.app-shell--single { grid-template-columns: minmax(0, 1fr); }

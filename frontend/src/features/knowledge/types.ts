@@ -36,6 +36,15 @@ export interface KnowledgeDocument {
   versions: KnowledgeVersion[]
 }
 
+export interface KnowledgeChunk {
+  id: string
+  ordinal: number
+  offset: number
+  length: number
+  text: string
+  integrity_sha256: string
+}
+
 export interface RetrievalResult {
   query: string
   answer: string | null

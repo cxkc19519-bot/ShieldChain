@@ -19,9 +19,11 @@ from shieldchain.rag.api_service import (
 )
 from shieldchain.rag.schemas import (
     CreateKnowledgeBaseRequest,
+    DocumentChunkListResponse,
     DocumentVersionListResponse,
     EvaluationRequest,
     EvaluationResponse,
+    KnowledgeBaseDeleteResponse,
     KnowledgeBaseListResponse,
     KnowledgeBaseView,
     KnowledgeDocumentListResponse,
@@ -36,16 +38,12 @@ _UPLOAD_FIELDS = frozenset({"file", "sensitivity", "permission_tags"})
 _SENSITIVITIES = frozenset({"public", "internal", "confidential", "restricted"})
 _UPLOAD_MEDIA_TYPES = {
     ".pdf": frozenset({"application/pdf"}),
-    ".docx": frozenset(
-        {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-    ),
+    ".docx": frozenset({"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}),
     ".md": frozenset({"text/markdown", "text/plain"}),
     ".txt": frozenset({"text/plain"}),
     ".html": frozenset({"text/html"}),
     ".csv": frozenset({"text/csv", "application/vnd.ms-excel"}),
-    ".xlsx": frozenset(
-        {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
-    ),
+    ".xlsx": frozenset({"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
 }
 
 
@@ -103,14 +101,25 @@ def create_knowledge_base(
     )
 
 
+@router.delete(
+    "/knowledge-bases/{knowledge_base_id}",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=KnowledgeBaseDeleteResponse,
+)
+def delete_knowledge_base(knowledge_base_id: UUID, request: Request) -> KnowledgeBaseDeleteResponse:
+    return _call(
+        lambda: _service(request).delete_knowledge_base(
+            knowledge_base_id, tenant_id=_tenant_id(request)
+        )
+    )
+
+
 @router.post(
     "/knowledge-bases/{knowledge_base_id}/documents",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=KnowledgeDocumentView,
 )
-async def upload_document(
-    knowledge_base_id: UUID, request: Request
-) -> KnowledgeDocumentView:
+async def upload_document(knowledge_base_id: UUID, request: Request) -> KnowledgeDocumentView:
     content_length = request.headers.get("content-length")
     maximum = request.app.state.settings.rag_max_upload_bytes
     if content_length is None:
@@ -157,8 +166,9 @@ async def upload_document(
         raise ApiError("invalid_permission_tags", "Permission tags are invalid", 422)
     media_type = file.content_type or "application/octet-stream"
     extension = PurePath(filename).suffix.casefold()
-    if extension not in _UPLOAD_MEDIA_TYPES or media_type.casefold() not in (
-        _UPLOAD_MEDIA_TYPES[extension]
+    if (
+        extension not in _UPLOAD_MEDIA_TYPES
+        or media_type.casefold() not in (_UPLOAD_MEDIA_TYPES[extension])
     ):
         await file.close()
         raise ApiError("unsupported_document", "Document format is not supported", 422)
@@ -180,22 +190,28 @@ async def upload_document(
     "/knowledge-bases/{knowledge_base_id}/documents",
     response_model=KnowledgeDocumentListResponse,
 )
-def list_documents(
-    knowledge_base_id: UUID, request: Request
-) -> KnowledgeDocumentListResponse:
+def list_documents(knowledge_base_id: UUID, request: Request) -> KnowledgeDocumentListResponse:
     return _call(
-        lambda: _service(request).list_documents(
-            knowledge_base_id, tenant_id=_tenant_id(request)
-        )
+        lambda: _service(request).list_documents(knowledge_base_id, tenant_id=_tenant_id(request))
+    )
+
+
+@router.get("/documents/{document_id}/versions", response_model=DocumentVersionListResponse)
+def list_versions(document_id: UUID, request: Request) -> DocumentVersionListResponse:
+    return _call(
+        lambda: _service(request).list_versions(document_id, tenant_id=_tenant_id(request))
     )
 
 
 @router.get(
-    "/documents/{document_id}/versions", response_model=DocumentVersionListResponse
+    "/documents/{document_id}/versions/{version_id}/chunks",
+    response_model=DocumentChunkListResponse,
 )
-def list_versions(document_id: UUID, request: Request) -> DocumentVersionListResponse:
+def list_chunks(document_id: UUID, version_id: UUID, request: Request) -> DocumentChunkListResponse:
     return _call(
-        lambda: _service(request).list_versions(document_id, tenant_id=_tenant_id(request))
+        lambda: _service(request).list_chunks(
+            document_id, version_id, tenant_id=_tenant_id(request)
+        )
     )
 
 

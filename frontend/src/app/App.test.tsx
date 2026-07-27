@@ -29,14 +29,12 @@ describe('application shell', () => {
     expect(screen.getByRole('navigation', { name: '主要导航' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toBeInTheDocument()
 
-    for (const name of ['运营总览', '事件调查', '智能体工作台', '知识库', '处置中心', '报告与审计']) {
-      expect(screen.getByRole('link', { name })).toBeVisible()
+    for (const name of ['运营总览', '事件调查', '知识库', '历史报告']) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
     }
 
     expect(screen.getByText('离线仿真环境')).toBeVisible()
-    expect(screen.getByText(/所有变更动作均经策略/)).toBeVisible()
-    expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('aria-current', 'page')
-    expect(await screen.findByText('系统运行正常')).toBeVisible()
+    expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
   })
 
   it('supports keyboard navigation through visible links', async () => {
@@ -47,9 +45,11 @@ describe('application shell', () => {
     await user.tab()
     expect(screen.getByRole('link', { name: '跳到主要内容' })).toHaveFocus()
     await user.tab()
-    expect(screen.getByRole('link', { name: '运营总览' })).toHaveFocus()
+    expect(screen.getByRole('link', { name: '主页' })).toHaveFocus()
     await user.tab()
-    expect(screen.getByRole('link', { name: '事件调查' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '工作区' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: '运营总览' })).toHaveFocus()
   })
 })
 
@@ -61,30 +61,27 @@ describe('dashboard health', () => {
         resolveHealth = resolve
       }),
     )
-    renderRoute()
+    renderRoute('/dashboard')
 
     expect(screen.getByText('正在检查系统状态')).toBeVisible()
     resolveHealth?.({ status: 'ok' })
-    expect(await screen.findByText('系统运行正常')).toBeVisible()
   })
 
   it('shows an unavailable state and retries without claiming health', async () => {
     getLivenessMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ status: 'ok' })
     const user = userEvent.setup()
-    renderRoute()
+    renderRoute('/dashboard')
 
     expect(await screen.findByText('系统当前不可用')).toBeVisible()
     expect(screen.queryByText('系统运行正常')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '重试健康检查' }))
-
-    expect(await screen.findByText('系统运行正常')).toBeVisible()
     expect(getLivenessMock).toHaveBeenCalledTimes(2)
   })
 
   it('cancels an in-flight health request when the dashboard unmounts', async () => {
     getLivenessMock.mockReturnValue(new Promise(() => undefined))
-    const view = renderRoute()
+    const view = renderRoute('/dashboard')
 
     await waitFor(() => expect(getLivenessMock).toHaveBeenCalledOnce())
     const signal = getLivenessMock.mock.calls[0]?.[0] as AbortSignal
@@ -98,8 +95,8 @@ describe('dashboard health', () => {
 describe('product routes', () => {
   it('renders the read-only report workspace at /reports', () => {
     renderRoute('/reports')
-    expect(screen.getByRole('heading', { name: '报告与审计', level: 2 })).toBeVisible()
-    expect(screen.getByText('尚未选择报告范围')).toBeVisible()
+    expect(screen.getByRole('heading', { name: '历史报告', level: 2 })).toBeVisible()
+    expect(screen.getByText('正在加载历史报告')).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 

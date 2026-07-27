@@ -20,6 +20,8 @@ CONDA_PREFIX = Path(r"D:\anaconda\envs\ShieldChain")
 CONDA_PYTHON = CONDA_PREFIX / "python.exe"
 BACKEND_URL = "http://127.0.0.1:8000"
 FRONTEND_URL = "http://127.0.0.1:5173"
+MILVUS_PORT = 19530
+MILVUS_COMPOSE = ROOT / "docker-compose.rag-local.yml"
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +80,35 @@ def prepare_environment() -> tuple[Path, Path]:
             raise SystemExit(f"Port {port} is already occupied. Stop its process and retry.")
     return Path(node), vite
 
+
+def ensure_milvus() -> None:
+    """Start the local Milvus stack before accepting knowledge uploads."""
+    if not port_is_available(MILVUS_PORT):
+        print(f"Milvus: 127.0.0.1:{MILVUS_PORT} is already listening.")
+        return
+    docker = shutil.which("docker.exe") or shutil.which("docker")
+    if docker is None:
+        raise SystemExit("Docker Desktop is required for the local Milvus vector database.")
+    try:
+        subprocess.run(
+            [docker, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            "Docker Desktop is not running. Start Docker Desktop, then run app.py again."
+        ) from error
+    print("Starting local Milvus vector database...")
+    subprocess.run([docker, "compose", "-f", str(MILVUS_COMPOSE), "up", "-d"], cwd=ROOT, check=True)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if not port_is_available(MILVUS_PORT):
+            print(f"Milvus: ready on 127.0.0.1:{MILVUS_PORT}.")
+            return
+        time.sleep(1)
+    raise TimeoutError("Milvus did not become ready within 120 seconds.")
 
 def run_migrations() -> None:
     print("Applying database migrations...")
@@ -143,6 +174,7 @@ def main() -> int:
     if args.check:
         print("ShieldChain startup prerequisites are ready.")
         return 0
+    ensure_milvus()
     if not args.skip_migrations:
         run_migrations()
 

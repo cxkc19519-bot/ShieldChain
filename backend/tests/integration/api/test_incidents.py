@@ -19,7 +19,11 @@ from shieldchain.incidents.domain import InvestigationStatus, RunMode
 from shieldchain.incidents.persistence import (
     AuditEventRow,
     EvidenceRecordRow,
+    IncidentRow,
     InvestigationRunRow,
+    InvestigationStepRow,
+    SimulationInstanceRow,
+    SimulationToolCallRow,
 )
 from shieldchain.incidents.ports import InvalidInvestigationState
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
@@ -83,7 +87,7 @@ def test_reset_returns_exact_shape_and_uses_incoming_request_id(incident_context
         "fail_block_consumed",
     }
     assert set(body["incident"]) == {
-        "id", "external_id", "simulation_instance_id", "alert_id", "alert_status",
+        "id", "tracking_id", "external_id", "simulation_instance_id", "alert_id", "alert_status",
         "endpoint", "username", "source_ip", "remote_ip", "remote_port", "process_name",
         "parent_process_name", "command_summary", "threat_label", "created_at",
     }
@@ -120,7 +124,7 @@ def test_start_is_pending_202_exact_shape_and_schedules_after_commit(incident_co
     assert response.headers["X-Request-ID"] == "req-start"
     body = response.json()
     assert set(body) == {
-        "run_id", "incident_id", "simulation_instance_id", "status", "mode", "created_at",
+        "run_id", "run_tracking_id", "incident_id", "incident_tracking_id", "simulation_instance_id", "status", "mode", "created_at",
         "updated_at", "completed_at", "simulation", "steps", "evidence", "assessment",
         "tool_result", "verification",
     }
@@ -134,6 +138,27 @@ def test_start_is_pending_202_exact_shape_and_schedules_after_commit(incident_co
         assert session.get(InvestigationRunRow, str(run_id)).status == "pending"
     assert runner.started == [(run_id, "req-start", False)]
 
+
+def test_historical_reports_are_ordered_and_expose_only_report_card_fields(incident_context) -> None:
+    client, _factory, _runner = incident_context
+    reset = _reset(client)
+    started = client.post(
+        "/api/v1/investigations",
+        json={"simulation_instance_id": reset["simulation"]["id"]},
+    )
+    assert started.status_code == 202
+
+    response = client.get("/api/v1/reports/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"reports"}
+    assert len(body["reports"]) == 1
+    assert set(body["reports"][0]) == {
+        "run_id", "run_tracking_id", "incident_id", "incident_tracking_id", "status",
+        "threat_label", "endpoint", "created_at", "updated_at", "completed_at",
+    }
+    assert body["reports"][0]["incident_tracking_id"] == reset["incident"]["external_id"]
 
 def test_lifespan_recovers_and_shuts_down_injected_runner(incident_context) -> None:
     _client, _factory, runner = incident_context
@@ -470,7 +495,7 @@ def test_get_investigation_incident_and_audit_contracts_ordered(incident_context
     assert incident.status_code == 200
     assert set(incident.json()) == {"incident", "runs"}
     assert set(incident.json()["runs"][0]) == {
-        "run_id", "status", "mode", "created_at", "updated_at", "completed_at"
+        "run_id", "tracking_id", "status", "mode", "created_at", "updated_at", "completed_at"
     }
 
     audit = client.get(f"/api/v1/incidents/{started['incident_id']}/audit")
@@ -495,3 +520,47 @@ def test_get_not_found_errors(incident_context, path, code, message) -> None:
     client, _factory, _runner = incident_context
     response = client.get(path, headers={"X-Request-ID": "req-404"})
     _assert_error(response, 404, code, message, "req-404")
+
+
+def test_delete_historical_report_removes_its_local_event_data(incident_context) -> None:
+    client, factory, _runner = incident_context
+    reset = _reset(client)
+    simulation_id = reset["simulation"]["id"]
+    incident_id = reset["incident"]["id"]
+    started = client.post(
+        "/api/v1/investigations",
+        json={"simulation_instance_id": simulation_id, "mode": "normal"},
+    )
+    assert started.status_code == 202
+    run_id = started.json()["run_id"]
+    now = datetime.now(UTC)
+    with factory.begin() as session:
+        session.execute(
+            update(InvestigationRunRow)
+            .where(InvestigationRunRow.id == run_id)
+            .values(status=InvestigationStatus.CLOSED.value, completed_at=now, updated_at=now)
+        )
+        session.add(InvestigationStepRow(id=str(uuid4()), run_id=run_id, step_key="collect", status="succeeded", detail_json={}, error_code=None, started_at=now, completed_at=now))
+        session.add(EvidenceRecordRow(id=str(uuid4()), run_id=run_id, evidence_type="endpoint", source="test", observed_at=now, summary="test evidence", raw_reference="local://test", integrity_sha256="a" * 64, confidence=1.0, confirmed=True, payload_json={}, created_at=now))
+        session.add(SimulationToolCallRow(id=str(uuid4()), run_id=run_id, simulation_instance_id=simulation_id, tool_name="block_ip", target="198.51.100.18", idempotency_key=f"delete-{run_id}", status="blocked", before_state_json={}, after_state_json={}, error_code=None, requested_at=now, completed_at=now))
+
+    response = client.delete(f"/api/v1/reports/history/{run_id}")
+    assert response.status_code == 204
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(InvestigationRunRow)) == 0
+        assert session.scalar(select(func.count()).select_from(InvestigationStepRow)) == 0
+        assert session.scalar(select(func.count()).select_from(EvidenceRecordRow)) == 0
+        assert session.scalar(select(func.count()).select_from(SimulationToolCallRow)) == 0
+        assert session.scalar(select(func.count()).select_from(AuditEventRow)) == 0
+        assert session.scalar(select(func.count()).select_from(IncidentRow)) == 0
+        assert session.scalar(select(func.count()).select_from(SimulationInstanceRow)) == 0
+
+
+def test_delete_historical_report_rejects_active_investigation(incident_context) -> None:
+    client, _factory, _runner = incident_context
+    reset = _reset(client)
+    started = client.post("/api/v1/investigations", json={"simulation_instance_id": reset["simulation"]["id"], "mode": "normal"})
+    assert started.status_code == 202
+
+    response = client.delete(f"/api/v1/reports/history/{started.json()['run_id']}")
+    _assert_error(response, 409, "invalid_investigation_state", "Investigation state does not allow this operation", response.headers["X-Request-ID"])

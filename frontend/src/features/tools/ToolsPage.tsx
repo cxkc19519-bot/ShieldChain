@@ -27,9 +27,9 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : '操作失败'
 }
 
-export function ToolsPage() {
+export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: string; embedded?: boolean } = {}) {
   const context = useRunContext()
-  const [runId, setRunId] = useState(context.runId ?? '')
+  const [runId, setRunId] = useState(initialRunId ?? context.runId ?? '')
   const [trace, setTrace] = useState<ToolTrace | null>(null)
   const [reason, setReason] = useState('人工复核后执行')
   const [message, setMessage] = useState<Message | null>(null)
@@ -37,12 +37,13 @@ export function ToolsPage() {
   const active = useRef<AbortController | null>(null)
   useEffect(() => () => active.current?.abort(), [])
   useEffect(() => {
+    if (initialRunId) return
     active.current?.abort()
     setRunId(context.runId ?? '')
     setTrace(null)
     setMessage(null)
     setBusy(false)
-  }, [context.runId])
+  }, [context.runId, initialRunId])
 
   const load = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -56,8 +57,15 @@ export function ToolsPage() {
     finally { if (active.current === controller) active.current = null; setBusy(false) }
   }
 
+  useEffect(() => {
+    if (embedded && initialRunId) void load()
+    // The report workspace remounts this component for each selected run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, initialRunId])
   const refreshAfterMutation = async (outcome: Message): Promise<Message> => {
-    if (!runId.trim()) return outcome
+    // Global automation control is valid even when a historical run has no
+    // trusted-tool calls. Keep a successful switch from being overwritten by a trace 404.
+    if (!runId.trim() || !trace) return outcome
     active.current?.abort()
     const controller = new AbortController()
     active.current = controller
@@ -100,18 +108,18 @@ export function ToolsPage() {
   }
 
   return (
-    <section aria-labelledby="tools-title" className="page-card tools-page">
-      <PageHeader id="tools-title" eyebrow="可信执行边界" title="处置中心" description="按服务端策略、风险和状态审核处置调用；执行与验证结果只以公开可信投影为准。" />
-      <p className="tools-privacy">仅展示策略、审批、执行尝试、验证结果与证据引用；不展示原始结果、凭据或私有推理。</p>
-
+    <section aria-labelledby="tools-title" className={`page-card tools-page${embedded ? ' tools-page--embedded' : ''}`}>
+      {!embedded && <><PageHeader id="tools-title" eyebrow="可信执行边界" title="处置中心" description="按服务端策略、风险和状态审核处置调用；执行与验证结果只以公开可信投影为准。" />
+      <p className="tools-privacy">仅展示策略、审批、执行尝试、验证结果与证据引用；不展示原始结果、凭据或私有推理。</p></>}
       <div className="tools-control-panel">
-        <form className="tools-form" onSubmit={(event) => void load(event)}>
+        {!embedded && <form className="tools-form" onSubmit={(event) => void load(event)}>
           <label htmlFor="tool-run-id">调查运行 ID</label>
           <div>
             <input id="tool-run-id" value={runId} onChange={(event) => setRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
             <button disabled={busy || !runId.trim()}>查看处置轨迹</button>
           </div>
-        </form>
+        </form>}
+        {embedded && <div className="tools-embedded-context"><span>当前报告运行</span><code>{runId}</code><button className="secondary-button" disabled={busy} type="button" onClick={() => void load()}>刷新处置状态</button></div>}
         <label className="tools-reason" htmlFor="tool-action-reason">操作原因</label>
         <input id="tool-action-reason" className="tools-reason-input" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={512} />
         <div className="tools-emergency" aria-label="全局自动化控制">

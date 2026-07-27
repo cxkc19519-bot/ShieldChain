@@ -21,6 +21,8 @@ from shieldchain.incidents.schemas import (
     AuditEventView,
     AuditResponse,
     EvidenceView,
+    HistoricalReportListResponse,
+    HistoricalReportView,
     IncidentResponse,
     IncidentView,
     InvestigationResponse,
@@ -30,6 +32,7 @@ from shieldchain.incidents.schemas import (
     ToolResultView,
     VerificationView,
 )
+from shieldchain.incidents.tracking import run_tracking_id
 
 
 def _utc(value: datetime) -> datetime:
@@ -52,6 +55,7 @@ def _simulation(row: SimulationInstanceRow) -> SimulationView:
 def _incident(row: IncidentRow) -> IncidentView:
     return IncidentView(
         id=UUID(row.id),
+        tracking_id=row.external_id,
         external_id=row.external_id,
         simulation_instance_id=UUID(row.simulation_instance_id),
         alert_id=row.alert_id,
@@ -72,6 +76,7 @@ def _incident(row: IncidentRow) -> IncidentView:
 def _run_summary(row: InvestigationRunRow) -> RunSummaryView:
     return RunSummaryView(
         run_id=UUID(row.id),
+        tracking_id=run_tracking_id(row.id),
         status=row.status,
         mode=row.mode,
         created_at=_utc(row.created_at),
@@ -84,6 +89,31 @@ class IncidentQueryService:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    def historical_reports(self, limit: int = 50) -> HistoricalReportListResponse:
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(InvestigationRunRow, IncidentRow)
+                .join(IncidentRow, IncidentRow.id == InvestigationRunRow.incident_id)
+                .order_by(InvestigationRunRow.updated_at.desc(), InvestigationRunRow.id.desc())
+                .limit(limit)
+            ).all()
+            return HistoricalReportListResponse(
+                reports=[
+                    HistoricalReportView(
+                        run_id=UUID(run.id),
+                        run_tracking_id=run_tracking_id(run.id),
+                        incident_id=UUID(incident.id),
+                        incident_tracking_id=incident.external_id,
+                        status=run.status,
+                        threat_label=incident.threat_label,
+                        endpoint=incident.endpoint,
+                        created_at=_utc(run.created_at),
+                        updated_at=_utc(run.updated_at),
+                        completed_at=_utc(run.completed_at) if run.completed_at is not None else None,
+                    )
+                    for run, incident in rows
+                ]
+            )
     def investigation(self, run_id: UUID) -> InvestigationResponse:
         with self._session_factory() as session:
             run = session.get(InvestigationRunRow, str(run_id))
@@ -127,7 +157,9 @@ class IncidentQueryService:
             tool = tools[-1] if tools else None
             return InvestigationResponse(
                 run_id=UUID(run.id),
+                run_tracking_id=run_tracking_id(run.id),
                 incident_id=UUID(run.incident_id),
+                incident_tracking_id=incident.external_id,
                 simulation_instance_id=UUID(run.simulation_instance_id),
                 status=run.status,
                 mode=run.mode,

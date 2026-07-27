@@ -30,6 +30,7 @@ from shieldchain.incidents.ports import (
 from shieldchain.incidents.rules import assess
 from shieldchain.incidents.scenario import collect_evidence
 from shieldchain.incidents.tools import verify_block
+from shieldchain.agents.runtime import InvestigationAgentRuntime
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
@@ -61,6 +62,7 @@ class InvestigationWorkflow:
         evidence_collector: EvidenceCollector = collect_evidence,
         assessor: Assessor = assess,
         verifier: Verifier = verify_block,
+        agent_runtime: InvestigationAgentRuntime | None = None,
     ) -> None:
         if not 0.0 <= step_delay_seconds <= 2.0:
             raise ValueError("step_delay_seconds must be between 0.0 and 2.0")
@@ -72,6 +74,7 @@ class InvestigationWorkflow:
         self._evidence_collector = evidence_collector
         self._assessor = assessor
         self._verifier = verifier
+        self._agent_runtime = agent_runtime
 
     def run(
         self,
@@ -91,6 +94,8 @@ class InvestigationWorkflow:
             self._collect(session_factory, run_id, request_id=request_id)
             self._pause()
             assessment = self._analyze(session_factory, run_id, request_id=request_id)
+            evidence = self._load_evidence_for_agents(session_factory, run_id)
+            self._run_agents(run_id, evidence=evidence, assessment=assessment, request_id=request_id)
             if assessment.conclusion is Conclusion.INSUFFICIENT_EVIDENCE:
                 return InvestigationStatus.NEEDS_REVIEW
             self._pause()
@@ -114,6 +119,24 @@ class InvestigationWorkflow:
                 original_error=error,
             )
 
+    def _load_evidence_for_agents(
+        self, session_factory: sessionmaker[Session], run_id: UUID
+    ) -> tuple[Evidence, ...]:
+        with session_factory() as session:
+            return self._load_evidence(session, run_id)
+    def _run_agents(
+        self, run_id: UUID, *, evidence: tuple[Evidence, ...], assessment: Assessment, request_id: str
+    ) -> None:
+        if self._agent_runtime is None:
+            return
+        try:
+            self._agent_runtime.run(
+                run_id, evidence=evidence, assessment=assessment, request_id=request_id, now=self._clock()
+            )
+        except Exception:
+            # Agent collaboration is additive. It must never bypass or interrupt the
+            # deterministic investigation and trusted execution boundary.
+            return
     def _load_run(self, session_factory: sessionmaker[Session], run_id: UUID) -> InvestigationRun:
         with session_factory() as session:
             run = self._repository.get_run(session, run_id)

@@ -41,6 +41,11 @@ class KnowledgeBaseListResponse(StrictModel):
     items: list[KnowledgeBaseView]
 
 
+class KnowledgeBaseDeleteResponse(StrictModel):
+    id: UUID
+    status: Literal["completed"]
+
+
 class DocumentVersionView(StrictModel):
     id: UUID
     document_id: UUID
@@ -82,6 +87,21 @@ class LifecycleOperationResponse(StrictModel):
     status: Literal["accepted", "completed"]
     document_id: UUID
     version_id: UUID | None = None
+
+
+class KnowledgeChunkView(StrictModel):
+    id: UUID
+    ordinal: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    length: int = Field(ge=1, le=2_000)
+    text: str = Field(min_length=1, max_length=2_000)
+    integrity_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DocumentChunkListResponse(StrictModel):
+    document_id: UUID
+    document_version_id: UUID
+    items: list[KnowledgeChunkView]
 
 
 class RetrievalRequest(StrictModel):
@@ -150,13 +170,16 @@ class DegradationView(StrictModel):
 class RetrievalResponse(StrictModel):
     query: str
     answer: str | None
-    refusal_reason: Literal[
-        "insufficient_evidence",
-        "conflicting_evidence",
-        "stale_evidence",
-        "unauthorized",
-        "unsafe_content",
-    ] | None
+    refusal_reason: (
+        Literal[
+            "insufficient_evidence",
+            "conflicting_evidence",
+            "stale_evidence",
+            "unauthorized",
+            "unsafe_content",
+        ]
+        | None
+    )
     hits: list[RetrievalHitView]
     citations: list[CitationView]
     degradations: list[DegradationView]

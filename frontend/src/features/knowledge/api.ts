@@ -1,12 +1,13 @@
 import type {
   EvaluationSummary,
   KnowledgeBase,
+  KnowledgeChunk,
   KnowledgeDocument,
   RetrievalResult,
 } from './types'
 
 const API_ROOT = '/api/v1'
-const REQUEST_TIMEOUT_MS = 15_000
+const REQUEST_TIMEOUT_MS = 90_000
 
 export class KnowledgeApiError extends Error {
   readonly code: string | undefined
@@ -76,6 +77,14 @@ function document(value: unknown): KnowledgeDocument {
     current_version_id: nullableText(item.current_version_id), created_at: text(item.created_at),
     updated_at: text(item.updated_at),
     versions: array(item.versions, version),
+  }
+}
+
+function knowledgeChunk(value: unknown): KnowledgeChunk {
+  const item = record(value)
+  return {
+    id: text(item.id), ordinal: number(item.ordinal), offset: number(item.offset),
+    length: number(item.length), text: text(item.text), integrity_sha256: text(item.integrity_sha256),
   }
 }
 
@@ -197,6 +206,15 @@ export function createKnowledgeBase(name: string, signal?: AbortSignal): Promise
   }, signal)
 }
 
+export function deleteKnowledgeBase(knowledgeBaseId: string, signal?: AbortSignal): Promise<void> {
+  return request(
+    `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`,
+    empty,
+    { method: 'DELETE' },
+    signal,
+  )
+}
+
 export function uploadDocument(knowledgeBaseId: string, file: File, signal?: AbortSignal): Promise<KnowledgeDocument> {
   const body = new FormData()
   body.append('file', file, file.name)
@@ -207,6 +225,15 @@ export function uploadDocument(knowledgeBaseId: string, file: File, signal?: Abo
 
 export function listDocuments(knowledgeBaseId: string, signal?: AbortSignal): Promise<KnowledgeDocument[]> {
   return request(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`, (value) => array(record(value).items, document), { method: 'GET' }, signal)
+}
+
+export function listDocumentChunks(documentId: string, versionId: string, signal?: AbortSignal): Promise<KnowledgeChunk[]> {
+  return request(
+    `/documents/${encodeURIComponent(documentId)}/versions/${encodeURIComponent(versionId)}/chunks`,
+    (value) => array(record(value).items, knowledgeChunk),
+    { method: 'GET' },
+    signal,
+  )
 }
 
 export function listDocumentVersions(documentId: string, signal?: AbortSignal): Promise<KnowledgeDocument> {

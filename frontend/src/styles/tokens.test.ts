@@ -71,7 +71,7 @@ describe('application styles', () => {
   })
 
   it('keeps active navigation text at or above 4.5:1 contrast', () => {
-    const activeRule = css.match(/\.sidebar a:hover,\s*\.sidebar a\.active\s*{([^}]*)}/)?.[1]
+    const activeRule = css.match(/\.sidebar a:hover,[\s\S]*?\.sidebar a\.active[\s\S]*?{([^}]*)}/)?.[1]
     const accent = readHexToken('--color-accent')
 
     expect(activeRule).toContain('color: var(--color-accent)')

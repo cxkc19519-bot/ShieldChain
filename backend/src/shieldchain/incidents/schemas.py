@@ -33,6 +33,7 @@ class SimulationView(StrictModel):
 
 class IncidentView(StrictModel):
     id: UUID
+    tracking_id: str
     external_id: str
     simulation_instance_id: UUID
     alert_id: str
@@ -51,11 +52,29 @@ class IncidentView(StrictModel):
 
 class RunSummaryView(StrictModel):
     run_id: UUID
+    tracking_id: str
     status: str
     mode: str
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+
+
+class HistoricalReportView(StrictModel):
+    run_id: UUID
+    run_tracking_id: str
+    incident_id: UUID
+    incident_tracking_id: str
+    status: str
+    threat_label: str
+    endpoint: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class HistoricalReportListResponse(StrictModel):
+    reports: list[HistoricalReportView]
 
 
 class StepView(StrictModel):
@@ -114,7 +133,9 @@ class ResetSimulationResponse(StrictModel):
 
 class InvestigationResponse(StrictModel):
     run_id: UUID
+    run_tracking_id: str
     incident_id: UUID
+    incident_tracking_id: str
     simulation_instance_id: UUID
     status: str
     mode: str

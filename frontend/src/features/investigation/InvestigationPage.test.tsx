@@ -105,14 +105,14 @@ describe('InvestigationPage', () => {
     expect(screen.getByText('连接已停止')).toBeVisible()
     expect(screen.getByText('完整性校验失败')).toBeVisible()
     expect(screen.queryByText('完整性已校验')).not.toBeInTheDocument()
-    expect(screen.getByText('simulation://network')).toBeVisible()
+    expect(screen.getByText('模拟网络遥测')).toBeVisible()
     expect(screen.getByLabelText('攻击路径')).toHaveTextContent('workstation-1')
     expect(screen.getByRole('heading', { name: '调查阶段' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '证据链' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '研判结论' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '验证' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '审计时间线' })).toBeVisible()
-    expect(screen.getByText('status_changed')).toBeVisible()
+    expect(screen.getByText('调查状态已更新')).toBeVisible()
     expect(api.getIncident).toHaveBeenCalledWith(ID, expect.any(AbortSignal))
     expect(api.getAudit).toHaveBeenCalledWith(ID, expect.any(AbortSignal))
     expect(vi.getTimerCount()).toBe(0)
@@ -156,7 +156,7 @@ describe('InvestigationPage', () => {
 
     await act(() => vi.advanceTimersByTimeAsync(500))
     expect(screen.getByRole('alert')).toHaveTextContent('offline')
-    expect(screen.getByText('pending')).toBeVisible()
+    expect(screen.getByText('等待调查')).toBeVisible()
     await act(() => vi.advanceTimersByTimeAsync(500))
 
     expect(screen.getByText('处置失败')).toBeVisible()
@@ -229,7 +229,7 @@ describe('InvestigationPage', () => {
   it('does not expose failure mode when production-safe mode is used', () => {
     render(<InvestigationPage allowFailureMode={false} />)
 
-    expect(screen.queryByRole('option', { name: /fail_block_once/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /异常模拟/ })).not.toBeInTheDocument()
     expect(screen.getByLabelText('调查模式')).toHaveValue('normal')
   })
 

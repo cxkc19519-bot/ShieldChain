@@ -38,6 +38,7 @@ export function DashboardPage() {
   const context = useRunContext()
   const location = useLocation()
   const [health, setHealth] = useState<HealthState>('loading')
+  const [healthError, setHealthError] = useState<string | null>(null)
   const [healthAttempt, setHealthAttempt] = useState(0)
   const [runAttempt, setRunAttempt] = useState(0)
   const [run, setRun] = useState<InvestigationResponse | null>(null)
@@ -47,9 +48,20 @@ export function DashboardPage() {
   useEffect(() => {
     const controller = new AbortController()
     setHealth('loading')
+    setHealthError(null)
     void getLiveness(controller.signal).then(
-      () => setHealth('healthy'),
-      () => { if (!controller.signal.aborted) setHealth('unavailable') },
+      () => {
+        if (!controller.signal.aborted) {
+          setHealth('healthy')
+          setHealthError(null)
+        }
+      },
+      (failure: unknown) => { 
+        if (!controller.signal.aborted) {
+          setHealth('unavailable')
+          setHealthError(failure instanceof Error ? failure.message : String(failure))
+        }
+      },
     )
     return () => controller.abort()
   }, [healthAttempt])
@@ -94,7 +106,9 @@ export function DashboardPage() {
           <strong>控制面健康</strong>
           {health === 'loading' && <p>正在检查系统状态</p>}
           {health === 'healthy' && <p>系统运行正常</p>}
-          {health === 'unavailable' && <p>系统当前不可用</p>}
+          {health === 'unavailable' && (
+            <p>系统当前不可用 {healthError && <span style={{ color: 'var(--color-danger)', marginLeft: '0.5rem' }}>({healthError})</span>}</p>
+          )}
         </div>
         {health === 'healthy' && <StatusBadge tone="success">可用</StatusBadge>}
         {health === 'loading' && <StatusBadge tone="info">检查中</StatusBadge>}
@@ -117,8 +131,8 @@ export function DashboardPage() {
             <div><StatusBadge tone={run.status === 'closed' ? 'success' : 'info'}>{statusLabels[run.status] ?? run.status}</StatusBadge><h3>{run.assessment?.conclusion ?? '调查尚未形成结论'}</h3></div>
             <StatusBadge tone={verificationLabel(run) === '处置已验证' ? 'success' : 'warning'}>{verificationLabel(run)}</StatusBadge>
           </header>
-          <p>事件 <code>{run.incident_id}</code></p>
-          <p>运行 <code>{run.run_id}</code></p>
+          <p>事件 <code>{run.incident_tracking_id ?? `INC-${run.incident_id.slice(0, 8).toUpperCase()}`}</code></p>
+          <p>运行 <code>{run.run_tracking_id ?? `RUN-${run.run_id.slice(0, 8).toUpperCase()}`}</code></p>
           <Link className="button" to={{ pathname: '/events', search: location.search }}>打开事件调查</Link>
         </article>
       </>}

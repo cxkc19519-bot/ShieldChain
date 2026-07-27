@@ -5,6 +5,8 @@ import { EmptyState, LoadingState } from '../../components/ui/States'
 import {
   createKnowledgeBase,
   deleteDocument,
+  deleteKnowledgeBase,
+  listDocumentChunks,
   listDocuments,
   listKnowledgeBases,
   publishVersion,
@@ -14,7 +16,7 @@ import {
   runEvaluation,
   uploadDocument,
 } from './api'
-import type { EvaluationSummary, KnowledgeBase, KnowledgeDocument, RetrievalResult } from './types'
+import type { EvaluationSummary, KnowledgeBase, KnowledgeChunk, KnowledgeDocument, RetrievalResult } from './types'
 import './knowledge.css'
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md', '.html']
@@ -32,11 +34,15 @@ function Status({ value }: { value: string }) {
 function Documents({
   documents,
   busy,
+  chunksByVersion,
   onAction,
+  onChunks,
 }: {
   documents: KnowledgeDocument[]
   busy: boolean
+  chunksByVersion: Record<string, KnowledgeChunk[] | undefined>
   onAction: (action: 'publish' | 'rollback' | 'rebuild' | 'delete', documentId: string, versionId?: string) => void
+  onChunks: (documentId: string, versionId: string) => void
 }) {
   if (documents.length === 0) return <p className="knowledge-empty">尚未上传文档。</p>
   return (
@@ -55,12 +61,30 @@ function Documents({
                   {version.id === document.current_version_id && <span className="current-version">当前版本</span>}
                   <Status value={version.index_status} />
                 </div>
-                {version.chunking_failure_category && <small>分块降级：{version.chunking_failure_category}</small>}
+                {version.chunking_failure_category && (
+                  <small>
+                    分块降级：{version.chunking_failure_category === 'unavailable'
+                      ? 'LLM 分块失败，已使用规则分块'
+                      : version.chunking_failure_category}
+                  </small>
+                )}
                 <div className="compact-actions">
                   <button disabled={busy} type="button" onClick={() => onAction('publish', document.id, version.id)}>发布</button>
                   <button disabled={busy || version.id === document.current_version_id} type="button" onClick={() => onAction('rollback', document.id, version.id)}>回滚到此版本</button>
                   <button disabled={busy} type="button" onClick={() => onAction('rebuild', document.id, version.id)}>重建索引</button>
+                  <button disabled={busy} type="button" onClick={() => onChunks(document.id, version.id)}>{chunksByVersion[version.id] ? "\u6536\u8d77\u5206\u5757" : "\u67e5\u770b\u5206\u5757"}</button>
                 </div>
+                {chunksByVersion[version.id] && (
+                  <ol className="chunk-list" aria-label={`${document.original_filename} chunks`}>
+                    {chunksByVersion[version.id]?.length ? chunksByVersion[version.id]?.map((chunk) => (
+                      <li key={chunk.id}>
+                        <strong>{`\u5757 #${chunk.ordinal + 1}`}</strong>
+                        <small>{`\u5b57\u7b26 ${chunk.offset}\u2013${chunk.offset + chunk.length} \u00b7 ${chunk.length} \u5b57\u7b26`}</small>
+                        <pre>{chunk.text}</pre>
+                      </li>
+                    )) : <li className="knowledge-empty">{"\u8be5\u7248\u672c\u6682\u672a\u751f\u6210\u53ef\u67e5\u770b\u7684\u5206\u5757\u3002"}</li>}
+                  </ol>
+                )}
               </article>
             ))}
           </div>
@@ -133,6 +157,7 @@ function Evaluation({ summary }: { summary: EvaluationSummary }) {
 export function KnowledgePage() {
   const [bases, setBases] = useState<KnowledgeBase[]>([])
   const [documents, setDocuments] = useState<Record<string, KnowledgeDocument[]>>({})
+  const [chunksByVersion, setChunksByVersion] = useState<Record<string, KnowledgeChunk[] | undefined>>({})
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
   const [newBaseName, setNewBaseName] = useState('')
@@ -142,6 +167,8 @@ export function KnowledgePage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
+  const uploadFormRef = useRef<HTMLFormElement>(null)
+  const [selectedFileName, setSelectedFileName] = useState("")
   const activeRequest = useRef<AbortController | null>(null)
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -164,13 +191,13 @@ export function KnowledgePage() {
     }
   }, [load])
 
-  const execute = async (operation: (signal: AbortSignal) => Promise<void>, success: string) => {
+  const execute = async (operation: (signal: AbortSignal) => Promise<void>, success: string, pendingNotice?: string) => {
     activeRequest.current?.abort()
     const controller = new AbortController()
     activeRequest.current = controller
     setBusy(true)
     setError(null)
-    setNotice(null)
+    setNotice(pendingNotice ?? null)
     try {
       await operation(controller.signal)
       await load(controller.signal)
@@ -201,7 +228,13 @@ export function KnowledgePage() {
       const uploaded = await uploadDocument(selectedId, file, signal)
       setDocuments((current) => ({ ...current, [selectedId]: [uploaded, ...(current[selectedId] ?? []).filter((item) => item.id !== uploaded.id)] }))
       formElement.reset()
-    }, '文档已安全上传，正在处理与索引')
+      setSelectedFileName("")
+    }, "\u6587\u6863\u5df2\u4e0a\u4f20\u5e76\u5b8c\u6210\u7d22\u5f15", "\u6b63\u5728\u4e0a\u4f20\u5e76\u5efa\u7acb\u7d22\u5f15\uff0c\u8bf7\u7a0d\u5019\u2026")
+  }
+
+  const handleRemoveSelectedFile = () => {
+    uploadFormRef.current?.reset()
+    setSelectedFileName("")
   }
 
   const handleAction = (action: 'publish' | 'rollback' | 'rebuild' | 'delete', documentId: string, versionId?: string) => {
@@ -212,6 +245,17 @@ export function KnowledgePage() {
       else if (action === 'rollback') await rollbackVersion(documentId, versionId as string, signal)
       else await rebuildDocumentVersion(documentId, versionId as string, signal)
     }, action === 'delete' ? '文档删除任务已提交' : '版本操作已提交')
+  }
+
+  const handleChunks = (documentId: string, versionId: string) => {
+    if (chunksByVersion[versionId]) {
+      setChunksByVersion((current) => ({ ...current, [versionId]: undefined }))
+      return
+    }
+    void execute(async (signal) => {
+      const chunks = await listDocumentChunks(documentId, versionId, signal)
+      setChunksByVersion((current) => ({ ...current, [versionId]: chunks }))
+    }, "\u5df2\u52a0\u8f7d\u6587\u6863\u5206\u5757")
   }
 
   const selected = bases.find((item) => item.id === selectedId)
@@ -253,22 +297,31 @@ export function KnowledgePage() {
           {selected ? <>
             <header className="workspace-header">
               <div><h3>{selected.name}</h3><p>{selected.status} · {selected.default_sensitivity} · {selected.version_policy}</p></div>
-              <button disabled={busy} type="button" onClick={() => void execute(async (signal) => {
+              <div className="workspace-actions"><button disabled={busy} type="button" onClick={() => void execute(async (signal) => {
                 const summary = await runEvaluation(selected.id, signal)
                 setEvaluation(summary)
-              }, '固定基准评测已完成')}>运行评测</button>
+              }, '固定基准评测已完成')}>运行评测</button>              <button className="danger-button" disabled={busy} type="button" onClick={() => {
+                if (window.confirm("\u786e\u8ba4\u5220\u9664\u8be5\u77e5\u8bc6\u5e93\u53ca\u5176\u4e2d\u5168\u90e8\u6587\u6863\u3001\u5206\u5757\u4e0e\u5411\u91cf\u7d22\u5f15\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002")) {
+                  void execute((signal) => deleteKnowledgeBase(selected.id, signal), "\u77e5\u8bc6\u5e93\u5df2\u5220\u9664")
+                }
+              }}>{"\u5220\u9664\u77e5\u8bc6\u5e93"}</button>
+            </div>
             </header>
 
-            <form className="upload-panel" onSubmit={handleUpload}>
+            <form ref={uploadFormRef} className="upload-panel" onSubmit={handleUpload}>
               <label htmlFor="knowledge-file">上传本地文档</label>
               <p>只读取你选择的文件；不接受本机路径或远程 URL。</p>
-              <input id="knowledge-file" name="file" type="file" required accept={ACCEPTED_EXTENSIONS.join(',')} />
-              <button disabled={busy} type="submit">上传并索引</button>
+              <div className="upload-file-actions">
+                <input id="knowledge-file" name="file" type="file" required accept={ACCEPTED_EXTENSIONS.join(',')} onChange={(event) => setSelectedFileName(event.currentTarget.files?.[0]?.name ?? "")} />
+                {selectedFileName && <button disabled={busy} type="button" onClick={handleRemoveSelectedFile}>{"\u79fb\u9664\u6587\u4ef6"}</button>}
+              </div>
+              <button disabled={busy} type="submit">{busy ? "\u6b63\u5728\u4e0a\u4f20\u5e76\u7d22\u5f15\u2026" : "\u4e0a\u4f20\u5e76\u7d22\u5f15"}</button>
+              {busy && <p className="upload-progress" role="status">{"\u6b63\u5728\u5904\u7406\u6587\u6863\u548c\u5efa\u7acb\u5411\u91cf\u7d22\u5f15\uff0c\u8bf7\u4e0d\u8981\u5173\u95ed\u6b64\u9875\u3002"}</p>}
             </form>
 
             <section aria-labelledby="documents-title">
               <h3 id="documents-title">文档与版本</h3>
-              <Documents documents={documents[selected.id] ?? []} busy={busy} onAction={handleAction} />
+              <Documents documents={documents[selected.id] ?? []} busy={busy} chunksByVersion={chunksByVersion} onAction={handleAction} onChunks={handleChunks} />
             </section>
 
             <form className="search-panel" onSubmit={(event) => {

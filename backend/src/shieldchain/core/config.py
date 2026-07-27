@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     simulation_step_delay_ms: int = Field(600, ge=0, le=2000)
     simulation_shutdown_timeout_seconds: float = Field(5.0, ge=1.0, le=30.0)
     rag_content_root: Path = Path("data/knowledge")
+    assistant_data_root: Path = Path("data/assistant")
     rag_max_upload_bytes: int = Field(25 * 1024 * 1024, ge=1, le=25 * 1024 * 1024)
     rag_max_expanded_bytes: int = Field(100 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
     rag_max_compression_ratio: int = Field(100, ge=1, le=100)

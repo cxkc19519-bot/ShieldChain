@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KnowledgePage } from './KnowledgePage'
 
 const api = vi.hoisted(() => ({
-  createKnowledgeBase: vi.fn(), deleteDocument: vi.fn(), listDocuments: vi.fn(),
+  createKnowledgeBase: vi.fn(), deleteDocument: vi.fn(), deleteKnowledgeBase: vi.fn(), listDocumentChunks: vi.fn(), listDocuments: vi.fn(),
   listKnowledgeBases: vi.fn(), publishVersion: vi.fn(), rebuildDocumentVersion: vi.fn(),
   retrieveKnowledge: vi.fn(), rollbackVersion: vi.fn(), runEvaluation: vi.fn(), uploadDocument: vi.fn(),
 }))

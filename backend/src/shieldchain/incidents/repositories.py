@@ -11,6 +11,13 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from shieldchain.agents.persistence import (
+    AgentExecutionRow,
+    AgentHandoffRow,
+    AgentPrivateContextRow,
+    CaseContextRow,
+    ConfirmedCaseFactRow,
+)
 from shieldchain.incidents.domain import (
     ACTIVE_INVESTIGATION_STATUSES,
     Assessment,
@@ -281,6 +288,44 @@ class SqlAlchemyIncidentRepository:
         session.delete(row)
         session.flush()
 
+    def delete_historical_run(self, session: Session, run_id: UUID) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        run_status = InvestigationStatus(row.status)
+        if not is_terminal(run_status):
+            raise InvalidInvestigationState(run_id, run_status)
+
+        incident_id = row.incident_id
+        simulation_id = row.simulation_instance_id
+        session.execute(delete(ConfirmedCaseFactRow).where(ConfirmedCaseFactRow.case_context_id == str(run_id)))
+        session.execute(delete(AgentExecutionRow).where(AgentExecutionRow.run_id == str(run_id)))
+        session.execute(delete(AgentHandoffRow).where(AgentHandoffRow.run_id == str(run_id)))
+        session.execute(delete(AgentPrivateContextRow).where(AgentPrivateContextRow.run_id == str(run_id)))
+        session.execute(delete(CaseContextRow).where(CaseContextRow.run_id == str(run_id)))
+        session.execute(delete(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run_id)))
+        session.execute(delete(EvidenceRecordRow).where(EvidenceRecordRow.run_id == str(run_id)))
+        session.execute(delete(SimulationToolCallRow).where(SimulationToolCallRow.run_id == str(run_id)))
+        session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        session.delete(row)
+        session.flush()
+
+        remaining_runs = session.scalar(
+            select(func.count()).select_from(InvestigationRunRow).where(
+                InvestigationRunRow.incident_id == incident_id
+            )
+        )
+        if remaining_runs:
+            return
+
+        # The final run owns the event's local audit trail and simulation state.
+        session.execute(delete(AuditEventRow).where(AuditEventRow.incident_id == incident_id))
+        session.execute(delete(IncidentRow).where(IncidentRow.id == incident_id))
+        session.execute(
+            delete(SimulationToolCallRow).where(
+                SimulationToolCallRow.simulation_instance_id == simulation_id
+            )
+        )
+        session.execute(delete(SimulationInstanceRow).where(SimulationInstanceRow.id == simulation_id))
+        session.flush()
     def get_simulation(
         self, session: Session, simulation_id: UUID
     ) -> PhishingScenarioState | None:

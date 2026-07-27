@@ -14,6 +14,16 @@ function Metric({ label, used, limit }: { label: string; used: number; limit: nu
   return <div className="agent-metric"><span>{label}</span><strong>{used} / {limit}</strong></div>
 }
 
+const TRAJECTORY_ERROR_LABELS: Record<string, string> = {
+  'Agent trajectory not found': '未找到协作轨迹。请确认运行 ID 正确，且该运行已生成协作轨迹。',
+  'ReAct trajectory not found': '未找到 ReAct 轨迹。请确认运行 ID 正确，且该运行已生成 ReAct 轨迹。',
+}
+
+function trajectoryError(value: unknown, fallback: string): string {
+  const message = value instanceof Error ? value.message : ''
+  if (TRAJECTORY_ERROR_LABELS[message]) return TRAJECTORY_ERROR_LABELS[message]
+  return /[\u4e00-\u9fff]/.test(message) ? message : fallback
+}
 function Collaboration({ trajectory }: { trajectory: CollaborationTrajectory }) {
   return <div className="agent-workspace collaboration-workspace">
     <header><div><span className="agent-phase">{trajectory.phase}</span><h3>{trajectory.shared_summary}</h3></div><small>修订 {trajectory.revision}</small></header>
@@ -37,9 +47,9 @@ function ReactWorkspace({ trajectory, busy, reason, setReason, onControl }: { tr
   </div>
 }
 
-export function AgentsPage() {
+export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: string; embedded?: boolean } = {}) {
   const context = useRunContext()
-  const [runId, setRunId] = useState(context.runId ?? '')
+  const [runId, setRunId] = useState(initialRunId ?? context.runId ?? '')
   const [trajectory, setTrajectory] = useState<CollaborationTrajectory | null>(null)
   const [react, setReact] = useState<ReactTrajectory | null>(null)
   const [collaborationError, setCollaborationError] = useState<string | null>(null)
@@ -56,9 +66,9 @@ export function AgentsPage() {
     const [collaborationResult, reactResult] = await Promise.allSettled([getCollaborationTrajectory(selected, controller.signal), getReactTrajectory(selected, controller.signal)])
     if (!controller.signal.aborted) {
       if (collaborationResult.status === 'fulfilled') setTrajectory(collaborationResult.value)
-      else { setTrajectory(null); setCollaborationError(collaborationResult.reason instanceof Error ? collaborationResult.reason.message : '无法加载协作轨迹') }
+      else { setTrajectory(null); setCollaborationError(trajectoryError(collaborationResult.reason, '协作轨迹加载失败，请稍后重试。')) }
       if (reactResult.status === 'fulfilled') setReact(reactResult.value)
-      else { setReact(null); setReactError(reactResult.reason instanceof Error ? reactResult.reason.message : '无法加载 ReAct 轨迹') }
+      else { setReact(null); setReactError(trajectoryError(reactResult.reason, 'ReAct 轨迹加载失败，请稍后重试。')) }
     }
     if (active.current === controller) active.current = null
     if (!controller.signal.aborted) setBusy(false)
@@ -66,6 +76,9 @@ export function AgentsPage() {
 
   useEffect(() => () => active.current?.abort(), [])
   useEffect(() => { active.current?.abort(); setRunId(context.runId ?? ''); setTrajectory(null); setReact(null); setCollaborationError(null); setReactError(null); setBusy(false) }, [context.runId])
+  useEffect(() => {
+    if (embedded && initialRunId) void loadRun(initialRunId)
+  }, [embedded, initialRunId, loadRun])
 
   const load = (event: FormEvent) => { event.preventDefault(); void loadRun(runId.trim()) }
   const control = async (action: 'takeover' | 'resume') => {
@@ -77,7 +90,7 @@ export function AgentsPage() {
   }
 
   return <section aria-labelledby="agents-title" className="page-card agents-page">
-    <PageHeader id="agents-title" eyebrow="Shared intelligence" title="智能体与 ReAct 工作台" description="组合公开协作与受控循环轨迹；不展示私有上下文、原始提示、思维链或凭据。" />
+    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="组合公开协作与受控循环轨迹；不展示私有上下文、原始提示、思维链或凭据。" />
     <form className="agent-run-form" onSubmit={load}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={runId} onChange={(event) => setRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !runId.trim()} type="submit">{busy ? '加载中…' : '查看联合轨迹'}</button></div></form>
     {!runId.trim() && <EmptyState title="尚未选择运行" detail="从调查页启动运行，或输入已有运行 ID。" />}
     {collaborationError && <p role="alert" className="agent-error">协作轨迹：{collaborationError}</p>}

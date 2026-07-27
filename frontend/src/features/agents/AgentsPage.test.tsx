@@ -10,7 +10,7 @@ vi.mock('./reactApi', () => reactApi)
 const ID = '11111111-1111-4111-8111-111111111111'
 const budget = { steps_used: 2, step_limit: 10, loops_used: 1, loop_limit: 3, time_used_seconds: 5, time_limit_seconds: 60, tokens_used: 200, token_limit: 1000, cost_used_usd: 0, cost_limit_usd: 1, tool_calls_used: 0, tool_call_limit: 5 }
 
-beforeEach(() => { api.getCollaborationTrajectory.mockReset(); reactApi.getReactTrajectory.mockReset().mockRejectedValue(new Error('ReAct 轨迹不存在')); reactApi.controlReactLoop.mockReset() })
+beforeEach(() => { api.getCollaborationTrajectory.mockReset(); reactApi.getReactTrajectory.mockReset().mockRejectedValue(new Error('ReAct trajectory not found')); reactApi.controlReactLoop.mockReset() })
 
 describe('AgentsPage', () => {
   it('renders only the public collaboration trajectory fields', async () => {
@@ -23,12 +23,12 @@ describe('AgentsPage', () => {
     expect(screen.getByText('siem:1')).toBeVisible()
     expect(screen.getByText('evidence_insufficient')).toBeVisible()
     expect(screen.getByText(/不展示私有上下文/)).toBeVisible()
-    expect(screen.getByRole('alert')).toHaveTextContent('ReAct 轨迹不存在')
+    expect(screen.getByRole('alert')).toHaveTextContent('未找到 ReAct 轨迹')
     expect(screen.queryByText(/思维过程内容/)).not.toBeInTheDocument()
   })
 
   it('combines controlled ReAct trajectory and uses the server control boundary', async () => {
-    api.getCollaborationTrajectory.mockRejectedValue(new Error('协作轨迹不存在'))
+    api.getCollaborationTrajectory.mockRejectedValue(new Error('Agent trajectory not found'))
     reactApi.getReactTrajectory.mockResolvedValue({ loop_id: ID, run_id: ID, case_id: ID, status: 'running', revision: 2, budget,
       observations: [{ id: ID, iteration: 1, source: 'tool_verification', status: 'failed', reason_code: 'verification_failed', citations: [], tool_call_id: null, verification_id: null, observed_at: '2026-07-24T00:00:00Z' }],
       assessments: [{ id: ID, observation_id: ID, category: 'transient', recoverable: true, confidence: .9, reason_code: 'retry_allowed', assessed_at: '2026-07-24T00:00:00Z' }],
@@ -39,6 +39,7 @@ describe('AgentsPage', () => {
     fireEvent.change(screen.getByLabelText('调查运行 ID'), { target: { value: ID } })
     fireEvent.click(screen.getByRole('button', { name: '查看联合轨迹' }))
     expect(await screen.findByText('tool_verification')).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('未找到协作轨迹')
     expect(screen.getByText(/transient · 可恢复/)).toBeVisible()
     expect(screen.getByText('切换验证路径')).toBeVisible()
     expect(screen.getByText('replan')).toBeVisible()

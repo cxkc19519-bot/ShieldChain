@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, Body, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.core.config import Settings
+from shieldchain.assistant.service import GroundedAssistantService
 from shieldchain.core.errors import ApiError
 from shieldchain.incidents.background import (
     InvestigationRunner,
@@ -24,6 +25,7 @@ from shieldchain.incidents.ports import (
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.schemas import (
     AuditResponse,
+    HistoricalReportListResponse,
     IncidentResponse,
     IncidentView,
     InvestigationResponse,
@@ -58,6 +60,9 @@ def _runner(request: Request) -> InvestigationRunner:
 
 def _settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+def _assistant(request: Request) -> GroundedAssistantService:
+    return cast(GroundedAssistantService, request.app.state.grounded_assistant_service)
 
 
 def _public_error(error: Exception) -> ApiError:
@@ -171,6 +176,23 @@ async def start_investigation(
     except Exception as error:
         raise _public_error(error) from None
 
+
+@router.get("/reports/history", response_model=HistoricalReportListResponse)
+def list_historical_reports(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> HistoricalReportListResponse:
+    return _queries(request).historical_reports(limit)
+
+@router.delete("/reports/history/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_historical_report(run_id: UUID, request: Request) -> None:
+    try:
+        report = _queries(request).investigation(run_id)
+        _assistant(request).remove_historical_report(report.run_tracking_id)
+        with _factory(request).begin() as session:
+            _repository(request).delete_historical_run(session, run_id)
+    except Exception as error:
+        raise _public_error(error) from None
 
 @router.get("/investigations/{run_id}", response_model=InvestigationResponse)
 def get_investigation(run_id: UUID, request: Request) -> InvestigationResponse:

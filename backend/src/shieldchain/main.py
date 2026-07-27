@@ -11,6 +11,10 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shieldchain.agents.trajectory import CollaborationTrajectoryQuery
+from shieldchain.assistant.api import router as assistant_router
+from shieldchain.assistant.service import GroundedAssistantService
+from shieldchain.assistant.store import LocalConversationStore
+from shieldchain.agents.runtime import InvestigationAgentRuntime
 from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
@@ -36,7 +40,8 @@ from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.incidents.tools import SimulatedFirewall
 from shieldchain.incidents.workflow import InvestigationWorkflow
-from shieldchain.rag.api_service import KnowledgeApiService, UnconfiguredKnowledgeApiService
+from shieldchain.rag.api_service import KnowledgeApiService
+from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
 from shieldchain.tools.api_service import TrustedToolApiService
 
@@ -60,12 +65,17 @@ def create_app(
     session_factory = create_session_factory(engine)
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
+    knowledge_service = knowledge_api_service or LocalKnowledgeService()
     workflow = InvestigationWorkflow(
         repository,
         SimulatedFirewall(),
         lambda: datetime.now(UTC),
         time.sleep,
         settings.simulation_step_delay_ms / 1000,
+        agent_runtime=InvestigationAgentRuntime(
+            session_factory, knowledge_service,
+            tenant_id=settings.rag_demo_tenant_id, principal_id=settings.rag_demo_principal_id,
+        ),
     )
     runner = investigation_runner or InvestigationRunner(
         workflow,
@@ -94,11 +104,20 @@ def create_app(
         session_factory
     )
     app.include_router(agents_router, prefix="/api/v1")
+    app.include_router(assistant_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
     app.state.investigation_runner = runner
-    app.state.knowledge_api_service = knowledge_api_service or UnconfiguredKnowledgeApiService()
+    app.state.knowledge_api_service = knowledge_service
+    app.state.grounded_assistant_service = GroundedAssistantService(
+        knowledge_service,
+        query_service,
+        settings=settings,
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+        store=LocalConversationStore(settings.assistant_data_root),
+    )
     app.state.trusted_tool_api_service = trusted_tool_api_service or TrustedToolApiService(
         session_factory
     )
