@@ -1,6 +1,6 @@
 # Windows 本地开发
 
-阶段 3 继续在 Windows 上直接运行 FastAPI 后端和 React 前端，不要求 Docker。仓库包含阶段 2 的确定性钓鱼事件闭环，以及阶段 3 的文档解析、分块、索引、混合检索、重排、引用、拒答、评测核心和知识库页面。当前默认应用没有接通 DeepSeek、BGE-M3 Embedding、托管 Milvus 或 BGE-Reranker-v2-m3 的真实服务；知识 API 因此默认失败关闭并返回 `503 knowledge_service_unconfigured`，不会伪造云链路成功。
+Windows 本地开发默认启动 FastAPI、React、Milvus 以及本机 BGE-M3/BGE Reranker 服务。2026-07-28 已验收 DeepSeek 受控规划和 BGE-M3 → Milvus → BGE Reranker 的真实本机链路；生产数据库、云服务及真实安全设备仍不在本机验收范围。
 
 ## 1. 检查工具版本
 
@@ -248,3 +248,8 @@ GitHub Actions 工作流仅授予 `contents: read`，checkout 不保留凭据，
 - `pip check`：`No broken requirements found`。
 - Docker CLI：不可用，`DOCKER_RUNTIME_TESTED=False`。
 - GitHub Actions：尚未推送或远端执行，`CI_RUNTIME_TESTED=False`。
+
+
+## Wazuh 只读接入
+
+Wazuh Manager 的自定义集成可将高严重度告警转入 ShieldChain 的持久化收件箱。配置与安全边界见 `docs/operations/wazuh-read-only-ingestion.md`。该入口不读取本机日志、不执行 Active Response，也不自动处置。

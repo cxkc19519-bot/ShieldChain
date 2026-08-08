@@ -10,7 +10,7 @@ from shieldchain.incidents.integrity import create_evidence
 
 
 def seed_phishing_scenario(now: datetime) -> PhishingScenarioState:
-    import random
+
     scenarios = [
         {
             "external_incident_id": "INC-2026-0001",
@@ -55,10 +55,11 @@ def seed_phishing_scenario(now: datetime) -> PhishingScenarioState:
             "command_summary": "rclone copy C:\\Data remote:backup",
             "threat_label": "unauthorized-exfiltration",
             "remote_ip": IPv4Address("104.244.42.193"),
-        }
+        },
     ]
-    
-    choice = random.choice(scenarios)
+
+    # Default to a stable, fully specified phishing case so the safety workflow is reproducible.
+    choice = scenarios[0]
 
     return PhishingScenarioState(
         simulation_id=uuid4(),
@@ -107,9 +108,7 @@ def _evidence(
     )
 
 
-def collect_evidence(
-    state: PhishingScenarioState, now: datetime
-) -> tuple[Evidence, ...]:
+def collect_evidence(state: PhishingScenarioState, now: datetime) -> tuple[Evidence, ...]:
     remote_ip = str(state.remote_ip)
     endpoint = state.endpoint
     process_name = state.process_name
@@ -176,6 +175,7 @@ def collect_evidence(
                 "endpoint": endpoint,
                 "process_name": process_name,
                 "parent_process_name": state.parent_process_name,
+                "parent_family": "office",
             },
         ),
     )

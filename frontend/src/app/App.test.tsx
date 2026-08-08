@@ -25,15 +25,15 @@ describe('application shell', () => {
     getLivenessMock.mockResolvedValue({ status: 'ok' })
     renderRoute()
 
-    expect(screen.getByRole('banner')).toHaveTextContent('盾链智御')
+    expect(screen.getByRole('banner')).toHaveTextContent(/ShieldChain/i)
     expect(screen.getByRole('navigation', { name: '主要导航' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toBeInTheDocument()
 
-    for (const name of ['运营总览', '事件调查', '知识库', '历史报告']) {
+    for (const name of ['运营总览', '安全运营报告', '实时告警', '知识库', '历史报告']) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument()
     }
 
-    expect(screen.getByText('离线仿真环境')).toBeVisible()
+    expect(screen.getByText('真实数据分析环境')).toBeVisible()
     expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
   })
 
@@ -123,11 +123,10 @@ describe('product routes', () => {
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 
-  it('renders the investigation page at /events', () => {
-    renderRoute('/events')
-
-    expect(screen.getByRole('heading', { name: '事件调查' })).toBeVisible()
-    expect(screen.getByText('模拟环境')).toBeVisible()
+  it('renders the security operations report page at /operations-report', () => {
+    renderRoute('/operations-report')
+    expect(screen.getByRole('heading', { name: '安全运营报告', level: 2 })).toBeVisible()
+    expect(screen.getByText('正在读取已生成的运营报告')).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 })

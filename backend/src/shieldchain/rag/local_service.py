@@ -392,7 +392,7 @@ class LocalKnowledgeService:
                     index_status="succeeded",
                     chunking_status="succeeded",
                     chunking_strategy=strategy,
-                    chunking_failure_category="unavailable",
+                    chunking_failure_category=failure_category,
                 )
                 return
             # Original bytes remain durable when text extraction itself failed.

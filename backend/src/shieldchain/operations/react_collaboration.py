@@ -1,0 +1,395 @@
+"""Model-directed, server-bounded ReAct collaboration over real security data."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
+
+import httpx
+
+from shieldchain.core.config import Settings
+from shieldchain.llm.deepseek import DeepSeekClient
+from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
+from shieldchain.rag.api_service import KnowledgeApiService
+from shieldchain.rag.schemas import RetrievalRequest
+
+from .mcp_tools import ReadOnlyMcpTool
+from .schemas import AgentRoleRunView, McpToolCallView
+
+
+@dataclass(frozen=True)
+class RoleDefinition:
+    key: str
+    label: str
+    responsibility: str
+    allowed_tools: tuple[str, ...] = ()
+    fallback_tools: tuple[str, ...] = ()
+
+
+_EVENTS = "security.events.list"
+_ALERTS = "security.alerts.list"
+_VULNERABILITIES = "security.vulnerabilities.list"
+_WEAK_PASSWORDS = "security.weak_passwords.list"
+_RAG = "knowledge.rag.retrieve"
+_TOOL_LABELS = {
+    _EVENTS: "事件 MCP",
+    _ALERTS: "告警 MCP",
+    _VULNERABILITIES: "漏洞 MCP",
+    _WEAK_PASSWORDS: "弱口令 MCP",
+    _RAG: "本地知识库 RAG",
+}
+
+_SUPERAGENT = RoleDefinition("superagent", "总控智能体", "观察公开状态并选择下一位专业智能体。")
+_SPECIALISTS = {
+    item.key: item
+    for item in (
+        RoleDefinition(
+            "alert_triage",
+            "告警分诊智能体",
+            "对事件和告警分级、归并并指出优先项。",
+            (_ALERTS, _EVENTS),
+            (_ALERTS, _EVENTS),
+        ),
+        RoleDefinition(
+            "threat_investigation",
+            "威胁研判智能体",
+            "关联证据与漏洞、认证线索，区分事实和待核实假设。",
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+            (_EVENTS, _ALERTS),
+        ),
+        RoleDefinition(
+            "knowledge_retrieval",
+            "知识检索智能体",
+            "按需调用本地 RAG 补充可引用的安全知识。",
+            (_RAG,),
+            (_RAG,),
+        ),
+        RoleDefinition(
+            "response_planning",
+            "响应规划智能体",
+            "依据已有结论按需补充事实，并提出需人工批准的响应建议。",
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+        ),
+        RoleDefinition(
+            "verification",
+            "验证智能体",
+            "按需复查事件或告警，并制定建议实施后的观测指标和验收条件。",
+            (_EVENTS, _ALERTS),
+        ),
+        RoleDefinition(
+            "reporting",
+            "报告智能体",
+            "按报告完整性需要选择数据工具，汇总事实、线索、建议和局限性。",
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+        ),
+    )
+}
+_FALLBACK_ORDER = tuple(_SPECIALISTS)
+_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+
+
+class _ToolBroker:
+    """Execute allowlisted read-only tools once and cache their observations."""
+
+    def __init__(
+        self, tools: tuple[ReadOnlyMcpTool, ...], start_at: datetime, end_at: datetime
+    ) -> None:
+        self._tools = {tool.name: tool for tool in tools}
+        self._start_at = start_at
+        self._end_at = end_at
+        self._cache: dict[str, McpToolCallView] = {}
+        self._order: list[str] = []
+
+    @property
+    def results(self) -> list[McpToolCallView]:
+        return [self._cache[name] for name in self._order]
+
+    def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, str]]:
+        return [
+            {"name": name, "label": _TOOL_LABELS[name]}
+            for name in allowed
+            if name == _RAG or name in self._tools
+        ]
+
+    async def call(self, name: str) -> McpToolCallView:
+        if name not in self._tools:
+            raise ValueError("tool is not registered")
+        if name not in self._cache:
+            self._cache[name] = await asyncio.to_thread(
+                self._tools[name].call, self._start_at, self._end_at
+            )
+            self._order.append(name)
+        return self._cache[name]
+
+    def public_facts(self, limit: int = 4500) -> str:
+        if not self._order:
+            return "尚未调用运营数据工具。"
+        return "\n".join(f"{item.label}：{item.summary}" for item in self.results)[:limit]
+
+
+class RealDataAgentTeam:
+    """Bounded ReAct: choose a role, let it choose tools, observe, and repeat."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        knowledge: KnowledgeApiService,
+        *,
+        tenant_id: UUID,
+        principal_id: UUID,
+    ) -> None:
+        self._settings = settings
+        self._knowledge = knowledge
+        self._tenant_id = tenant_id
+        self._principal_id = principal_id
+
+    async def run(
+        self, tools: tuple[ReadOnlyMcpTool, ...], start_at: datetime, end_at: datetime
+    ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
+        broker = _ToolBroker(tools, start_at, end_at)
+        remaining = set(_SPECIALISTS)
+        results: list[AgentRoleRunView] = []
+        model: str | None = None
+        selected, reason, planner_model = await self._choose(
+            remaining, broker.public_facts(), results
+        )
+        model = planner_model
+        results.append(
+            AgentRoleRunView(
+                role=_SUPERAGENT.key,
+                label=_SUPERAGENT.label,
+                status="completed" if planner_model else "fallback",
+                summary=f"总控决策：{reason}",
+                handoff_to=_SPECIALISTS[selected].label,
+                iteration=1,
+                decision_reason=reason,
+            )
+        )
+        iteration = 2
+        while remaining and iteration <= 8:
+            definition = _SPECIALISTS[selected]
+            summary, role_model, tool_reason = await self._run_role(definition, broker, results)
+            model = model or role_model
+            remaining.remove(selected)
+            current = AgentRoleRunView(
+                role=definition.key,
+                label=definition.label,
+                status="completed" if role_model else "fallback",
+                summary=summary,
+                handoff_to=None,
+                iteration=iteration,
+                decision_reason=tool_reason,
+            )
+            results.append(current)
+            next_role: str | None = None
+            handoff_reason = "所有专业角色均已完成。"
+            if remaining:
+                next_role, handoff_reason, planner_used = await self._choose(
+                    remaining, broker.public_facts(), results
+                )
+                model = model or planner_used
+            results[-1] = current.model_copy(
+                update={
+                    "handoff_to": _SPECIALISTS[next_role].label if next_role else None,
+                    "decision_reason": f"{tool_reason}；交接决策：{handoff_reason}",
+                }
+            )
+            if next_role is None:
+                break
+            selected = next_role
+            iteration += 1
+        return results, model, broker.results
+
+    async def _choose(
+        self, remaining: set[str], facts: str, results: list[AgentRoleRunView]
+    ) -> tuple[str, str, str | None]:
+        fallback = next(role for role in _FALLBACK_ORDER if role in remaining)
+        fallback_reason = f"模型规划不可用，按安全降级顺序选择{_SPECIALISTS[fallback].label}。"
+        if not self._settings.deepseek_api_key.get_secret_value():
+            return fallback, fallback_reason, None
+        prompt = json.dumps(
+            {
+                "remaining_roles": sorted(remaining),
+                "completed": [
+                    {"role": item.role, "summary": item.summary[:300]} for item in results
+                ],
+                "available_observation_summaries": facts,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            response = await self._chat(
+                "你是安全多智能体的 ReAct 总控。观察公开状态后，从 remaining_roles 中选择一个下一角色。仅输出 JSON："
+                '{"action":"run_role","role":"角色键","reason_code":"小写英文代码","public_reason":"不超过80字中文理由"}。'
+                "不要输出思维链，不得选择列表外角色，也不得直接调用工具。",
+                prompt,
+                max_tokens=180,
+            )
+            parsed = self._json(response.content)
+            role, reason_code = parsed.get("role"), parsed.get("reason_code")
+            reason = " ".join(str(parsed.get("public_reason", "")).split())[:180]
+            if parsed.get("action") != "run_role" or role not in remaining:
+                raise ValueError("unallowed ReAct action")
+            if not isinstance(reason_code, str) or not _REASON_CODE.fullmatch(reason_code):
+                raise ValueError("invalid reason code")
+            return (
+                str(role),
+                reason or f"选择{_SPECIALISTS[str(role)].label}继续分析。",
+                response.model,
+            )
+        except (LlmError, ValueError, json.JSONDecodeError):
+            return fallback, fallback_reason, None
+
+    async def _run_role(
+        self, definition: RoleDefinition, broker: _ToolBroker, results: list[AgentRoleRunView]
+    ) -> tuple[str, str | None, str]:
+        if not self._settings.deepseek_api_key.get_secret_value():
+            return await self._fallback_role(definition, broker)
+        observations: list[str] = []
+        used: set[str] = set()
+        decisions: list[str] = []
+        model: str | None = None
+        handoffs = "\n".join(f"{item.label}：{item.summary}" for item in results[-3:])[:1800]
+        for _ in range(4):
+            available = tuple(name for name in definition.allowed_tools if name not in used)
+            prompt = json.dumps(
+                {
+                    "responsibility": definition.responsibility,
+                    "available_tools": broker.catalog(available),
+                    "previous_public_handoffs": handoffs,
+                    "observations": observations,
+                },
+                ensure_ascii=False,
+            )
+            try:
+                response = await self._chat(
+                    f"你是{definition.label}。你要在受限 ReAct 循环中自主选择工具。每轮只能输出一个 JSON 动作。需要数据时输出："
+                    '{"action":"call_tool","tool":"工具名","query":"仅RAG可用的检索问题","public_reason":"中文理由"}；信息足够时输出：'
+                    '{"action":"finish","summary":"不超过280字的中文公开结论","public_reason":"中文理由"}。'
+                    "只能选择 available_tools 中的工具；允许运行时不调用任何工具；不得输出思维链、命令或虚构事实。",
+                    prompt,
+                    max_tokens=420,
+                )
+                model = model or response.model
+                parsed = self._json(response.content)
+                action = parsed.get("action")
+                public_reason = " ".join(str(parsed.get("public_reason", "")).split())[:160]
+                if action == "finish":
+                    summary = self._plain(str(parsed.get("summary", "")))[:800]
+                    if not summary:
+                        raise ValueError("empty role summary")
+                    decisions.append(public_reason or "现有观察已足以形成公开结论")
+                    return summary, model, "工具决策：" + "；".join(decisions)
+                if action != "call_tool":
+                    raise ValueError("invalid role action")
+                tool_name = str(parsed.get("tool", ""))
+                if tool_name not in available:
+                    raise ValueError("unallowed tool")
+                used.add(tool_name)
+                decisions.append(public_reason or f"需要调用{_TOOL_LABELS[tool_name]}补充证据")
+                if tool_name == _RAG:
+                    query = " ".join(str(parsed.get("query", "")).split())[:1000]
+                    observation = await asyncio.to_thread(
+                        self._retrieve, query or handoffs or definition.responsibility
+                    )
+                    observations.append(f"{_TOOL_LABELS[_RAG]}：{observation}")
+                else:
+                    observations.append(self._tool_observation(await broker.call(tool_name)))
+            except (LlmError, ValueError, json.JSONDecodeError):
+                break
+        summary, fallback_model = await self._summarize_observations(
+            definition, observations, handoffs
+        )
+        reason = "；".join(decisions) if decisions else "模型动作无效，已安全结束本角色"
+        return summary, model or fallback_model, "工具决策：" + reason
+
+    async def _fallback_role(
+        self, definition: RoleDefinition, broker: _ToolBroker
+    ) -> tuple[str, None, str]:
+        observations: list[str] = []
+        selected: list[str] = []
+        for name in definition.fallback_tools:
+            selected.append(_TOOL_LABELS[name])
+            if name == _RAG:
+                observations.append(
+                    f"{_TOOL_LABELS[_RAG]}：{self._retrieve(definition.responsibility)}"
+                )
+            else:
+                observations.append(self._tool_observation(await broker.call(name)))
+        if observations:
+            summary = (f"{definition.label}保守降级：" + "；".join(observations))[:800]
+            reason = "模型不可用，按角色最小必需集合调用" + "、".join(selected)
+        else:
+            summary = (
+                f"{definition.label}保守降级：未新增工具调用；保留已有公开事实并建议人工复核。"
+            )
+            reason = "模型不可用，本角色无强制工具，未新增调用"
+        return summary, None, f"工具决策：{reason}"
+
+    async def _summarize_observations(
+        self, definition: RoleDefinition, observations: list[str], handoffs: str
+    ) -> tuple[str, str | None]:
+        if not observations:
+            return f"{definition.label}：未选择新增工具，依据前序公开结论继续，建议人工复核。", None
+        try:
+            response = await self._chat(
+                f"你是{definition.label}。只输出不超过280字的公开中文摘要，不输出思维链，不得编造或执行处置。",
+                f"职责：{definition.responsibility}\n工具观察：{' | '.join(observations)[:6000]}\n前序交接：{handoffs}",
+                max_tokens=360,
+            )
+            return self._plain(response.content)[:800], response.model
+        except LlmError:
+            return f"{definition.label}：模型总结不可用，已保留工具观察并建议人工复核。", None
+
+    async def _chat(self, system: str, user: str, *, max_tokens: int):
+        async with httpx.AsyncClient() as client:
+            return await DeepSeekClient(self._settings, client).chat(
+                ChatRequest(
+                    messages=(
+                        ChatMessage(role="system", content=system),
+                        ChatMessage(role="user", content=user),
+                    ),
+                    temperature=0.0,
+                    max_tokens=max_tokens,
+                )
+            )
+
+    def _retrieve(self, query: str) -> str:
+        try:
+            bases = self._knowledge.list_knowledge_bases(tenant_id=self._tenant_id)
+            if not bases:
+                return "本地知识库为空。"
+            response = self._knowledge.retrieve(
+                RetrievalRequest(
+                    query=query[:2000], knowledge_base_ids=[item.id for item in bases], limit=3
+                ),
+                tenant_id=self._tenant_id,
+                principal_id=self._principal_id,
+            )
+            return response.answer[:1800] if response.answer else "未检索到可引用片段。"
+        except Exception:
+            return "RAG 暂不可用；不得据此扩写事实。"
+
+    @staticmethod
+    def _tool_observation(item: McpToolCallView) -> str:
+        details = "；".join(item.items[:8])
+        return f"{item.label}：{item.summary}" + (f"；{details}" if details else "")
+
+    @staticmethod
+    def _plain(value: str) -> str:
+        return " ".join(value.replace("**", "").replace("__", "").split())
+
+    @staticmethod
+    def _json(value: str) -> dict[str, object]:
+        start, end = value.find("{"), value.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("model did not return JSON")
+        parsed = json.loads(value[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise ValueError("model JSON must be an object")
+        return parsed

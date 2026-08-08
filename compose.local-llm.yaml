@@ -1,0 +1,53 @@
+services:
+  local-llm:
+    image: vllm/vllm-openai:v0.13.0
+    runtime: nvidia
+    ipc: host
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_DISABLE_XET: "1"
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+    volumes:
+      - ${LOCAL_LLM_CACHE_DIR:-./data/huggingface}:/root/.cache/huggingface
+      - local-vllm-cache:/root/.cache/vllm
+    command:
+      - --model
+      - Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+      - --served-model-name
+      - shieldchain-qwen3-30b
+      - --pipeline-parallel-size
+      - "2"
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "16384"
+      - --max-num-seqs
+      - "4"
+      - --gpu-memory-utilization
+      - "0.86"
+    ports:
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      start_period: 20m
+      retries: 12
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  backend:
+    environment:
+      DEEPSEEK_BASE_URL: http://local-llm:8000/v1
+      DEEPSEEK_MODEL: shieldchain-qwen3-30b
+      DEEPSEEK_API_KEY: local-vllm
+    depends_on:
+      local-llm:
+        condition: service_healthy
+
+volumes:
+  local-vllm-cache:

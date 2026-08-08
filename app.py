@@ -21,13 +21,20 @@ CONDA_PYTHON = CONDA_PREFIX / "python.exe"
 BACKEND_URL = "http://127.0.0.1:8000"
 FRONTEND_URL = "http://127.0.0.1:5173"
 MILVUS_PORT = 19530
+LOCAL_RAG_PORT = 8001
 MILVUS_COMPOSE = ROOT / "docker-compose.rag-local.yml"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Start the ShieldChain backend and frontend.")
-    parser.add_argument("--check", action="store_true", help="Check prerequisites only.")
-    parser.add_argument("--no-browser", action="store_true", help="Do not open the frontend.")
+    parser = argparse.ArgumentParser(
+        description="Start the ShieldChain backend and frontend."
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="Check prerequisites only."
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true", help="Do not open the frontend."
+    )
     parser.add_argument(
         "--skip-migrations",
         action="store_true",
@@ -71,13 +78,19 @@ def prepare_environment() -> tuple[Path, Path]:
     node = shutil.which("node.exe") or shutil.which("node")
     vite = ROOT / "frontend" / "node_modules" / "vite" / "bin" / "vite.js"
     if node is None:
-        raise SystemExit("Node.js is unavailable. Install the current Node.js LTS release.")
+        raise SystemExit(
+            "Node.js is unavailable. Install the current Node.js LTS release."
+        )
     if not vite.is_file():
-        raise SystemExit("Frontend dependencies are missing. Run: npm.cmd ci --prefix frontend")
+        raise SystemExit(
+            "Frontend dependencies are missing. Run: npm.cmd ci --prefix frontend"
+        )
 
-    for port in (8000, 5173):
+    for port in (8000, 5173, LOCAL_RAG_PORT):
         if not port_is_available(port):
-            raise SystemExit(f"Port {port} is already occupied. Stop its process and retry.")
+            raise SystemExit(
+                f"Port {port} is already occupied. Stop its process and retry."
+            )
     return Path(node), vite
 
 
@@ -88,7 +101,9 @@ def ensure_milvus() -> None:
         return
     docker = shutil.which("docker.exe") or shutil.which("docker")
     if docker is None:
-        raise SystemExit("Docker Desktop is required for the local Milvus vector database.")
+        raise SystemExit(
+            "Docker Desktop is required for the local Milvus vector database."
+        )
     try:
         subprocess.run(
             [docker, "info"],
@@ -101,7 +116,9 @@ def ensure_milvus() -> None:
             "Docker Desktop is not running. Start Docker Desktop, then run app.py again."
         ) from error
     print("Starting local Milvus vector database...")
-    subprocess.run([docker, "compose", "-f", str(MILVUS_COMPOSE), "up", "-d"], cwd=ROOT, check=True)
+    subprocess.run(
+        [docker, "compose", "-f", str(MILVUS_COMPOSE), "up", "-d"], cwd=ROOT, check=True
+    )
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         if not port_is_available(MILVUS_PORT):
@@ -109,6 +126,7 @@ def ensure_milvus() -> None:
             return
         time.sleep(1)
     raise TimeoutError("Milvus did not become ready within 120 seconds.")
+
 
 def run_migrations() -> None:
     print("Applying database migrations...")
@@ -127,28 +145,37 @@ def run_migrations() -> None:
     )
 
 
-def start_process(command: list[str], working_directory: Path) -> subprocess.Popen[bytes]:
+def start_process(
+    command: list[str], working_directory: Path
+) -> subprocess.Popen[bytes]:
     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    return subprocess.Popen(command, cwd=working_directory, creationflags=creation_flags)
+    return subprocess.Popen(
+        command, cwd=working_directory, creationflags=creation_flags
+    )
 
 
 def wait_until_ready(processes: list[subprocess.Popen[bytes]]) -> None:
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         for process in processes:
             if process.poll() is not None:
-                raise RuntimeError(f"A service exited early with code {process.returncode}.")
+                raise RuntimeError(
+                    f"A service exited early with code {process.returncode}."
+                )
         backend_ready = False
         try:
-            with urllib.request.urlopen(f"{BACKEND_URL}/api/v1/health/live", timeout=1) as response:
+            with urllib.request.urlopen(
+                f"{BACKEND_URL}/api/v1/health/live", timeout=1
+            ) as response:
                 backend_ready = response.status == 200
         except (OSError, urllib.error.URLError):
             pass
+        model_ready = not port_is_available(LOCAL_RAG_PORT)
         frontend_ready = not port_is_available(5173)
-        if backend_ready and frontend_ready:
+        if model_ready and backend_ready and frontend_ready:
             return
         time.sleep(0.25)
-    raise TimeoutError("Services did not become ready within 30 seconds.")
+    raise TimeoutError("Services did not become ready within 120 seconds.")
 
 
 def stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -175,12 +202,27 @@ def main() -> int:
         print("ShieldChain startup prerequisites are ready.")
         return 0
     ensure_milvus()
+    os.environ.setdefault("SHIELDCHAIN_RAG_MODELS_ROOT", str(ROOT / "data" / "models"))
     if not args.skip_migrations:
         run_migrations()
 
+    model_service: subprocess.Popen[bytes] | None = None
     backend: subprocess.Popen[bytes] | None = None
     frontend: subprocess.Popen[bytes] | None = None
     try:
+        model_service = start_process(
+            [
+                str(CONDA_PYTHON),
+                "-m",
+                "uvicorn",
+                "shieldchain.rag.local_model_server:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(LOCAL_RAG_PORT),
+            ],
+            ROOT / "backend",
+        )
         backend = start_process(
             [
                 str(CONDA_PYTHON),
@@ -199,21 +241,31 @@ def main() -> int:
             [str(node), str(vite), "--host", "127.0.0.1", "--port", "5173"],
             ROOT / "frontend",
         )
-        wait_until_ready([backend, frontend])
+        wait_until_ready([model_service, backend, frontend])
         print(f"Backend:  {BACKEND_URL}")
         print(f"Frontend: {FRONTEND_URL}")
         print("Press Ctrl+C to stop both services.")
         if not args.no_browser:
             webbrowser.open(FRONTEND_URL)
-        while backend.poll() is None and frontend.poll() is None:
+        while (
+            model_service.poll() is None
+            and backend.poll() is None
+            and frontend.poll() is None
+        ):
             time.sleep(0.25)
-        failed = backend if backend.poll() is not None else frontend
-        raise RuntimeError(f"A service exited unexpectedly with code {failed.returncode}.")
+        failed = (
+            model_service
+            if model_service.poll() is not None
+            else (backend if backend.poll() is not None else frontend)
+        )
+        raise RuntimeError(
+            f"A service exited unexpectedly with code {failed.returncode}."
+        )
     except KeyboardInterrupt:
         print("\nStopping ShieldChain...")
         return 0
     finally:
-        for process in (frontend, backend):
+        for process in (frontend, backend, model_service):
             if process is not None:
                 stop_process(process)
 

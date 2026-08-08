@@ -42,6 +42,22 @@ class AssistantMessageView(StrictModel):
     created_at: datetime
 
 
+
+class AssistantConversationRenameRequest(StrictModel):
+    title: str = Field(min_length=1, max_length=80)
+
+    @field_validator("title")
+    @classmethod
+    def non_blank_title(cls, value: str) -> str:
+        value = value.replace("\n", " ").strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+
+class AssistantConversationPinRequest(StrictModel):
+    pinned: bool
+
 class AssistantConversationView(StrictModel):
     id: UUID
     title: str
@@ -49,6 +65,7 @@ class AssistantConversationView(StrictModel):
     updated_at: datetime
     memory_summary: str
     summary: str
+    pinned: bool = False
     message_count: int = Field(ge=0)
 
 

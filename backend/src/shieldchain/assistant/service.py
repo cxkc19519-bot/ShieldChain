@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -80,7 +81,10 @@ class GroundedAssistantService:
         updated = self._store.append(
             conversation_id, role="assistant", content=answer, citations=citations, model=model
         )
-        summary = await self._summarize_with_deepseek(history, payload.message, answer)
+        # Refresh the concise DeepSeek title after every completed turn.  A
+        # conversation can change topic after its first question, so only
+        # summarizing the first turn leaves the sidebar stale.
+        summary = await self._summarize_with_deepseek(payload.message, answer)
         updated = self._store.set_summary(conversation_id, summary)
         return AssistantChatResponse(
             conversation_id=conversation_id,
@@ -97,16 +101,15 @@ class GroundedAssistantService:
     def conversation(self, conversation_id: UUID):
         return self._store.get(conversation_id)
 
+    def rename_conversation(self, conversation_id: UUID, title: str):
+        return self._store.rename(conversation_id, title)
+
+    def set_conversation_pinned(self, conversation_id: UUID, pinned: bool):
+        return self._store.set_pinned(conversation_id, pinned)
     def delete_conversation(self, conversation_id: UUID) -> None:
         self._store.delete(conversation_id)
-    async def _summarize_with_deepseek(
-        self, history: list[AssistantMessageView], question: str, answer: str
-    ) -> str:
-        transcript = "\n".join(
-            f"{'用户' if item.role == 'user' else '助手'}：{item.content[:220]}"
-            for item in history[-6:]
-        )
-        transcript += f"\n用户：{question[:220]}\n助手：{answer[:220]}"
+    async def _summarize_with_deepseek(self, question: str, answer: str) -> str:
+        transcript = f"用户：{question[:220]}\n助手：{answer[:220]}"
         try:
             async with httpx.AsyncClient() as client:
                 result = await DeepSeekClient(self._settings, client).chat(
@@ -124,7 +127,7 @@ class GroundedAssistantService:
                 )
             return " ".join(result.content.split())[:80] or "新的安全咨询"
         except LlmError:
-            return question.replace("\n", " ").strip()[:40] or "新的安全咨询"
+            return " ".join(answer.replace("\n", " ").split())[:80] or question.replace("\n", " ").strip()[:40] or "新的安全咨询"
     def sync_historical_reports(self) -> int:
         """Put every terminal report into the managed knowledge base exactly once."""
         base = self._history_base()
@@ -229,6 +232,10 @@ class GroundedAssistantService:
                 ),
             )
         ]
+        messages.append(ChatMessage(
+            role="system",
+            content="Reply as plain Chinese text. Do not use Markdown markers, source labels, or bracketed citation numbers. Do not expose reasoning.",
+        ))
         messages.extend(ChatMessage(role=item.role, content=item.content) for item in history)
         messages.append(ChatMessage(role="user", content=message))
         try:
@@ -238,7 +245,13 @@ class GroundedAssistantService:
                 )
         except LlmError as error:
             raise AssistantUnavailable("DeepSeek 当前不可用，请检查 API 配置后重试。") from error
-        return result.content, result.model
+        return self._plain_text_answer(result.content), result.model
+    @staticmethod
+    def _plain_text_answer(value: str) -> str:
+        """Keep the persisted assistant response free of presentation-only markup."""
+        cleaned = value.replace("**", "").replace("__", "")
+        cleaned = re.sub(r"\s*\[(?:\d+\s*(?:,\s*\d+\s*)*)\]", "", cleaned)
+        return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     @staticmethod
     def _report_filename(run_tracking_id: str) -> str:
         return f"调查报告-{run_tracking_id}.md"

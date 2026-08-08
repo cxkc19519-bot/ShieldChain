@@ -8,7 +8,7 @@ export function HomePage() {
       <div className="home-hero">
         <h1 className="home-title">
           下一代大模型驱动的<br />
-          <span className="text-gradient">自动安全运营中枢</span>
+          <span className="text-gradient">安全运营分析中枢</span>
         </h1>
         <p className="home-subtitle">
           ShieldChain 融合了前沿的 ReAct 多智能体协同技术与可信工具执行沙箱，为您提供从安全告警到自动化处置的端到端闭环运营体验。
@@ -17,8 +17,8 @@ export function HomePage() {
           <Link to="/dashboard" className="button button-primary button-large">
             进入工作区
           </Link>
-          <Link to="/events" className="button button-secondary button-large">
-            开始模拟调查
+          <Link to="/operations-report" className="button button-secondary button-large">
+            生成运营报告
           </Link>
         </div>
       </div>
@@ -26,7 +26,7 @@ export function HomePage() {
       <section className="home-features">
         <div className="feature-card">
           <div className="feature-icon"><Activity size={28} /></div>
-          <h3>智能事件调查</h3>
+          <h3>真实数据分析</h3>
           <p>自动收集多源异构情报，还原攻击链路与证据，无需人工干预即可形成准确的安全研判。</p>
         </div>
         <div className="feature-card">
@@ -36,7 +36,7 @@ export function HomePage() {
         </div>
         <div className="feature-card">
           <div className="feature-icon"><ShieldCheck size={28} /></div>
-          <h3>自动化处置与验证</h3>
+          <h3>受控建议与复核</h3>
           <p>内置沙箱审批机制，可信执行隔离与封禁等防御动作，并自动核验处置结果，确保威胁消除。</p>
         </div>
         <div className="feature-card">

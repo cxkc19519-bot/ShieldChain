@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Forward a minimized Wazuh JSON alert to ShieldChain's read-only inbox."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+def text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value[:limit] or None
+
+
+def nested(data: object, *keys: str) -> object:
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def normalize(alert: dict[str, object]) -> dict[str, object]:
+    rule = alert.get("rule") if isinstance(alert.get("rule"), dict) else {}
+    agent = alert.get("agent") if isinstance(alert.get("agent"), dict) else {}
+    data = alert.get("data") if isinstance(alert.get("data"), dict) else {}
+    rule_id = text(rule.get("id"), 128) or "unknown"
+    timestamp = text(alert.get("timestamp"), 64)
+    agent_id = text(agent.get("id"), 128)
+    external_id = text(alert.get("id"), 256) or ":".join(
+        item for item in (agent_id, timestamp, rule_id) if item
+    )
+    if not external_id or not timestamp:
+        raise ValueError("alert is missing a stable id or timestamp")
+    mitre = nested(rule, "mitre", "id")
+    mitre_ids = [item[:32] for item in mitre if isinstance(item, str) and item.strip()] if isinstance(mitre, list) else []
+    event = nested(data, "win", "eventdata")
+    event = event if isinstance(event, dict) else {}
+    return {
+        "external_id": external_id,
+        "occurred_at": timestamp,
+        "severity": int(rule.get("level", 0)),
+        "rule_id": rule_id,
+        "title": text(rule.get("description"), 512) or "Wazuh security alert",
+        "agent_id": agent_id,
+        "agent_name": text(agent.get("name"), 256),
+        "mitre_ids": mitre_ids,
+        "process_name": text(event.get("image"), 512),
+        "parent_process_name": text(event.get("parentImage"), 512),
+        "source_ip": text(data.get("srcip"), 64),
+        "destination_ip": text(event.get("destinationIp"), 64),
+        "destination_port": event.get("destinationPort") if isinstance(event.get("destinationPort"), int) else None,
+        "evidence": {
+            "rule_groups": ",".join(item for item in rule.get("groups", []) if isinstance(item, str))[:1024],
+            "location": text(alert.get("location"), 1024),
+        },
+    }
+
+
+def main() -> int:
+    if len(sys.argv) < 4:
+        return 2
+    alert_path, token, endpoint = sys.argv[1:4]
+    try:
+        alert = json.loads(Path(alert_path).read_text(encoding="utf-8"))
+        payload = json.dumps(normalize(alert)).encode("utf-8")
+        request = Request(
+            endpoint,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-ShieldChain-Wazuh-Token": token,
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            return 0 if 200 <= response.status < 300 else 1
+    except (OSError, ValueError, TypeError, HTTPError, URLError):
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

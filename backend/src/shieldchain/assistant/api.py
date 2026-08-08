@@ -12,6 +12,8 @@ from .schemas import (
     AssistantChatResponse,
     AssistantConversationDetail,
     AssistantConversationListResponse,
+    AssistantConversationPinRequest,
+    AssistantConversationRenameRequest,
     AssistantConversationView,
 )
 from .service import AssistantUnavailable, GroundedAssistantService
@@ -32,6 +34,7 @@ def _view(row: dict[str, object]) -> AssistantConversationView:
         updated_at=str(row["updated_at"]),
         memory_summary=str(row.get("memory_summary", "")),
         summary=str(row.get("summary") or row.get("title") or "新的安全咨询"),
+        pinned=bool(row.get("pinned", False)),
         message_count=len(row.get("messages", [])),
     )
 
@@ -53,6 +56,25 @@ def conversation(conversation_id: UUID, request: Request) -> AssistantConversati
         messages=LocalConversationStore.messages(row),
     )
 
+
+@router.patch("/assistant/conversations/{conversation_id}/title", response_model=AssistantConversationView)
+def rename_conversation(
+    conversation_id: UUID, payload: AssistantConversationRenameRequest, request: Request
+) -> AssistantConversationView:
+    try:
+        return _view(_service(request).rename_conversation(conversation_id, payload.title))
+    except ConversationNotFound:
+        raise ApiError("conversation_not_found", "Conversation not found", 404) from None
+
+
+@router.patch("/assistant/conversations/{conversation_id}/pin", response_model=AssistantConversationView)
+def pin_conversation(
+    conversation_id: UUID, payload: AssistantConversationPinRequest, request: Request
+) -> AssistantConversationView:
+    try:
+        return _view(_service(request).set_conversation_pinned(conversation_id, payload.pinned))
+    except ConversationNotFound:
+        raise ApiError("conversation_not_found", "Conversation not found", 404) from None
 
 @router.delete("/assistant/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_conversation(conversation_id: UUID, request: Request) -> None:

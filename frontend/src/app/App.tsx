@@ -1,4 +1,4 @@
-import { Activity, Search, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -7,7 +7,8 @@ import { useRouteFocus } from './useRouteFocus'
 
 const navigation = [
   { label: '运营总览', icon: Activity, to: '/dashboard' },
-  { label: '事件调查', icon: Search, to: '/events' },
+  { label: '安全运营报告', icon: Search, to: '/operations-report' },
+  { label: '实时告警', icon: AlertTriangle, to: '/alerts' },
   { label: '知识库', icon: Database, to: '/knowledge' },
   { label: '历史报告', icon: FileText, to: '/reports' },
   { label: '智能助手', icon: MessageCircle, to: '/assistant' },
@@ -31,8 +32,7 @@ export function App() {
               <img src={logoUrl} alt="logo" style={{ width: '28px', height: '28px', display: 'block' }} />
             </span>
             <div>
-              <p className="brand-kicker" style={{ marginLeft: '0.15rem' }}>ShieldChain</p>
-              <h1>盾链智御</h1>
+              <h1 style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>ShieldChain</h1>
             </div>
           </div>
           <nav className="top-nav" aria-label="主要导航">
@@ -61,7 +61,7 @@ export function App() {
           </nav>
           <div className="environment-state" aria-label="当前运行环境">
             <span aria-hidden="true" />
-            离线仿真环境
+            真实数据分析环境
           </div>
         </div>
       </header>}

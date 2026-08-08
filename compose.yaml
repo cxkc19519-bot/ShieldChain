@@ -4,6 +4,7 @@ x-backend-environment: &backend-environment
   ENVIRONMENT: production
   DATABASE_URL: sqlite:////var/lib/shieldchain/shieldchain.db
   RAG_CONTENT_ROOT: /var/lib/shieldchain/knowledge
+  ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant
   HTTP_ALLOWED_HOSTS: '["backend","localhost","127.0.0.1"]'
   HTTP_ALLOWED_ORIGINS: '["http://localhost:8080","http://127.0.0.1:8080"]'
   HTTP_MAX_REQUEST_BYTES: "27262976"

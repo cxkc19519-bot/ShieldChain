@@ -1,0 +1,7 @@
+services:
+  backend:
+    env_file:
+      - .env
+    environment:
+      SHIELDCHAIN_LOCAL_KNOWLEDGE_ROOT: /var/lib/shieldchain/local-knowledge
+      ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant

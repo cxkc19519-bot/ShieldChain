@@ -8,10 +8,11 @@ import { ChangelogPage } from '../features/about/ChangelogPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { AgentsPage } from '../features/agents/AgentsPage'
 import { ToolsPage } from '../features/tools/ToolsPage'
-import { InvestigationPage } from '../features/investigation/InvestigationPage'
+import { OperationsReportPage } from '../features/operations/OperationsReportPage'
 import { ReportsPage } from '../features/reports/ReportsPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { AssistantPage } from '../features/assistant/AssistantPage'
+import { AlertsPage } from '../features/alerts/AlertsPage'
 import { App } from './App'
 import { RouteErrorPage } from './RouteErrorPage'
 import { RunContextProvider } from './RunContext'
@@ -28,7 +29,8 @@ export const appRoutes: RouteObject[] = [
       { path: 'about', element: <AboutPage /> },
       { path: 'status', element: <StatusPage /> },
       { path: 'changelog', element: <ChangelogPage /> },
-      { path: 'events', element: <InvestigationPage /> },
+      { path: 'operations-report', element: <OperationsReportPage /> },
+      { path: 'alerts', element: <AlertsPage /> },
       { path: 'agents', element: <AgentsPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
       { path: 'assistant', element: <AssistantPage /> },

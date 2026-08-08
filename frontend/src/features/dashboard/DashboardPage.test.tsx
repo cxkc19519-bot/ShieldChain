@@ -48,7 +48,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('1 条已确认')).toBeVisible()
     expect(screen.getByText('执行成功')).toBeVisible()
     expect(screen.getByText('处置已验证')).toBeVisible()
-    expect(screen.getByRole('link', { name: '打开事件调查' })).toHaveAttribute('href', expect.stringContaining('/events'))
+    expect(screen.getByRole('link', { name: '打开运营报告' })).toHaveAttribute('href', expect.stringContaining('/operations-report'))
     expect(screen.queryByText(/raw_reference|integrity_sha256|before_state/)).not.toBeInTheDocument()
   })
 

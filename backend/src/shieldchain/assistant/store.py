@@ -33,6 +33,7 @@ class LocalConversationStore:
                 "title": self._title(first_message),
                 "created_at": now,
                 "updated_at": now,
+                "pinned": False,
                 "memory_summary": "尚未形成长期记忆。",
                 "summary": "新的安全咨询",
                 "messages": [],
@@ -51,7 +52,7 @@ class LocalConversationStore:
     def list(self) -> list[dict[str, object]]:
         with self._lock:
             rows = list(self._read()["conversations"])
-        return sorted(rows, key=lambda item: str(item.get("updated_at", "")), reverse=True)
+        return sorted(rows, key=lambda item: (bool(item.get("pinned", False)), str(item.get("updated_at", ""))), reverse=True)
 
     def append(
         self,
@@ -91,6 +92,30 @@ class LocalConversationStore:
             for conversation in catalog["conversations"]:
                 if conversation.get("id") == str(conversation_id):
                     conversation["summary"] = summary.strip()[:80] or "新的安全咨询"
+                    self._write(catalog)
+                    return dict(conversation)
+        raise ConversationNotFound(str(conversation_id))
+    def rename(self, conversation_id: UUID, title: str) -> dict[str, object]:
+        normalized = title.replace("\n", " ").strip()[:80]
+        if not normalized:
+            raise ValueError("conversation title must not be blank")
+        with self._lock:
+            catalog = self._read()
+            for conversation in catalog["conversations"]:
+                if conversation.get("id") == str(conversation_id):
+                    conversation["title"] = normalized
+                    conversation["updated_at"] = datetime.now(UTC).isoformat()
+                    self._write(catalog)
+                    return dict(conversation)
+        raise ConversationNotFound(str(conversation_id))
+
+    def set_pinned(self, conversation_id: UUID, pinned: bool) -> dict[str, object]:
+        with self._lock:
+            catalog = self._read()
+            for conversation in catalog["conversations"]:
+                if conversation.get("id") == str(conversation_id):
+                    conversation["pinned"] = bool(pinned)
+                    conversation["updated_at"] = datetime.now(UTC).isoformat()
                     self._write(catalog)
                     return dict(conversation)
         raise ConversationNotFound(str(conversation_id))

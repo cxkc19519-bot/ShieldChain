@@ -8,6 +8,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.agents.model_planning import AutonomousPlan
+from shieldchain.agents.runtime import InvestigationAgentRuntime
 from shieldchain.incidents.domain import (
     Assessment,
     BlockOutcome,
@@ -30,7 +32,6 @@ from shieldchain.incidents.ports import (
 from shieldchain.incidents.rules import assess
 from shieldchain.incidents.scenario import collect_evidence
 from shieldchain.incidents.tools import verify_block
-from shieldchain.agents.runtime import InvestigationAgentRuntime
 
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
@@ -95,9 +96,21 @@ class InvestigationWorkflow:
             self._pause()
             assessment = self._analyze(session_factory, run_id, request_id=request_id)
             evidence = self._load_evidence_for_agents(session_factory, run_id)
-            self._run_agents(run_id, evidence=evidence, assessment=assessment, request_id=request_id)
+            plan = self._run_agents(
+                run_id,
+                evidence=evidence,
+                assessment=assessment,
+                request_id=request_id,
+            )
             if assessment.conclusion is Conclusion.INSUFFICIENT_EVIDENCE:
                 return InvestigationStatus.NEEDS_REVIEW
+            if plan is not None and not plan.allow_execution:
+                return self._hold_for_model_review(
+                    session_factory,
+                    run_id,
+                    request_id=request_id,
+                    plan=plan,
+                )
             self._pause()
             execution = self._execute(
                 session_factory,
@@ -124,19 +137,60 @@ class InvestigationWorkflow:
     ) -> tuple[Evidence, ...]:
         with session_factory() as session:
             return self._load_evidence(session, run_id)
+
     def _run_agents(
-        self, run_id: UUID, *, evidence: tuple[Evidence, ...], assessment: Assessment, request_id: str
-    ) -> None:
+        self,
+        run_id: UUID,
+        *,
+        evidence: tuple[Evidence, ...],
+        assessment: Assessment,
+        request_id: str,
+    ) -> AutonomousPlan | None:
         if self._agent_runtime is None:
-            return
+            return None
         try:
-            self._agent_runtime.run(
-                run_id, evidence=evidence, assessment=assessment, request_id=request_id, now=self._clock()
+            return self._agent_runtime.run(
+                run_id,
+                evidence=evidence,
+                assessment=assessment,
+                request_id=request_id,
+                now=self._clock(),
             )
         except Exception:
-            # Agent collaboration is additive. It must never bypass or interrupt the
-            # deterministic investigation and trusted execution boundary.
-            return
+            # Model and agent failures fail closed only when a valid plan exists;
+            # otherwise the deterministic policy remains the authority.
+            return None
+
+    def _hold_for_model_review(
+        self,
+        session_factory: sessionmaker[Session],
+        run_id: UUID,
+        *,
+        request_id: str,
+        plan: AutonomousPlan,
+    ) -> InvestigationStatus:
+        with session_factory.begin() as session:
+            self._require_status(session, run_id, InvestigationStatus.ACTION_PLANNED)
+            now = self._clock()
+            self._repository.record_step(
+                session,
+                run_id,
+                step_key="model_plan",
+                status=StepStatus.SUCCEEDED,
+                detail={"decision": "manual_review", "model": plan.model, "summary": plan.summary},
+                error_code=None,
+                started_at=now,
+                completed_at=now,
+            )
+            self._repository.transition_run(
+                session,
+                run_id,
+                InvestigationStatus.NEEDS_REVIEW,
+                request_id=request_id,
+                now=now,
+            )
+        return InvestigationStatus.NEEDS_REVIEW
+
     def _load_run(self, session_factory: sessionmaker[Session], run_id: UUID) -> InvestigationRun:
         with session_factory() as session:
             run = self._repository.get_run(session, run_id)
@@ -173,9 +227,7 @@ class InvestigationWorkflow:
             )
 
         with session_factory.begin() as session:
-            run = self._require_status(
-                session, run_id, InvestigationStatus.COLLECTING
-            )
+            run = self._require_status(session, run_id, InvestigationStatus.COLLECTING)
             completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             evidence = self._evidence_collector(state, completed_at)
@@ -272,9 +324,7 @@ class InvestigationWorkflow:
         fail_block_once: bool,
     ) -> InvestigationStatus:
         with session_factory.begin() as session:
-            self._require_status(
-                session, run_id, InvestigationStatus.ACTION_PLANNED
-            )
+            self._require_status(session, run_id, InvestigationStatus.ACTION_PLANNED)
             started_at = self._clock()
             self._repository.transition_run(
                 session,
@@ -295,9 +345,7 @@ class InvestigationWorkflow:
             )
 
         with session_factory.begin() as session:
-            run = self._require_status(
-                session, run_id, InvestigationStatus.EXECUTING
-            )
+            run = self._require_status(session, run_id, InvestigationStatus.EXECUTING)
             completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             idempotency_key = f"block-ip:{run_id}:{state.remote_ip}"
@@ -365,9 +413,7 @@ class InvestigationWorkflow:
             )
 
         with session_factory.begin() as session:
-            run = self._require_status(
-                session, run_id, InvestigationStatus.VERIFYING
-            )
+            run = self._require_status(session, run_id, InvestigationStatus.VERIFYING)
             completed_at = self._clock()
             state = self._require_simulation(session, run.simulation_instance_id)
             result = self._verifier(state, state.remote_ip, completed_at)

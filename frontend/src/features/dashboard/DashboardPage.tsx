@@ -133,7 +133,7 @@ export function DashboardPage() {
           </header>
           <p>事件 <code>{run.incident_tracking_id ?? `INC-${run.incident_id.slice(0, 8).toUpperCase()}`}</code></p>
           <p>运行 <code>{run.run_tracking_id ?? `RUN-${run.run_id.slice(0, 8).toUpperCase()}`}</code></p>
-          <Link className="button" to={{ pathname: '/events', search: location.search }}>打开事件调查</Link>
+          <Link className="button" to={{ pathname: '/operations-report', search: location.search }}>打开运营报告</Link>
         </article>
       </>}
     </section>

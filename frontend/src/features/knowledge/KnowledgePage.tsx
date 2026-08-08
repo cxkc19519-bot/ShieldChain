@@ -61,14 +61,15 @@ function Documents({
                   {version.id === document.current_version_id && <span className="current-version">当前版本</span>}
                   <Status value={version.index_status} />
                 </div>
-                {version.chunking_failure_category && (
-                  <small>
-                    分块降级：{version.chunking_failure_category === 'unavailable'
-                      ? 'LLM 分块失败，已使用规则分块'
-                      : version.chunking_failure_category}
-                  </small>
-                )}
-                <div className="compact-actions">
+                <small>
+                  {version.chunking_failure_category
+                    ? `\u5206\u5757\u964d\u7ea7\uff1a${version.chunking_failure_category === 'unavailable'
+                        ? '\u004c\u004c\u004d \u5206\u5757\u5931\u8d25\uff0c\u5df2\u4f7f\u7528\u89c4\u5219\u5206\u5757'
+                        : version.chunking_failure_category}`
+                    : version.chunking_strategy === 'deepseek-semantic-v1'
+                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u0044\u0065\u0065\u0070\u0053\u0065\u0065\u006b \u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
+                      : `\u5206\u5757\u65b9\u5f0f\uff1a${version.chunking_strategy}`}
+                </small>                <div className="compact-actions">
                   <button disabled={busy} type="button" onClick={() => onAction('publish', document.id, version.id)}>发布</button>
                   <button disabled={busy || version.id === document.current_version_id} type="button" onClick={() => onAction('rollback', document.id, version.id)}>回滚到此版本</button>
                   <button disabled={busy} type="button" onClick={() => onAction('rebuild', document.id, version.id)}>重建索引</button>

@@ -63,48 +63,49 @@ ACTIVE_INVESTIGATION_STATUSES = (
 )
 
 
-ALLOWED_TRANSITIONS: Mapping[
-    InvestigationStatus, frozenset[InvestigationStatus]
-] = MappingProxyType(
-    {
-        InvestigationStatus.PENDING: frozenset(
-            {InvestigationStatus.COLLECTING, InvestigationStatus.INTERRUPTED}
-        ),
-        InvestigationStatus.COLLECTING: frozenset(
-            {
-                InvestigationStatus.ANALYZING,
-                InvestigationStatus.NEEDS_REVIEW,
-                InvestigationStatus.INTERRUPTED,
-            }
-        ),
-        InvestigationStatus.ANALYZING: frozenset(
-            {
-                InvestigationStatus.ACTION_PLANNED,
-                InvestigationStatus.NEEDS_REVIEW,
-                InvestigationStatus.INTERRUPTED,
-            }
-        ),
-        InvestigationStatus.ACTION_PLANNED: frozenset(
-            {
-                InvestigationStatus.EXECUTING,
-                InvestigationStatus.INTERRUPTED,
-            }
-        ),
-        InvestigationStatus.EXECUTING: frozenset(
-            {
-                InvestigationStatus.VERIFYING,
-                InvestigationStatus.FAILED,
-                InvestigationStatus.INTERRUPTED,
-            }
-        ),
-        InvestigationStatus.VERIFYING: frozenset(
-            {
-                InvestigationStatus.CLOSED,
-                InvestigationStatus.FAILED,
-                InvestigationStatus.INTERRUPTED,
-            }
-        ),
-    }
+ALLOWED_TRANSITIONS: Mapping[InvestigationStatus, frozenset[InvestigationStatus]] = (
+    MappingProxyType(
+        {
+            InvestigationStatus.PENDING: frozenset(
+                {InvestigationStatus.COLLECTING, InvestigationStatus.INTERRUPTED}
+            ),
+            InvestigationStatus.COLLECTING: frozenset(
+                {
+                    InvestigationStatus.ANALYZING,
+                    InvestigationStatus.NEEDS_REVIEW,
+                    InvestigationStatus.INTERRUPTED,
+                }
+            ),
+            InvestigationStatus.ANALYZING: frozenset(
+                {
+                    InvestigationStatus.ACTION_PLANNED,
+                    InvestigationStatus.NEEDS_REVIEW,
+                    InvestigationStatus.INTERRUPTED,
+                }
+            ),
+            InvestigationStatus.ACTION_PLANNED: frozenset(
+                {
+                    InvestigationStatus.EXECUTING,
+                    InvestigationStatus.NEEDS_REVIEW,
+                    InvestigationStatus.INTERRUPTED,
+                }
+            ),
+            InvestigationStatus.EXECUTING: frozenset(
+                {
+                    InvestigationStatus.VERIFYING,
+                    InvestigationStatus.FAILED,
+                    InvestigationStatus.INTERRUPTED,
+                }
+            ),
+            InvestigationStatus.VERIFYING: frozenset(
+                {
+                    InvestigationStatus.CLOSED,
+                    InvestigationStatus.FAILED,
+                    InvestigationStatus.INTERRUPTED,
+                }
+            ),
+        }
+    )
 )
 
 _TERMINAL_STATUSES = frozenset(
@@ -125,9 +126,7 @@ class InvalidInvestigationTransition(ValueError):
         super().__init__(f"invalid investigation transition: {current.value} -> {target.value}")
 
 
-def transition(
-    current: InvestigationStatus, target: InvestigationStatus
-) -> InvestigationStatus:
+def transition(current: InvestigationStatus, target: InvestigationStatus) -> InvestigationStatus:
     if target not in ALLOWED_TRANSITIONS.get(current, frozenset()):
         raise InvalidInvestigationTransition(current, target)
     return target
@@ -142,11 +141,7 @@ def is_active(status: InvestigationStatus) -> bool:
 
 
 def _require_aware_utc(value: datetime, field_name: str) -> None:
-    if (
-        value.tzinfo is None
-        or value.utcoffset() is None
-        or value.utcoffset() != timedelta(0)
-    ):
+    if value.tzinfo is None or value.utcoffset() is None or value.utcoffset() != timedelta(0):
         raise ValueError(f"{field_name} must be an aware UTC datetime")
 
 

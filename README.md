@@ -1,6 +1,6 @@
 # 盾链智御（ShieldChain）
 
-盾链智御是一个面向网络安全运营的智能体研究项目。当前代码提供 Windows 本地可运行的 FastAPI/React 基础、确定性钓鱼事件闭环、产品级 RAG、租户隔离的多智能体编排、可信工具网关，以及受预算约束的 ReAct 观察—分类—重规划—验证闭环和人工接管 API。默认配置使用 SQLite 和离线替身；真实 DeepSeek、Embedding、Milvus、Reranker、模型自主规划与安全设备尚未授权和接线，离线成功结果不替代真实链路验收。
+盾链智御是一个面向网络安全运营的智能体研究项目。当前应用已完成 Windows 本机的 DeepSeek 受控规划与 BGE-M3 → Milvus → BGE Reranker 真实 RAG 链路验收；模型只能收紧自动化，无法越过确定性规则、可信工具网关、审批和验证边界。生产数据库、云 Milvus、真实安全设备、Docker 运行时和远端 CI 仍需在授权环境单独验收。
 
 ## 前置条件
 

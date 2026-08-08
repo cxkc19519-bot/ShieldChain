@@ -1,5 +1,4 @@
 import asyncio
-import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -11,16 +10,17 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shieldchain.agents.trajectory import CollaborationTrajectoryQuery
-from shieldchain.assistant.api import router as assistant_router
-from shieldchain.assistant.service import GroundedAssistantService
-from shieldchain.assistant.store import LocalConversationStore
-from shieldchain.agents.runtime import InvestigationAgentRuntime
 from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
+from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
+from shieldchain.api.wazuh import router as wazuh_router
+from shieldchain.assistant.api import router as assistant_router
+from shieldchain.assistant.service import GroundedAssistantService
+from shieldchain.assistant.store import LocalConversationStore
 from shieldchain.core.config import Settings, get_settings
 from shieldchain.core.errors import (
     ApiError,
@@ -33,17 +33,16 @@ from shieldchain.core.http_security import RequestSizeLimitMiddleware, SecurityH
 from shieldchain.core.logging import configure_logging
 from shieldchain.core.request_id import RequestIdMiddleware
 from shieldchain.db.session import create_engine_from_url, create_session_factory
-from shieldchain.incidents.background import InvestigationRunner
 from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
-from shieldchain.incidents.tools import SimulatedFirewall
-from shieldchain.incidents.workflow import InvestigationWorkflow
+from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
 from shieldchain.tools.api_service import TrustedToolApiService
+from shieldchain.wazuh.service import WazuhAlertService
 
 
 def create_app(
@@ -52,7 +51,6 @@ def create_app(
     settings: Settings | None = None,
     agent_trajectory_query: CollaborationTrajectoryQuery | None = None,
     incident_repository: IncidentRepository | None = None,
-    investigation_runner: InvestigationRunner | None = None,
     incident_query_service: IncidentQueryService | None = None,
     knowledge_api_service: KnowledgeApiService | None = None,
     react_api_service: ReactApiService | None = None,
@@ -65,34 +63,16 @@ def create_app(
     session_factory = create_session_factory(engine)
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
-    knowledge_service = knowledge_api_service or LocalKnowledgeService()
-    workflow = InvestigationWorkflow(
-        repository,
-        SimulatedFirewall(),
-        lambda: datetime.now(UTC),
-        time.sleep,
-        settings.simulation_step_delay_ms / 1000,
-        agent_runtime=InvestigationAgentRuntime(
-            session_factory, knowledge_service,
-            tenant_id=settings.rag_demo_tenant_id, principal_id=settings.rag_demo_principal_id,
-        ),
-    )
-    runner = investigation_runner or InvestigationRunner(
-        workflow,
-        repository,
-        session_factory,
-        shutdown_timeout_seconds=settings.simulation_shutdown_timeout_seconds,
-    )
+    knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
+
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _app.state.accepting_requests = True
         try:
-            await asyncio.to_thread(runner.recover_interrupted)
             yield
         finally:
             _app.state.accepting_requests = False
-            await runner.shutdown()
             if owns_engine:
                 engine.dispose()
 
@@ -108,7 +88,6 @@ def create_app(
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
-    app.state.investigation_runner = runner
     app.state.knowledge_api_service = knowledge_service
     app.state.grounded_assistant_service = GroundedAssistantService(
         knowledge_service,
@@ -123,6 +102,15 @@ def create_app(
     )
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
+    app.state.wazuh_alert_service = WazuhAlertService()
+    app.state.security_operations_report_agent = SecurityOperationsReportAgent(
+        session_factory,
+        settings=settings,
+        tenant_id=settings.rag_demo_tenant_id,
+        store=OperationsReportStore(settings.assistant_data_root),
+        knowledge=knowledge_service,
+        principal_id=settings.rag_demo_principal_id,
+    )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(
         CORSMiddleware,
@@ -156,4 +144,6 @@ def create_app(
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(react_router, prefix="/api/v1")
+    app.include_router(wazuh_router, prefix="/api/v1")
+    app.include_router(operations_router, prefix="/api/v1")
     return app

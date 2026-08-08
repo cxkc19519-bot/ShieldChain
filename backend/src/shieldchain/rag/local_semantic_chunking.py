@@ -14,6 +14,7 @@ from shieldchain.core.config import Settings, get_settings
 MAX_REQUEST_CHARACTERS = 14_000
 MAX_CHUNK_CHARACTERS = 900
 REQUEST_TIMEOUT_SECONDS = 60
+MAX_REQUEST_ATTEMPTS = 2
 
 
 class SemanticChunkingError(RuntimeError):
@@ -93,21 +94,28 @@ class DeepSeekSemanticChunker:
                 {"role": "user", "content": f"Source units:\n{listed}\nReturn JSON now."},
             ],
         }
-        response = self._transport(
-            self._url,
-            {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
-            payload,
-        )
-        try:
-            choices = response["choices"]
-            content = choices[0]["message"]["content"]
-            decoded = json.loads(content)
-        except (KeyError, TypeError, ValueError, IndexError) as error:
-            raise SemanticChunkingError(
-                "DeepSeek returned an invalid semantic chunk plan"
-            ) from error
-        return _validate_groups(decoded, units)
-
+        last_error: SemanticChunkingError | None = None
+        for _attempt in range(MAX_REQUEST_ATTEMPTS):
+            try:
+                response = self._transport(
+                    self._url,
+                    {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                    payload,
+                )
+                try:
+                    choices = response["choices"]
+                    content = choices[0]["message"]["content"]
+                    decoded = json.loads(content)
+                except (KeyError, TypeError, ValueError, IndexError) as error:
+                    raise SemanticChunkingError(
+                        "DeepSeek returned an invalid semantic chunk plan"
+                    ) from error
+                return _validate_groups(decoded, units)
+            except SemanticChunkingError as error:
+                last_error = error
+        raise SemanticChunkingError(
+            "DeepSeek did not return a safe semantic chunk plan after retry"
+        ) from last_error
     @staticmethod
     def _post(url: str, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
         try:
