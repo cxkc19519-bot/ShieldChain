@@ -1,5 +1,7 @@
 # ShieldChain 开发说明
 
+> 文档状态：历史开发交付指南。部分阶段名称和命令用于版本追溯；当前开发与部署方式请优先阅读 `docs/README.md`、`operations/local-development.md` 和 `delivery/deployment-guide.md`。
+
 ## 环境
 
 支持 Python `>=3.12,<3.15`、Node.js 24/LTS 和 Windows PowerShell。复制 `.env.example` 为本地 `.env`，不得提交真实密钥。完整安装：

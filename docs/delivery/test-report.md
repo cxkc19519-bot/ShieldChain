@@ -1,37 +1,32 @@
-# ShieldChain Phase 8 测试报告
+# 测试报告
 
-## 本地结论（2026-07-24）
+> 文档状态：当前验证摘要（更新于 2026-08-08）。Phase 8 历史报告保留当时结果，本页记录当前功能相关验证。
 
-- 后端 Ruff：通过。
-- 后端 Pytest：`1037 passed, 1 skipped`；跳过项为需明确授权的 live 测试，另有不可写 `.pytest_cache` 警告。
-- 前端 Vitest：`24 files passed, 90 tests passed`。
-- 前端 TypeScript 与 Vite 生产构建：通过。
-- PowerShell 脚本合同：`54 passed`。
-- 容器与供应链静态合同：`10 passed`。
-- `pip check`：`No broken requirements found`。
+## 已执行验证
 
-## 覆盖范围
+- Wazuh、运营报告、ReAct/RAG 新增关键后端测试：9 个通过；
+- 前端全量：24 个测试文件、93 个测试通过；
+- TypeScript 类型检查通过；
+- `compose.yaml + compose.server.yaml` 配置检查通过；
+- `compose.yaml + compose.local-llm.yaml` 配置检查通过；
+- 无视频版本最终交付测试：4 个通过；
+- 无视频版本 Phase 8 交付 smoke 通过。
 
-后端覆盖配置、HTTP 安全、公开错误、事件闭环、SQLite 仓储、迁移、RAG 解析/检索/拒答/评测、多智能体上下文、工具策略/审批/幂等/恢复、ReAct 预算/循环/接管、查询计划、readiness/version、日志脱敏和交付合同。
+## 全量套件说明
 
-前端覆盖六个工作区、API 映射、加载/空/错误状态、请求取消、跨页上下文、键盘焦点、320px 响应式合同、敏感字段不渲染和离线跨页 smoke。
+后端全量执行曾得到 1019 个通过、1 个跳过，同时仍有旧固定仿真接口、旧 Phase 7 合同和已删除视频工程产生的过时失败。视频工程测试已删除；其余旧仿真合同应在后续清理中更新或归档，不能通过恢复已退役产品功能来追求表面全绿。
 
-Phase 2–7 smoke 在 Task 4 后通过；Task 6 没有更改业务路径。Alembic `upgrade head → downgrade base → upgrade head` 在既有完整门禁中通过，当前期望 revision 为 `20260724_01`。
+## 实时链路状态
 
-## 性能证据
+- Wazuh/OpenSearch 与 ShieldChain Docker 服务已在学校服务器环境实际运行；
+- vLLM 镜像和 Compose 配置已验证；
+- Qwen3-30B-A3B 权重下载和推理服务启动尚受共享 GPU 可用性约束；
+- 2026-07-28 的 DeepSeek 与真实 RAG 验收见历史快照报告；
+- 真实处置设备链路仍未进行授权执行验收。
 
-固定 Phase 8 基线：liveness HTTP 25 样本 p50 `1.656 ms`、p95 `2.499 ms`；RAG 数据集加载 p50 `0.099 ms`、p95 `0.114 ms`，预算均为 p95 `100 ms`。SQLite 热查询 `EXPLAIN QUERY PLAN` 合同确认使用覆盖排序索引；这些结果只代表记录机器和固定数据集。
+## 安全结论
 
-## 未测试边界
-
-- `DOCKER_RUNTIME_TESTED=False`：本机无 Docker CLI，未构建或启动镜像。
-- `CI_RUNTIME_TESTED=False`：工作流未推送或远端执行。
-- `NETWORK_ACCESS_TESTED=False`：未做外部网络链路验收。
-- `REAL_MODEL_PLANNING_TESTED=False`：未运行真实模型自主规划。
-- `REAL_DEVICE_PATHS_TESTED=False`：未连接真实防火墙、EDR 或账号系统。
-
-DeepSeek、Embedding、Milvus 和 Reranker live 测试没有授权、没有费用预算、没有执行。静态容器合同不能替代 runtime smoke，依赖一致性不能替代实时 CVE 情报扫描，SQLite 结果不能外推到生产并发数据库。
-
-## 复现
-
-运行 `scripts/verify.ps1` 获取完整本地门禁；运行 `tests/scripts/run-phase8-baseline.ps1` 复测性能；运行 `tests/scripts/run-phase8-container-smoke.ps1` 在 Docker 可用时补充容器运行证据。命令细节和安全清理见 `development-guide.md` 与 `deployment-guide.md`。
+- 测试不应输出或提交真实密钥、告警和客户数据；
+- 只读 MCP 与可信处置网关必须分别测试；
+- 模型失败、工具失败和 RAG 降级必须形成明确公开状态；
+- 任何实时模型或安全设备测试都需要显式开关、预算、隔离数据和人工批准。

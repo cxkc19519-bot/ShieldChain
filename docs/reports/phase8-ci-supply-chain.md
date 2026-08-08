@@ -1,5 +1,7 @@
 # Phase 8 CI 与供应链合同报告
 
+> 文档状态：历史验收快照。记录当时版本的测试结果与限制，不等同于当前版本状态。
+
 ## 结论
 
 Task 6 已交付精确 Python 锁文件、npm lockfile integrity 合同、完整 SHA 固定的最小权限 CI，以及 Docker 可用时自动升级为真实运行态验收的 Compose smoke。本机没有 Docker CLI，GitHub Actions 也未远端执行，因此只确认本地静态与依赖一致性门禁。

@@ -1,39 +1,39 @@
-# ShieldChain 源代码说明
+# 源代码说明
 
-## 仓库入口
+> 文档状态：当前参考（更新于 2026-08-08）。
 
-- `backend/src/shieldchain/main.py`：FastAPI factory、中间件、异常映射、依赖装配与生命周期。
-- `frontend/src/main.tsx`：React 启动入口；`frontend/src/app` 包含应用壳、路由和跨页运行上下文。
-- `backend/migrations`：Alembic schema 历史；当前期望 head 为 `20260724_01`。
-- `tests/scripts`：阶段 smoke、脚本安全合同、性能基线和可选容器验收。
-- `compose.yaml`：迁移、后端、前端和具名卷的单机部署拓扑。
+## 后端
 
-## 后端模块
+- `backend/src/shieldchain/main.py`：应用装配、路由和生命周期；
+- `backend/src/shieldchain/agents/`：七角色领域模型、上下文、交接、运行时和轨迹；
+- `backend/src/shieldchain/operations/`：安全运营报告智能体、ReAct 协作和四类 MCP；
+- `backend/src/shieldchain/wazuh/`：Wazuh 告警模式、持久化和服务；
+- `backend/src/shieldchain/rag/`：文档、分块、检索、Milvus 和评测；
+- `backend/src/shieldchain/assistant/`：会话、摘要记忆、RAG 回答和本地存储；
+- `backend/src/shieldchain/tools/`：可信工具注册、策略、仓储和执行边界；
+- `backend/migrations/`：数据库迁移。
 
-- `api`：health、incidents、knowledge、agents、tools、react 六组公开路由，只返回白名单投影。
-- `core`：严格配置、HTTP 安全、request ID、结构化日志、公开错误模型。
-- `db`：SQLAlchemy engine/session、Base 和迁移共用元数据。
-- `incidents`：固定钓鱼场景、仓储、调查状态机、后台运行器、查询聚合与仿真防火墙。
-- `rag`：解析、分块、索引、混合检索、重排、引用、拒答和固定评测。
-- `agents`：角色、任务、tenant-bound 协作、上下文交接和公开轨迹。
-- `tools`：注册、策略、审批、幂等执行、审计、恢复和仿真适配器。
-- `react`：观察、失败分类、预算、循环检测、重规划、验证和人工接管。
-- `quality`：Phase 8 性能预算、测量和报告模型。
+## 前端
 
-## 前端模块
+- `frontend/src/app/`：应用壳、路由和公开运行上下文；
+- `frontend/src/features/dashboard/`：运营总览；
+- `frontend/src/features/operations/`：安全运营报告；
+- `frontend/src/features/alerts/`：实时告警；
+- `frontend/src/features/knowledge/`：知识库和分块；
+- `frontend/src/features/reports/`：历史报告与操作入口；
+- `frontend/src/features/assistant/`：持久化智能助手；
+- `frontend/src/features/agents/`、`tools/`：公开协作轨迹和可信控制。
 
-`frontend/src/features` 按产品工作区拆分：`dashboard`、`investigation`、`agents`、`knowledge`、`tools`、`reports`。每个工作区把 API、类型、页面、样式和测试放在同一目录。共享请求逻辑位于 `src/api`，通用状态组件位于 `src/components`，全局设计 token 位于 `src/styles`。
+当前主要页面包括 `/dashboard`、`/operations-report`、`/alerts`、`/knowledge`、`/reports`、`/assistant`，以及受控轨迹和工具页面。已删除的 `/events` 固定仿真入口不再属于当前路由合同。
 
-六条页面路由分别为 `/`、`/events`、`/agents`、`/knowledge`、`/response`、`/reports`。URL 和 sessionStorage 只保存公开资源 ID 与显示偏好；tenant、principal、权限、凭据和内部 payload 保留在服务端。
+## 部署文件
 
-## 请求执行路径
+- `app.py`：Windows 一键启动；
+- `compose.yaml`：基础容器；
+- `compose.server.yaml`：服务器持久化覆盖；
+- `compose.local-llm.yaml`：双 GPU Qwen/vLLM；
+- `scripts/wazuh/custom-shieldchain`：Manager 侧告警转发。
 
-请求先经过安全响应头、request ID、请求体上限、Host 与 CORS 控制，再进入路由。写操作在服务端解析 tenant/principal 上下文，经过确定性策略和 revision/CAS；工具变更必须进入受信工具网关，ReAct 重规划只生成 proposal，不能绕过审批执行。
+## 数据目录
 
-事件数据、工具调用、ReAct 轨迹和报告读模型使用 SQLite 持久化；RAG 默认是未配置服务并返回 503，只有测试或明确装配的离线适配器会提供结果。
-
-## 修改约束
-
-新增 API 时必须同步公开模型、错误语义、tenant 负向测试和前端类型。新增表或索引必须增加可逆迁移并执行升—降—升。新增外部能力必须先定义 port/adapter，禁止从业务模块直接读取密钥或访问网络。新增页面必须覆盖加载、空、错误、取消、键盘和敏感字段不渲染。
-
-完整开发和验证命令见 `development-guide.md`，测试证据见 `test-report.md`，部署边界见 `deployment-guide.md`。
+运行生成的 `.env`、`backend/data/`、数据库、知识原文、助手会话、Wazuh 告警和模型缓存都不属于源代码交付，不得提交。

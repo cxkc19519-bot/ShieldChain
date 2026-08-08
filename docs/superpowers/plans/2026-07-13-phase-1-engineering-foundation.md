@@ -1,5 +1,7 @@
 # Phase 1 Engineering Foundation Implementation Plan
 
+> 文档状态：历史规划/设计归档。用于追溯阶段性决策，不代表当前运行方式；现行架构以 `docs/README.md` 及各目录现行文档为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 建立可在 Windows 本机稳定启动、可测试、默认安全的 React＋FastAPI 工程基础，并用可替换的 DeepSeek 适配器完成第一条真实外部依赖边界。
