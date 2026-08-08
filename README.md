@@ -1,68 +1,135 @@
-# 盾链智御（ShieldChain）
+# ShieldChain
 
-盾链智御是一个面向网络安全运营的智能体研究项目。当前应用已完成 Windows 本机的 DeepSeek 受控规划与 BGE-M3 → Milvus → BGE Reranker 真实 RAG 链路验收；模型只能收紧自动化，无法越过确定性规则、可信工具网关、审批和验证边界。生产数据库、云 Milvus、真实安全设备、Docker 运行时和远端 CI 仍需在授权环境单独验收。
+ShieldChain 是面向安全运营场景的多智能体分析系统。系统接收 Wazuh 等安全平台转发的真实告警，结合本地知识库、历史调查报告和受授权的只读工具，由专业智能体完成检索、研判、协作和安全运营报告生成。
 
-## 前置条件
+项目默认坚持“分析与处置分离”：模型可以规划、选择工具和生成建议，但不能绕过确定性安全规则、审批、可信工具网关和执行后验证边界。
 
-- Windows PowerShell 5.1 或 PowerShell 7。
-- Python `>=3.12,<3.15`，可通过 `py` 启动器调用。
-- 当前 Node.js LTS（包含 `npm.cmd`）。
-- 不需要 Docker。
+## 主要功能
 
-## 本地安装
+- **真实告警接入**：接收、持久化并展示 Wazuh 高风险告警，支持人工复核和关联分析。
+- **安全多智能体协作**：专业角色通过 ReAct 循环自主观察、选择工具、分析结果和交接任务。
+- **安全运营报告智能体**：校验时间参数，自主选择事件、告警、漏洞、弱密码四类只读 MCP 工具，生成结构化建议、Markdown 和 HTML 预览。
+- **RAG 知识库**：支持文档持久化、语义分块、混合检索、向量检索、重排、版本管理和分块查看。
+- **智能助手**：结合知识库与历史调查报告回答问题，对话和本地记忆持久化保存。
+- **本地模型部署**：提供 vLLM OpenAI 兼容服务配置，可使用 `Qwen3-30B-A3B-Instruct-2507-FP8` 替代外部 DeepSeek API。
+- **安全边界**：只向前端公开受控轨迹和可验证结论，不公开私有提示词、思维链、原始凭据或敏感工具结果。
+
+## 项目结构
+
+```text
+backend/                    FastAPI、智能体、RAG、Wazuh 接入与持久化
+frontend/                   React 安全运营工作台与智能助手
+scripts/wazuh/              Wazuh Manager 侧只读告警转发适配器
+sample_docs/security_vertical/  安全垂直知识库示例
+compose.yaml                基础容器部署
+compose.server.yaml         服务器持久化目录覆盖配置
+compose.local-llm.yaml      双 GPU 本地 Qwen/vLLM 覆盖配置
+app.py                      Windows 本地一键启动入口
+```
+
+## 本地开发
+
+### 前置条件
+
+- Windows PowerShell 5.1 或 PowerShell 7
+- Python `>=3.12,<3.15`
+- Node.js LTS 和 npm
+- 可选：Docker Desktop 或 Docker Engine
+
+推荐使用现有 Conda 环境：
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".\backend[test]"
+conda activate ShieldChain
+python -m pip install -e ".\backend[test]"
 npm ci --prefix frontend
 Copy-Item .env.example .env
 ```
 
-`.env` 仅用于本机配置，绝不能提交到版本库。默认离线开发不需要填写真实 DeepSeek 密钥。
+`.env` 只用于本机或服务器私有配置，禁止提交 API Key、密码、Webhook Token、真实告警或客户数据。
 
-## 启动与验证
+### 一键启动
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
-powershell -ExecutionPolicy Bypass -File scripts\test.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase2-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase3-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase4-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase5-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase6-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase7-smoke.ps1
-powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-baseline.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-container-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\run-phase8-smoke.ps1
-powershell -ExecutionPolicy Bypass -File tests\scripts\build-phase8-package.ps1
+python app.py
 ```
 
-前端地址为 `http://127.0.0.1:5173`，后端地址为 `http://127.0.0.1:8000`。阶段 2–5 smoke 依次验证事件闭环、离线 RAG、多智能体编排和可信工具；阶段 6 验证受预算约束的 ReAct 闭环；阶段 7 验证六个工作区的离线跨页合同；阶段 8 再验证性能预算、交付清单和媒体合同。`verify.ps1` 执行完整后端与前端门禁、迁移往返、固定 RAG 评测、脚本契约和阶段 2–8 smoke，不联网、不访问真实设备、不产生费用。
+默认地址：
 
-## 文档导航
+- 前端：`http://127.0.0.1:5173`
+- 后端：`http://127.0.0.1:8000`
+- API 文档：`http://127.0.0.1:8000/docs`
+
+## Docker 部署
+
+基础部署：
+
+```bash
+docker compose up -d --build
+```
+
+服务器持久化部署：
+
+```bash
+docker compose -f compose.yaml -f compose.server.yaml up -d --build
+```
+
+浏览器访问 `http://127.0.0.1:8080`。SQLite、知识库和助手数据保存在 Docker 命名卷或服务器持久化目录中；执行 `docker compose down` 默认不会删除数据卷。
+
+## 本地 30B-A3B 模型
+
+本地模型覆盖配置使用 vLLM 启动 `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8`，并将 ShieldChain 后端切换到 OpenAI 兼容接口：
+
+```bash
+LOCAL_LLM_CACHE_DIR=/home/user/jhk/huggingface \
+docker compose -f compose.yaml -f compose.local-llm.yaml up -d
+```
+
+默认推理接口绑定到服务器回环地址 `127.0.0.1:8001`，容器内部模型名为 `shieldchain-qwen3-30b`。当前配置面向两张 24 GB GPU，采用两级流水线并行；启动前需要确保模型权重已完整下载且两张 GPU 有足够空闲显存。
+
+## Wazuh 告警接入
+
+Wazuh Manager 侧适配器位于 `scripts/wazuh/custom-shieldchain`。服务端通过 `WAZUH_WEBHOOK_TOKEN` 校验来源，并按最低告警等级、时间窗口和幂等键持久化待复核事件。
+
+详细步骤见 [Wazuh 只读告警接入](docs/operations/wazuh-read-only-ingestion.md)。
+
+## 验证
+
+后端新增安全运营链路测试：
+
+```powershell
+conda run -n ShieldChain python -m pytest `
+  backend/tests/integration/api/test_operations_report.py `
+  backend/tests/integration/api/test_wazuh_ingestion.py `
+  backend/tests/unit/operations/test_operations_report_service.py `
+  backend/tests/unit/rag/test_local_semantic_chunking.py -q
+```
+
+前端测试与类型检查：
+
+```powershell
+npm test --prefix frontend -- --run
+npm run typecheck --prefix frontend
+```
+
+Compose 配置检查：
+
+```bash
+docker compose -f compose.yaml -f compose.server.yaml config --quiet
+docker compose -f compose.yaml -f compose.local-llm.yaml config --quiet
+```
+
+## 文档
 
 - [产品需求](docs/requirements/product-requirements.md)
 - [系统设计](docs/architecture/system-design.md)
 - [开发路线](docs/plans/development-roadmap.md)
 - [Windows 本地开发](docs/operations/local-development.md)
+- [Wazuh 只读告警接入](docs/operations/wazuh-read-only-ingestion.md)
+- [真实模型与 RAG 验收](docs/reports/live-model-rag-acceptance-2026-07-28.md)
 - [安全标准](docs/standards/security-standards.md)
 
-任何 API Key、密码、令牌、真实告警或客户数据都不得写入代码、测试夹具、日志或版本库。
+## 安全说明
 
-## Docker Compose 部署
-
-- [总体设计](docs/delivery/overall-design.md)
-- [源代码说明](docs/delivery/source-code-guide.md)
-- [开发说明](docs/delivery/development-guide.md)
-- [测试报告](docs/delivery/test-report.md)
-- [部署手册](docs/delivery/deployment-guide.md)
-安装 Docker Engine 与 Compose v2 后，可运行：
-
-```powershell
-docker compose up --build
-```
-
-浏览器访问 `http://127.0.0.1:8080`。Compose 会先执行 Alembic 迁移，再启动仅在内部网络暴露的后端和非 root Nginx 前端；SQLite 数据保存在命名卷中。停止服务使用 `docker compose down`，该命令默认保留数据卷。
-
-本仓库仍支持不依赖 Docker 的 Windows 本地开发。本次交付环境没有 Docker CLI，因此只验证了 Dockerfile、Nginx 和 Compose 的静态安全合同，未验证镜像构建或容器运行：`DOCKER_RUNTIME_TESTED=False`。
+- 不要提交 `.env`、`backend/data/`、模型权重、数据库、API Key、密码或真实客户数据。
+- 默认工具为只读查询；任何真实处置动作都必须经过策略、审批、可信工具网关和结果验证。
+- 历史报告和知识库可包含敏感安全信息，部署时应限制网络暴露、访问权限和备份范围。
