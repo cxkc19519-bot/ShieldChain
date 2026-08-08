@@ -32,20 +32,6 @@ def validate(root: Path) -> dict[str, object]:
     if slide_count != 10:
         raise ValueError(f"Expected 10 slides, found {slide_count}")
 
-    video = root / "delivery" / "shieldchain-demo.mp4"
-    if video.stat().st_size <= 1_000_000 or b"ftyp" not in video.read_bytes()[:64]:
-        raise ValueError("Rendered MP4 is missing or invalid")
-
-    captions = json.loads(
-        (root / "video" / "shieldchain-demo" / "public" / "captions.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    if captions[0]["startMs"] != 0 or captions[-1]["endMs"] != 180_000:
-        raise ValueError("Captions do not cover the full three-minute runtime")
-    if any(a["endMs"] != b["startMs"] for a, b in zip(captions, captions[1:])):
-        raise ValueError("Caption timeline contains a gap or overlap")
-
     expected_boundaries = {
         "docker_runtime_tested": False,
         "network_access_tested": False,
@@ -54,7 +40,7 @@ def validate(root: Path) -> dict[str, object]:
     }
     if manifest["boundaries"] != expected_boundaries:
         raise ValueError("Final boundaries must remain explicit and truthful")
-    return {"artifacts_checked": checked, "slides": slide_count, "caption_end_ms": 180_000}
+    return {"artifacts_checked": checked, "slides": slide_count}
 
 
 def main() -> int:

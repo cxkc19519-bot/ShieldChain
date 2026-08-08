@@ -19,7 +19,6 @@ def test_phase8_smoke_is_offline_bounded_and_chains_prior_gate() -> None:
     assert "shieldchain-phase8-smoke-" in wrapper
     assert "Remove-Item -LiteralPath $resolved -Recurse -Force" in wrapper
     assert "Every final delivery artifact must be available" in runner
-    assert "caption" in runner.lower()
     for flag in (
         "RUN_LIVE_DEEPSEEK_TEST",
         "RUN_LIVE_EMBEDDING_TEST",
@@ -49,7 +48,6 @@ def test_submission_package_and_checksums_are_reproducible() -> None:
         entries[relative] = digest
     for relative in (
         "delivery/shieldchain-presentation.pptx",
-        "delivery/shieldchain-demo.mp4",
         "delivery/shieldchain-submission.zip",
     ):
         content = (ROOT / relative).read_bytes()

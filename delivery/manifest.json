@@ -58,11 +58,6 @@
       "status": "available"
     },
     {
-      "id": "video",
-      "path": "delivery/shieldchain-demo.mp4",
-      "status": "available"
-    },
-    {
       "id": "submission-package",
       "path": "delivery/shieldchain-submission.zip",
       "status": "available"

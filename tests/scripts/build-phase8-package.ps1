@@ -59,7 +59,6 @@ try {
     Copy-Item -LiteralPath $temporaryZip -Destination $output -Force
     $hashTargets = @(
         "delivery/shieldchain-presentation.pptx",
-        "delivery/shieldchain-demo.mp4",
         "delivery/shieldchain-submission.zip"
     )
     $lines = foreach ($relative in $hashTargets) {
