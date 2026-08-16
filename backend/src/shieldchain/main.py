@@ -1,6 +1,4 @@
-import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -38,6 +36,8 @@ from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
+from shieldchain.qwen_experience.api import router as qwen_experience_router
+from shieldchain.qwen_experience.service import QwenExperienceService
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
@@ -55,6 +55,7 @@ def create_app(
     knowledge_api_service: KnowledgeApiService | None = None,
     react_api_service: ReactApiService | None = None,
     trusted_tool_api_service: TrustedToolApiService | None = None,
+    qwen_experience_service: QwenExperienceService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.environment)
@@ -64,7 +65,6 @@ def create_app(
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
     knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
-
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -78,6 +78,7 @@ def create_app(
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
+    app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
     app.state.agent_trajectory_query = agent_trajectory_query or CollaborationTrajectoryQuery(
@@ -85,6 +86,7 @@ def create_app(
     )
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
+    app.include_router(qwen_experience_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service

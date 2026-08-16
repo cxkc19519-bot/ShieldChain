@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowUp, History, MessageSquarePlus, PanelLeft, PanelLeftClose, PanelLeftOpen, MoreVertical, Pencil, Pin, PinOff, Search, Trash2, X } from 'lucide-react'
 
 import logoUrl from '../../assets/logo.png'
@@ -92,6 +92,12 @@ export function AssistantPage() {
     setSearch('')
     setOpenMenuId(null)
     setActive(null); setDraft(''); setError(null); window.setTimeout(() => textarea.current?.focus(), 0)
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    void send()
   }
 
   async function send(event?: FormEvent, starter?: string) {
@@ -202,7 +208,7 @@ export function AssistantPage() {
       </div> : <>
       {empty ? <div className="gemini-welcome"><div className="gemini-orb"><img src={logoUrl} alt="ShieldChain" /></div><h1><span>你好，</span>有什么安全问题想聊聊？</h1><div className="gemini-suggestions">{starters.map((item) => <button type="button" onClick={() => void send(undefined, item)} disabled={pending} key={item}>{item}</button>)}</div></div> : <div className="gemini-thread">{active.messages.map((item) => <article className={`gemini-message gemini-message--${item.role}`} key={item.id}><div><p>{displayAssistantText(item.content)}</p></div></article>)}{pending && <article className="gemini-message gemini-message--assistant"><p className="gemini-loading"><i /><i /><i />思考中…</p></article>}</div>}
       {error && <p className="gemini-error" role="alert">{error}</p>}
-      <form className="gemini-composer" onSubmit={(event) => void send(event)}><textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="询问 ShieldChain" rows={1} maxLength={4096} /><button type="submit" disabled={!draft.trim() || pending} aria-label="发送"><ArrowUp size={19} strokeWidth={2.8} /></button></form>
+      <form className="gemini-composer" onSubmit={(event) => void send(event)}><textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="询问 ShieldChain" rows={1} maxLength={4096} /><button type="submit" disabled={!draft.trim() || pending} aria-label="发送"><ArrowUp size={19} strokeWidth={2.8} /></button></form>
       <p className="gemini-disclaimer">内容由 AI 回复，请注意甄别。</p>
       </>}
     </main>

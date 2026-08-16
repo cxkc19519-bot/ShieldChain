@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from shieldchain.core.config import Settings
+from shieldchain.operations import service as service_module
 from shieldchain.operations.react_collaboration import (
     _SPECIALISTS,
     RealDataAgentTeam,
@@ -148,7 +149,10 @@ def test_specialist_model_selects_only_needed_tool() -> None:
         ]
     )
 
-    async def chat(*_args, **_kwargs):
+    requests: list[tuple[str, str]] = []
+
+    async def chat(system, user, **_kwargs):
+        requests.append((system, user))
         return SimpleNamespace(
             content=json.dumps(next(responses), ensure_ascii=False), model="deepseek-test"
         )
@@ -162,3 +166,99 @@ def test_specialist_model_selects_only_needed_tool() -> None:
     assert [item.name for item in broker.results] == ["security.alerts.list"]
     assert tools[0].calls == 0
     assert tools[1].calls == 1
+    first_request = json.loads(requests[0][1])
+    alert_tool = next(
+        item for item in first_request["available_tools"] if item["name"] == "security.alerts.list"
+    )
+    assert alert_tool["description"]
+    assert alert_tool["use_when"]
+    assert alert_tool["do_not_use_when"]
+    assert alert_tool["limitations"]
+    assert "选择工具前必须阅读" in requests[0][0]
+
+
+def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
+    tools = _tools()
+    start_at = datetime(2026, 8, 1, tzinfo=UTC)
+    broker = _ToolBroker(tools, start_at, start_at)
+
+    catalog = broker.catalog(_SPECIALISTS["threat_investigation"].allowed_tools)
+
+    assert [item["name"] for item in catalog] == [
+        "security.events.list",
+        "security.alerts.list",
+        "security.vulnerabilities.list",
+        "security.weak_passwords.list",
+    ]
+    for item in catalog:
+        assert item["label"]
+        assert item["description"]
+        assert item["use_when"]
+        assert item["do_not_use_when"]
+        assert item["parameters"]
+        assert item["returns"]
+        assert item["limitations"]
+
+    vulnerability = next(
+        item for item in catalog if item["name"] == "security.vulnerabilities.list"
+    )
+    assert "不等同于资产版本已确认受影响" in vulnerability["limitations"]
+
+
+def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> None:
+    start_at = datetime(2026, 8, 1, tzinfo=UTC)
+    broker = _ToolBroker((), start_at, start_at)
+
+    catalog = broker.catalog(_SPECIALISTS["knowledge_retrieval"].allowed_tools)
+
+    assert [item["name"] for item in catalog] == ["knowledge.rag.retrieve"]
+    assert "query" in catalog[0]["parameters"]
+    assert "当前事件的已确认事实" in catalog[0]["do_not_use_when"]
+
+
+def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, _settings, _client) -> None:
+            pass
+
+        async def chat(self, request):
+            captured["system"] = request.messages[0].content
+            return SimpleNamespace(
+                content="概括总结：存在待复核线索。\n\n处置建议：人工补充证据。",
+                model="local-qwen",
+            )
+
+    monkeypatch.setattr(service_module, "DeepSeekClient", FakeClient)
+    agent = SecurityOperationsReportAgent(
+        None,  # type: ignore[arg-type]
+        settings=Settings(_env_file=None, deepseek_api_key="local-vllm"),
+        tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
+        store=OperationsReportStore(tmp_path),
+        knowledge=None,  # type: ignore[arg-type]
+        principal_id=UUID("00000000-0000-4000-8000-000000000002"),
+        tools=(),
+    )
+
+    synthesis, model, fallback = asyncio.run(
+        agent._synthesize(
+            datetime(2026, 8, 1, tzinfo=UTC),
+            datetime(2026, 8, 2, tzinfo=UTC),
+            [],
+            agent._analyze([]),
+        )
+    )
+
+    prompt = captured["system"]
+    assert "网络安全运营报告分析专家" in prompt
+    assert "Wazuh 终端日志" in prompt
+    assert "NTA 网络流量" in prompt
+    assert "本地 RAG" in prompt
+    assert "人工复核" in prompt
+    assert "不得声称已自动封禁" in prompt
+    assert synthesis.startswith("概括总结：")
+    assert model == "local-qwen"
+    assert fallback is False

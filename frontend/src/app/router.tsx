@@ -12,6 +12,7 @@ import { OperationsReportPage } from '../features/operations/OperationsReportPag
 import { ReportsPage } from '../features/reports/ReportsPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { AssistantPage } from '../features/assistant/AssistantPage'
+import { QwenChatPage } from '../features/qwen/QwenChatPage'
 import { AlertsPage } from '../features/alerts/AlertsPage'
 import { App } from './App'
 import { RouteErrorPage } from './RouteErrorPage'
@@ -34,6 +35,7 @@ export const appRoutes: RouteObject[] = [
       { path: 'agents', element: <AgentsPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
       { path: 'assistant', element: <AssistantPage /> },
+      { path: 'qwen-chat', element: <QwenChatPage /> },
       { path: 'response', element: <ToolsPage /> },
       { path: 'reports', element: <ReportsPage /> },
     ],

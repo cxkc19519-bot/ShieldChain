@@ -35,13 +35,109 @@ _ALERTS = "security.alerts.list"
 _VULNERABILITIES = "security.vulnerabilities.list"
 _WEAK_PASSWORDS = "security.weak_passwords.list"
 _RAG = "knowledge.rag.retrieve"
-_TOOL_LABELS = {
-    _EVENTS: "事件 MCP",
-    _ALERTS: "告警 MCP",
-    _VULNERABILITIES: "漏洞 MCP",
-    _WEAK_PASSWORDS: "弱口令 MCP",
-    _RAG: "本地知识库 RAG",
+_TOOL_CATALOG: dict[str, dict[str, object]] = {
+    _EVENTS: {
+        "label": "事件 MCP",
+        "description": (
+            "查询指定时间范围内由安全告警归并形成的待人工复核事件，"
+            "返回事件编号、风险等级和标题。只读，不执行处置。"
+        ),
+        "use_when": (
+            "需要了解事件总体情况、风险排序、受影响对象线索，或核对告警是否已形成调查事件时使用。"
+        ),
+        "do_not_use_when": (
+            "只需要查看原始告警明细、查询通用安全知识，或试图执行封禁、隔离、修复时不要使用。"
+        ),
+        "parameters": {
+            "start_at": "报告任务统一提供的查询开始时间",
+            "end_at": "报告任务统一提供的查询结束时间",
+            "limit": "服务端固定最多返回 50 条",
+        },
+        "returns": "事件编号、风险等级、事件标题、结果数量和查询摘要。",
+        "limitations": "返回的是待人工复核事件线索，不代表威胁已经确认，也不包含完整原始日志。",
+    },
+    _ALERTS: {
+        "label": "告警 MCP",
+        "description": (
+            "查询指定时间范围内接收的 Wazuh 安全告警，"
+            "返回规则编号、严重等级和告警标题。只读，不执行处置。"
+        ),
+        "use_when": "需要核查告警数量、严重性、检测规则或原始检测线索时使用。",
+        "do_not_use_when": (
+            "需要通用知识解释、已确认漏洞清单，或试图把一条告警直接认定为成功攻击时不要使用。"
+        ),
+        "parameters": {
+            "start_at": "报告任务统一提供的查询开始时间",
+            "end_at": "报告任务统一提供的查询结束时间",
+            "limit": "服务端固定最多返回 50 条",
+        },
+        "returns": "告警严重等级、规则编号、标题、高风险告警数量和查询摘要。",
+        "limitations": (
+            "告警是检测线索，可能存在误报、重复或上下文不足，必须结合事件和其他证据复核。"
+        ),
+    },
+    _VULNERABILITIES: {
+        "label": "漏洞 MCP",
+        "description": (
+            "从指定时间范围的告警标题和规范化证据中提取 CVE 标识及关联告警线索。"
+            "只读，不进行漏洞扫描或修复。"
+        ),
+        "use_when": "告警或事件可能涉及公开漏洞，需要整理 CVE 线索并安排资产版本复核时使用。",
+        "do_not_use_when": (
+            "没有漏洞迹象、需要查询漏洞原理与修复知识，或需要确认某资产一定受影响时不要单独使用。"
+        ),
+        "parameters": {
+            "start_at": "报告任务统一提供的查询开始时间",
+            "end_at": "报告任务统一提供的查询结束时间",
+            "limit": "服务端最多返回 50 个去重后的 CVE 线索",
+        },
+        "returns": "CVE 标识、关联告警等级与标题、结果数量和查询摘要。",
+        "limitations": (
+            "识别到 CVE 只表示告警中出现相关标识，不等同于资产版本已确认受影响或漏洞已被利用。"
+        ),
+    },
+    _WEAK_PASSWORDS: {
+        "label": "弱口令 MCP",
+        "description": (
+            "从指定时间范围的告警中筛选弱口令、密码喷洒、暴力破解等认证风险线索。"
+            "只读，不读取或展示真实密码。"
+        ),
+        "use_when": "出现异常登录、认证失败、密码喷洒或暴力破解迹象，需要汇总身份认证风险时使用。",
+        "do_not_use_when": "没有认证相关迹象、需要获取用户密码，或准备自动修改账户凭据时不要使用。",
+        "parameters": {
+            "start_at": "报告任务统一提供的查询开始时间",
+            "end_at": "报告任务统一提供的查询结束时间",
+            "limit": "服务端最多返回 50 条认证风险线索",
+        },
+        "returns": "关联告警等级、规则编号、标题、结果数量和查询摘要。",
+        "limitations": (
+            "返回的是基于告警关键词识别的认证风险线索，不证明弱密码真实存在，也不包含任何明文凭据。"
+        ),
+    },
+    _RAG: {
+        "label": "本地知识库 RAG",
+        "description": (
+            "使用自然语言问题检索 ShieldChain 本地知识库，"
+            "返回最多 3 个相关片段形成的可引用回答。只读。"
+        ),
+        "use_when": (
+            "需要补充法规、ATT&CK 技战术、漏洞原理、处置规范或历史调查报告中的知识依据时使用。"
+        ),
+        "do_not_use_when": (
+            "需要查询实时事件或告警、知识库没有相关资料，"
+            "或准备把检索内容当作当前事件的已确认事实时不要使用。"
+        ),
+        "parameters": {
+            "query": "具体、完整的安全知识检索问题；仅该工具接受模型生成的 query",
+            "limit": "服务端固定最多检索 3 个相关片段",
+        },
+        "returns": "基于本地知识库片段生成的回答；无知识库或无命中时返回明确说明。",
+        "limitations": (
+            "知识内容只能作为研判依据，不能证明当前资产、攻击或处置状态；检索不可用时不得扩写事实。"
+        ),
+    },
 }
+_TOOL_LABELS = {name: str(item["label"]) for name, item in _TOOL_CATALOG.items()}
 
 _SUPERAGENT = RoleDefinition("superagent", "总控智能体", "观察公开状态并选择下一位专业智能体。")
 _SPECIALISTS = {
@@ -83,7 +179,7 @@ _SPECIALISTS = {
         RoleDefinition(
             "reporting",
             "报告智能体",
-            "按报告完整性需要选择数据工具，汇总事实、线索、建议和局限性。",
+            "按报告完整性需要选择数据工具，汇总事实、线索、局限性，并形成概括总结和面向人工复核的分级处置建议。",
             (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
             (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
         ),
@@ -109,9 +205,9 @@ class _ToolBroker:
     def results(self) -> list[McpToolCallView]:
         return [self._cache[name] for name in self._order]
 
-    def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, str]]:
+    def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, object]]:
         return [
-            {"name": name, "label": _TOOL_LABELS[name]}
+            {"name": name, **_TOOL_CATALOG[name]}
             for name in allowed
             if name == _RAG or name in self._tools
         ]
@@ -224,7 +320,8 @@ class RealDataAgentTeam:
         )
         try:
             response = await self._chat(
-                "你是安全多智能体的 ReAct 总控。观察公开状态后，从 remaining_roles 中选择一个下一角色。仅输出 JSON："
+                "你是安全多智能体的 ReAct 总控。观察公开状态后，"
+                "从 remaining_roles 中选择一个下一角色。仅输出 JSON："
                 '{"action":"run_role","role":"角色键","reason_code":"小写英文代码","public_reason":"不超过80字中文理由"}。'
                 "不要输出思维链，不得选择列表外角色，也不得直接调用工具。",
                 prompt,
@@ -268,10 +365,13 @@ class RealDataAgentTeam:
             )
             try:
                 response = await self._chat(
-                    f"你是{definition.label}。你要在受限 ReAct 循环中自主选择工具。每轮只能输出一个 JSON 动作。需要数据时输出："
+                    f"你是{definition.label}。你要在受限 ReAct 循环中自主选择工具。"
+                    "每轮只能输出一个 JSON 动作。需要数据时输出："
                     '{"action":"call_tool","tool":"工具名","query":"仅RAG可用的检索问题","public_reason":"中文理由"}；信息足够时输出：'
                     '{"action":"finish","summary":"不超过280字的中文公开结论","public_reason":"中文理由"}。'
-                    "只能选择 available_tools 中的工具；允许运行时不调用任何工具；不得输出思维链、命令或虚构事实。",
+                    "选择工具前必须阅读其 description、use_when、do_not_use_when 和 limitations；"
+                    "只能选择 available_tools 中的工具；允许运行时不调用任何工具；"
+                    "不得输出思维链、命令或虚构事实。",
                     prompt,
                     max_tokens=420,
                 )
@@ -339,7 +439,9 @@ class RealDataAgentTeam:
         try:
             response = await self._chat(
                 f"你是{definition.label}。只输出不超过280字的公开中文摘要，不输出思维链，不得编造或执行处置。",
-                f"职责：{definition.responsibility}\n工具观察：{' | '.join(observations)[:6000]}\n前序交接：{handoffs}",
+                f"职责：{definition.responsibility}\n"
+                f"工具观察：{' | '.join(observations)[:6000]}\n"
+                f"前序交接：{handoffs}",
                 max_tokens=360,
             )
             return self._plain(response.content)[:800], response.model

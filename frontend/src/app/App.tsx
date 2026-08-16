@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle, Sparkles } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -12,6 +12,7 @@ const navigation = [
   { label: '知识库', icon: Database, to: '/knowledge' },
   { label: '历史报告', icon: FileText, to: '/reports' },
   { label: '智能助手', icon: MessageCircle, to: '/assistant' },
+  { label: '模型测试', icon: Sparkles, to: '/qwen-chat' },
 ]
 
 export function App() {
@@ -20,7 +21,7 @@ export function App() {
   const contextKey = `${context.incidentId ?? ''}:${context.runId ?? ''}`
 
   const main = useRouteFocus(location.pathname)
-  const isAssistant = location.pathname === '/assistant'
+  const isAssistant = location.pathname === '/assistant' || location.pathname === '/qwen-chat'
 
   return (
     <div className="app-frame">

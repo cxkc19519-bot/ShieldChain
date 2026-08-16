@@ -52,7 +52,11 @@ class LocalConversationStore:
     def list(self) -> list[dict[str, object]]:
         with self._lock:
             rows = list(self._read()["conversations"])
-        return sorted(rows, key=lambda item: (bool(item.get("pinned", False)), str(item.get("updated_at", ""))), reverse=True)
+        return sorted(
+            rows,
+            key=lambda item: (bool(item.get("pinned", False)), str(item.get("updated_at", ""))),
+            reverse=True,
+        )
 
     def append(
         self,
@@ -95,6 +99,7 @@ class LocalConversationStore:
                     self._write(catalog)
                     return dict(conversation)
         raise ConversationNotFound(str(conversation_id))
+
     def rename(self, conversation_id: UUID, title: str) -> dict[str, object]:
         normalized = title.replace("\n", " ").strip()[:80]
         if not normalized:
@@ -104,6 +109,7 @@ class LocalConversationStore:
             for conversation in catalog["conversations"]:
                 if conversation.get("id") == str(conversation_id):
                     conversation["title"] = normalized
+                    conversation["summary"] = normalized
                     conversation["updated_at"] = datetime.now(UTC).isoformat()
                     self._write(catalog)
                     return dict(conversation)
@@ -119,6 +125,7 @@ class LocalConversationStore:
                     self._write(catalog)
                     return dict(conversation)
         raise ConversationNotFound(str(conversation_id))
+
     def delete(self, conversation_id: UUID) -> None:
         with self._lock:
             catalog = self._read()

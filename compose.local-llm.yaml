@@ -6,9 +6,13 @@ services:
     environment:
       HF_HOME: /root/.cache/huggingface
       HF_HUB_DISABLE_XET: "1"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
       VLLM_WORKER_MULTIPROC_METHOD: spawn
     volumes:
-      - ${LOCAL_LLM_CACHE_DIR:-./data/huggingface}:/root/.cache/huggingface
+      # snapshot_download(cache_dir=...) stores models directly below the supplied directory.
+      # Mount it as the Hub cache so vLLM resolves models--Qwen--... offline.
+      - ${LOCAL_LLM_CACHE_DIR:-./data/huggingface}:/root/.cache/huggingface/hub
       - local-vllm-cache:/root/.cache/vllm
     command:
       - --model
@@ -30,7 +34,7 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - python3
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
       interval: 15s
