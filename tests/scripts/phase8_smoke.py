@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import zipfile
 from pathlib import Path, PurePosixPath
 
 
@@ -10,27 +9,35 @@ def validate(root: Path) -> dict[str, object]:
     manifest_path = root / "delivery" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     artifacts = manifest["artifacts"]
-    if any(item["status"] != "available" for item in artifacts):
-        raise ValueError("Every final delivery artifact must be available")
-
     checked: list[str] = []
+    planned: list[str] = []
     for item in artifacts:
         relative = PurePosixPath(item["path"])
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"Unsafe delivery path: {relative}")
         target = root.joinpath(*relative.parts)
-        if not target.is_file():
-            raise FileNotFoundError(target)
-        checked.append(relative.as_posix())
+        if item["status"] == "available":
+            if not target.is_file():
+                raise FileNotFoundError(target)
+            checked.append(relative.as_posix())
+        elif item["status"] == "planned":
+            if target.exists():
+                raise ValueError(
+                    "Planned release artifacts must not exist before finalization: "
+                    f"{relative}"
+                )
+            planned.append(relative.as_posix())
+        else:
+            raise ValueError(f"Unsupported delivery status: {item['status']}")
 
-    slides = root / "delivery" / "shieldchain-presentation.pptx"
-    with zipfile.ZipFile(slides) as archive:
-        slide_count = sum(
-            name.startswith("ppt/slides/slide") and name.endswith(".xml")
-            for name in archive.namelist()
-        )
-    if slide_count != 10:
-        raise ValueError(f"Expected 10 slides, found {slide_count}")
+    required_planned = {
+        "delivery/shieldchain-presentation.pptx",
+        "delivery/shieldchain-demo.mp4",
+        "delivery/shieldchain-submission.zip",
+        "delivery/submission-files.sha256",
+    }
+    if set(planned) != required_planned:
+        raise ValueError("Unfinished release artifacts must remain explicitly planned")
 
     expected_boundaries = {
         "docker_runtime_tested": False,
@@ -40,7 +47,7 @@ def validate(root: Path) -> dict[str, object]:
     }
     if manifest["boundaries"] != expected_boundaries:
         raise ValueError("Final boundaries must remain explicit and truthful")
-    return {"artifacts_checked": checked, "slides": slide_count}
+    return {"artifacts_checked": checked, "artifacts_planned": planned}
 
 
 def main() -> int:

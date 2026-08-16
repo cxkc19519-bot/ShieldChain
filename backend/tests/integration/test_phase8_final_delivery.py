@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -18,7 +17,7 @@ def test_phase8_smoke_is_offline_bounded_and_chains_prior_gate() -> None:
     assert "run-phase8-baseline.ps1" in wrapper
     assert "shieldchain-phase8-smoke-" in wrapper
     assert "Remove-Item -LiteralPath $resolved -Recurse -Force" in wrapper
-    assert "Every final delivery artifact must be available" in runner
+    assert "Planned release artifacts must not exist before finalization" in runner
     for flag in (
         "RUN_LIVE_DEEPSEEK_TEST",
         "RUN_LIVE_EMBEDDING_TEST",
@@ -28,30 +27,23 @@ def test_phase8_smoke_is_offline_bounded_and_chains_prior_gate() -> None:
         assert flag in wrapper
 
 
-def test_final_manifest_has_no_planned_artifacts() -> None:
+def test_unfinished_release_artifacts_remain_planned() -> None:
     manifest = json.loads((ROOT / "delivery" / "manifest.json").read_text("utf-8"))
-    assert all(item["status"] == "available" for item in manifest["artifacts"])
-    assert all(value is False for value in manifest["boundaries"].values())
+    artifacts = {item["id"]: item for item in manifest["artifacts"]}
+    assert {
+        artifact_id
+        for artifact_id, item in artifacts.items()
+        if item["status"] == "planned"
+    } == {"slides", "video", "submission-package", "submission-checksums"}
+    for artifact_id in ("slides", "video", "submission-package", "submission-checksums"):
+        assert not (ROOT / artifacts[artifact_id]["path"]).exists()
 
 
-def test_submission_package_and_checksums_are_reproducible() -> None:
-    package = ROOT / "delivery" / "shieldchain-submission.zip"
-    checksums = ROOT / "delivery" / "submission-files.sha256"
+def test_submission_document_does_not_claim_final_artifacts_exist() -> None:
     report = ROOT / "docs" / "delivery" / "submission-package.md"
-    assert package.is_file() and package.stat().st_size > 1_000_000
-    assert checksums.is_file()
     assert report.is_file()
-
-    entries = {}
-    for line in checksums.read_text(encoding="utf-8-sig").splitlines():
-        digest, relative = line.split("  ", maxsplit=1)
-        entries[relative] = digest
-    for relative in (
-        "delivery/shieldchain-presentation.pptx",
-        "delivery/shieldchain-submission.zip",
-    ):
-        content = (ROOT / relative).read_bytes()
-        assert entries[relative] == hashlib.sha256(content).hexdigest()
+    content = report.read_text(encoding="utf-8")
+    assert "当前仓库不保留半成品 PPT、演示视频、最终 ZIP 或校验和" in content
 
 
 def test_package_builder_excludes_secrets_and_runtime_data() -> None:

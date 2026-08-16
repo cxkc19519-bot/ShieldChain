@@ -55,17 +55,22 @@
     {
       "id": "slides",
       "path": "delivery/shieldchain-presentation.pptx",
-      "status": "available"
+      "status": "planned"
+    },
+    {
+      "id": "video",
+      "path": "delivery/shieldchain-demo.mp4",
+      "status": "planned"
     },
     {
       "id": "submission-package",
       "path": "delivery/shieldchain-submission.zip",
-      "status": "available"
+      "status": "planned"
     },
     {
       "id": "submission-checksums",
       "path": "delivery/submission-files.sha256",
-      "status": "available"
+      "status": "planned"
     }
   ],
   "boundaries": {

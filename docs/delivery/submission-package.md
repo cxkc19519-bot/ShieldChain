@@ -1,6 +1,6 @@
 # ShieldChain 比赛提交包
 
-> 文档状态：当前参考（更新于 2026-08-08）。提交内容以当前 Git 跟踪文件和本页验收边界为准。
+> 文档状态：提交前规划（更新于 2026-08-16）。项目尚未定稿，当前仓库不保留半成品 PPT、演示视频、最终 ZIP 或校验和。
 
 ## 内容范围
 
@@ -11,17 +11,13 @@
 - 本地 vLLM/Qwen 部署配置、服务器运维脚本与相关文档；
 - 需求、架构、运维、交付、历史验收快照和开发决策记录。
 
-Remotion 工程、比赛 MP4、旧视频测试和固定钓鱼模拟入口已经退出当前交付范围。
+固定钓鱼模拟入口、旧 Remotion 工程和旧视频测试已经退出当前产品范围。比赛 PPT、3 分钟演示视频和最终提交包将在功能、数据、测试与比赛口径冻结后重新制作，当前清单必须将它们标记为 `planned`，且对应成品文件不应存在。
 
 ## 可复现交付
 
-仓库仍保留确定性打包脚本。打包器以 `git ls-files` 为输入，排除 `.env`、虚拟环境、`node_modules`、运行数据库、缓存和临时渲染目录。
+仓库保留确定性打包脚本，供最终版本冻结后使用。打包器以 `git ls-files` 为输入，排除 `.env`、虚拟环境、`node_modules`、运行数据库、缓存和临时渲染目录。**项目未定稿时不要运行最终打包命令。**
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\run-phase8-smoke.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\build-phase8-package.ps1
-Get-FileHash -Algorithm SHA256 delivery\shieldchain-submission.zip
-```
+最终冻结后依次运行交付 smoke、打包脚本和哈希校验；执行前必须先完成最新测试、PPT 与视频验收。
 
 完整工程门禁：
 
@@ -45,4 +41,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
 2. 校验 Compose 配置；
 3. 确认 `.env`、密钥、真实告警样本和运行数据库未被提交；
 4. 检查 `git status`，只纳入本次授权范围；
-5. 重新生成 ZIP 和校验和时，确认其中不包含已经退役的视频资产。
+5. 制作并验收最终 PPT 和 3 分钟视频；
+6. 最后生成 ZIP 与校验和，确认其中不包含密钥、运行数据和已经退役的视频工程。

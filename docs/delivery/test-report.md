@@ -9,8 +9,8 @@
 - TypeScript 类型检查通过；
 - `compose.yaml + compose.server.yaml` 配置检查通过；
 - `compose.yaml + compose.local-llm.yaml` 配置检查通过；
-- 无视频版本最终交付测试：4 个通过；
-- 无视频版本 Phase 8 交付 smoke 通过。
+- 交付清单支持区分 `available` 与 `planned`，并检查未完成的 PPT、视频、ZIP 和校验和不会提前出现在仓库；
+- 当前不宣称最终交付 smoke 已通过，最终版本冻结后需要重新执行完整门禁。
 
 ## 全量套件说明
 

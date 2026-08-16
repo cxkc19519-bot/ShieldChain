@@ -1,38 +1,28 @@
+import json
 from pathlib import Path
-from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_editable_presentation_is_a_ten_slide_widescreen_pptx() -> None:
-    deck = ROOT / "delivery" / "shieldchain-presentation.pptx"
-    assert deck.stat().st_size >= 40_000
-    with ZipFile(deck) as archive:
-        names = set(archive.namelist())
-        slides = {
-            name
-            for name in names
-            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
-        }
-        assert len(slides) == 10
-        presentation = archive.read("ppt/presentation.xml").decode("utf-8")
-        assert 'cx="12192000"' in presentation
-        assert 'cy="6858000"' in presentation
-        assert "ppt/slideMasters/slideMaster1.xml" in names
+def test_unfinished_presentation_and_video_are_planned_but_not_committed() -> None:
+    manifest = json.loads((ROOT / "delivery" / "manifest.json").read_text("utf-8"))
+    artifacts = {item["id"]: item for item in manifest["artifacts"]}
+    for artifact_id in ("slides", "video"):
+        artifact = artifacts[artifact_id]
+        assert artifact["status"] == "planned"
+        assert not (ROOT / artifact["path"]).exists()
 
 
-def test_project_summary_matches_verified_evidence_and_boundaries() -> None:
+def test_project_summary_matches_current_product_boundaries() -> None:
     summary = (ROOT / "docs" / "delivery" / "project-summary.md").read_text(
         encoding="utf-8"
     )
     for evidence in (
-        "1037 passed, 1 skipped",
-        "90 tests passed",
-        "2.499 ms",
-        "0.114 ms",
-        "DOCKER_RUNTIME_TESTED=False",
-        "CI_RUNTIME_TESTED=False",
-        "REAL_MODEL_PLANNING_TESTED=False",
-        "REAL_DEVICE_PATHS_TESTED=False",
+        "Wazuh 高风险告警接收",
+        "七个专业角色",
+        "事件、告警、漏洞、弱密码四类 MCP",
+        "不自动执行真实处置",
+        "真实生产网络、镜像流量和大规模并发仍需授权环境验收",
+        "Remotion 视频工程、比赛 MP4 和相关测试",
     ):
         assert evidence in summary
