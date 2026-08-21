@@ -10,6 +10,12 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
+当前 v3 规则集包含 37 条 ShieldChain 自定义 Suricata 规则，并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。详细验收结果见 [v3 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v3-20260821.md)。
+
+## 数据集划分与验收
+
+比赛方提供的是一个整体 PCAP 语料，仓库所述 development（701）、validation（701）和 final-blind（935）是 ShieldChain 为避免规则过拟合而创建的工程划分，不是比赛方官方划分，也不是在训练模型。完整说明、服务器路径、冻结规则哈希和同门复现流程见 [NTA 数据集划分与独立验收](../../docs/operations/nta-dataset-split-and-evaluation.md)。
+
 ## 前置条件
 
 - Python 3.10+
@@ -32,7 +38,7 @@ Linux 示例：
 
 ```bash
 export SHIELDCHAIN_NTA_ROOT=/path/to/nta-data
-export SHIELDCHAIN_NTA_PCAP_ROOT=/path/to/nta-data/pcaps
+export SHIELDCHAIN_NTA_PCAP_ROOT=/path/to/nta-data/pcap
 python3 scripts/nta/nta_offline_pipeline.py --limit 12
 ```
 

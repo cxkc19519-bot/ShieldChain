@@ -170,6 +170,13 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
 
     if alerts:
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
+        if any(word in searchable for word in ("tunnel", "reduh")):
+            return "隧道与命令控制", 11, ["T1572", "T1071.001"], signatures, findings
+        if any(
+            word in searchable
+            for word in ("reverse shell", "interactive shell", "powershell")
+        ):
+            return "命令执行与反弹连接", 11, ["T1059.001", "T1071"], signatures, findings
         if any(word in searchable for word in ("webshell", "web shell", "behinder", "godzilla", "antsword", "chopper")):
             return "命令与 WebShell 行为", 12, ["T1059", "T1505.003"], signatures, findings
         if any(word in searchable for word in ("exploit", "cve-", "remote code", "code execution", "jboss")):
@@ -208,9 +215,34 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
     repeated_large_posts = []
     for uri, rows in per_uri.items():
         posts = [row for row in rows if str(row.get("method") or "").upper() == "POST"]
-        if len(posts) >= 3 and max((int(row.get("request_body_len") or 0) for row in posts), default=0) >= 8192:
+        max_body = max(
+            (int(row.get("request_body_len") or 0) for row in posts),
+            default=0,
+        )
+        max_response = max(
+            (int(row.get("response_body_len") or 0) for row in posts),
+            default=0,
+        )
+        script_endpoint = uri.split("?", 1)[0].endswith(
+            (".jsp", ".jspx", ".php", ".asp", ".aspx")
+        )
+        repeated_medium_payload = len(posts) >= 3 and max_body >= 2048
+        repeated_command_responses = len(posts) >= 8 and max_response >= 4096
+        if script_endpoint and (
+            repeated_medium_payload or repeated_command_responses
+        ):
             repeated_large_posts.append(uri[:512])
     shell_http.extend(repeated_large_posts)
+
+    suspicious_reverse_ports = set()
+    for row in conn_rows:
+        try:
+            port = int(row.get("id.resp_p") or 0)
+            duration = float(row.get("duration") or 0)
+        except (TypeError, ValueError):
+            continue
+        if port in {1337, 4444, 5555, 6666, 7777, 9001} and duration >= 5:
+            suspicious_reverse_ports.add(port)
 
     if exploit_http:
         findings.append(f"Zeek observed {len(exploit_http)} exploit-pattern HTTP request(s)")
@@ -221,6 +253,12 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
     if shell_http:
         findings.append(f"Zeek observed {len(set(shell_http))} WebShell-like HTTP endpoint(s)")
         return "疑似 WebShell 交互", 11, ["T1505.003", "T1059"], signatures, findings
+    if suspicious_reverse_ports and http_rows:
+        findings.append(
+            "Zeek observed long-lived connection on suspicious post-exploitation "
+            f"port(s): {sorted(suspicious_reverse_ports)}"
+        )
+        return "疑似反弹连接", 9, ["T1059", "T1071"], signatures, findings
     if alerts:
         return "Suricata 安全规则告警", 9, [], signatures, findings
     if http_rows or conn_rows or dns_rows:

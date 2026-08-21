@@ -35,3 +35,22 @@ alert http any any -> any any (msg:"ShieldChain upload of server-side script fil
 
 alert http any any -> any any (msg:"ShieldChain Oracle time-based blind extraction pattern"; flow:established,to_server; http.uri; content:"ASCII(SUBSTR"; nocase; content:"FROM DUAL"; nocase; content:"SELECT COUNT(*) FROM ALL_USERS"; nocase; classtype:web-application-attack; sid:9000023; rev:1;)
 alert http any any -> any any (msg:"ShieldChain WebLogic console JNDI command expression"; flow:established,to_server; http.uri; content:"consolejndi.portal"; nocase; content:"com.tangosol"; nocase; classtype:web-application-attack; sid:9000024; rev:1;)
+
+# v3: WebShell variants, HTTP tunnelling, encoded command and reverse-connection indicators
+alert http any any -> any any (msg:"ShieldChain ASP eval and Response.Write WebShell pattern"; flow:established,to_server; http.request_body; content:"eval("; nocase; content:"Response.Write"; nocase; classtype:web-application-attack; sid:9000025; rev:1;)
+alert http any any -> any any (msg:"ShieldChain PHP eval base64_decode WebShell pattern"; flow:established,to_server; http.request_body; pcre:"/eval\s*\([^\r\n]{0,256}base64_decode/i"; classtype:web-application-attack; sid:9000026; rev:1;)
+alert http any any -> any any (msg:"ShieldChain reDuh createSocket tunnel control"; flow:established,to_server; http.uri; content:"reDuh.jsp"; nocase; content:"action=createSocket"; nocase; classtype:trojan-activity; sid:9000027; rev:1;)
+alert http any any -> any any (msg:"ShieldChain reDuh getData tunnel traffic"; flow:established,to_server; http.uri; content:"reDuh.jsp"; nocase; content:"action=getData"; nocase; classtype:trojan-activity; sid:9000028; rev:1;)
+alert http any any -> any any (msg:"ShieldChain PowerShell FromBase64String execution request"; flow:established,to_server; http.request_body; content:"powershell"; nocase; content:"FromBase64String"; nocase; classtype:trojan-activity; sid:9000029; rev:1;)
+alert http any any -> any any (msg:"ShieldChain Unix interactive shell command in HTTP request"; flow:established,to_server; http.request_body; pcre:"/(?:\/bin\/(?:ba)?sh|bash\s+-i)/i"; classtype:trojan-activity; sid:9000030; rev:1;)
+alert http any any -> any any (msg:"ShieldChain AntSword Electron client User-Agent"; flow:established,to_server; http.method; content:"POST"; http.user_agent; content:"12345678/2.1.8.1"; classtype:trojan-activity; sid:9000031; rev:1;)
+alert http any any -> any any (msg:"ShieldChain Xnonymoux PHP WebShell endpoint"; flow:established,to_server; http.uri; content:"/xnonymoux_webshell_"; nocase; classtype:web-application-attack; sid:9000032; rev:1;)
+alert http any any -> any any (msg:"ShieldChain PowerShell IEX execution request"; flow:established,to_server; http.request_body; content:"powershell"; nocase; content:"IEX"; nocase; classtype:trojan-activity; sid:9000033; rev:1;)
+
+alert tcp any any -> any 80 (msg:"ShieldChain raw ASP eval Response.Write WebShell traffic"; flow:established,to_server; content:"eval("; nocase; content:"Response.Write"; nocase; classtype:web-application-attack; sid:9000034; rev:1;)
+alert http any any -> any any (msg:"ShieldChain PowerShell IEX content in HTTP response"; flow:established,to_client; http.response_body; content:"powershell"; nocase; content:"IEX"; nocase; classtype:trojan-activity; sid:9000035; rev:1;)
+
+alert tcp any any -> any 80 (msg:"ShieldChain raw ASP Response.Write eval WebShell traffic"; flow:established,to_server; content:"Response.Write"; nocase; content:"eval("; nocase; classtype:web-application-attack; sid:9000036; rev:1;)
+alert http any any -> any any (msg:"ShieldChain PowerShell payload posted to PHP endpoint"; flow:established,to_server; http.method; content:"POST"; http.uri; pcre:"/\.php(?:[?\/]|$)/Ui"; http.request_body; content:"powershell"; nocase; classtype:trojan-activity; sid:9000037; rev:1;)
+
+alert tcp any any -> any 80 (msg:"ShieldChain repeated ASP Response.Write payload to web server"; content:"Response.Write"; nocase; classtype:web-application-attack; threshold:type threshold, track by_src, count 3, seconds 60; sid:9000038; rev:1;)
