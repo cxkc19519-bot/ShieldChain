@@ -398,14 +398,18 @@ backend/migrations/versions/20260821_01_add_skill_runtime.py
 ```text
 backend/src/shieldchain/core/config.py
 backend/src/shieldchain/main.py
+backend/src/shieldchain/db/base.py
 backend/src/shieldchain/agents/context.py
 backend/src/shieldchain/agents/security.py
+backend/src/shieldchain/agents/orchestrator.py
 backend/src/shieldchain/operations/react_collaboration.py
 ```
 
 ## 9. API 设计
 
 所有接口使用服务端租户和主体身份，客户端不得提交或覆盖 `tenant_id`、`principal_id`、角色权限和信任等级。
+
+**生产阻断条件**：当前项目部分 API 仍使用服务端 demo tenant/principal。Skills 安装、启用、升级、回滚和卸载属于管理员控制面；在真实管理员认证、RBAC 和租户绑定完成前，这些写接口必须由 `skills_management_enabled=false` 保持关闭，不能因为身份由服务端填充就宣称具备生产授权。测试环境可以使用固定 demo 身份，但必须有测试证明生产配置会拒绝启动或拒绝开放写接口。
 
 ### 9.1 目录与详情
 
@@ -584,11 +588,27 @@ ContextContentType.SKILL_GUIDANCE
 5. 将 Skill 请求工具与角色允许工具做交集；
 6. 在 `AgentRoleRunView` 增加公开 Skill 摘要。
 
-### 12.2 固定角色端口
+### 12.2 两条智能体路径统一接线
+
+当前仓库同时存在：
+
+- `agents/orchestrator.py` 使用结构化上下文端口的编排路径；
+- `operations/react_collaboration.py` 自行拼接角色 Prompt 的真实数据 ReAct 路径。
+
+只修改 `agents/context.py` 会遗漏真实数据路径。应由两个入口共同调用：
+
+```text
+shieldchain.skills.selector.SkillSelectionService
+shieldchain.skills.context.SkillContextProjector
+```
+
+共享服务返回已完成角色过滤、版本锁定、权限交集和 Token 预算的 Skill 块。两条路径必须使用同一 DTO、同一原因码和同一运行绑定逻辑，并分别有集成测试。短期只把 `operations/react_collaboration.py` 的字符串角色映射到固定 `AgentRole`；不得借 Skills 实施一次性重写整个多智能体架构。
+
+### 12.3 固定角色端口
 
 `ProfessionalRoleRegistry` 继续要求每个角色恰好一个适配器。Skill 不新增角色类，只增强现有角色的过程指导。第一版不允许 Skill 定义第八个 AgentRole，避免破坏持久化枚举和安全策略。
 
-### 12.3 可信工具网关
+### 12.4 可信工具网关
 
 `TrustedToolRegistry`、`DeterministicToolPolicy` 和审批服务保持唯一授权源：
 
@@ -598,7 +618,7 @@ ContextContentType.SKILL_GUIDANCE
 - 真实执行仍经过工具注册、参数绑定、策略、审批、租约、适配器和验证；
 - 运行轨迹同时记录 Skill 来源与真实工具决策，便于审计。
 
-### 12.4 RAG
+### 12.5 RAG
 
 Skill references 不自动进入 RAG，避免一份内容同时具有“过程指导”和“知识证据”两种语义。若管理员希望引用材料进入知识库，必须通过现有知识库上传和发布流程单独完成。
 
@@ -652,6 +672,9 @@ frontend/src/features/skills/
 建议在 `Settings` 增加：
 
 ```text
+skills_enabled
+skills_shadow_mode
+skills_management_enabled
 skills_content_root
 authorized_skill_github_hosts
 skills_max_upload_bytes
@@ -669,7 +692,7 @@ skills_remote_download_timeout_seconds
 skills_remote_redirect_limit
 ```
 
-所有数值都必须使用 Pydantic 上下界校验。生产环境必须拒绝空的存储根、通配 GitHub 主机和不安全 URL 方案。
+所有数值都必须使用 Pydantic 上下界校验。生产环境必须拒绝空的存储根、通配 GitHub 主机和不安全 URL 方案；`skills_enabled` 默认关闭，`skills_management_enabled` 只有在真实管理员认证与 RBAC 已配置时才允许开启。
 
 ## 15. 错误与原因码
 
@@ -743,6 +766,7 @@ backend/tests/unit/skills/test_loader.py
 - 合法 Front Matter 和正文；
 - 缺少 `name/description`、重复键、非 UTF-8、过长描述、显式非法 SemVer；
 - 缺少 `version` 时生成稳定的 `derived_version`；
+- YAML alias/anchor 资源耗尽、递归对象和非标类型标签；
 - 角色和工具名规范化；
 - 同名同版本同内容幂等；
 - 同名同版本异内容拒绝；
@@ -803,6 +827,24 @@ backend/tests/integration/skills/test_skill_security.py
 - 删除或升级不会破坏运行审计。
 
 ## 18. 分阶段实施计划
+
+### 阶段0：特征保护和当前行为刻画
+
+**目标**：保证功能关闭时现有系统行为不变，为后续增量接线建立基线。
+
+先写测试证明：七角色集合不变；`ProfessionalRoleRegistry` 仍要求角色完整；工具白名单不受 Skill 文本影响；`skills_enabled=false` 时两条智能体路径的 Prompt、工具调用和公开输出保持现状；`skills_management_enabled=false` 时所有管理写接口不可用。
+
+建议测试：
+
+```text
+backend/tests/unit/skills/test_feature_disabled.py
+backend/tests/unit/skills/test_fixed_roles.py
+backend/tests/unit/skills/test_tool_authority_regression.py
+```
+
+提交：`test: protect behavior before skills runtime`。
+
+完成标准：特征关闭基线可重复，任何工具权限差异都会使测试失败。
 
 ### 阶段1：领域合同和解析器
 
@@ -964,6 +1006,16 @@ development-logs/YYYY-MM-DD.md
 
 完成标准：聚焦测试、后端全量测试、前端测试、类型检查、Lint、迁移往返、Docker配置检查和人工安全检查全部通过。
 
+### 发布启用与回滚顺序
+
+1. **基础设施**：`skills_enabled=false`，只部署表、解析器、包安全和管理 API；
+2. **影子选择**：`skills_shadow_mode=true`，记录“将选择哪些 Skill”，但不注入模型；
+3. **测试租户**：只对测试租户注入，比较事实漂移、引用完整率、Token、失败率和工具调用差异；
+4. **受控生产**：仅启用内置或已验证来源，第三方安装只开放给真实管理员；
+5. **逐步迁移**：行为等价测试充分后，才将部分硬编码过程提示迁为内置 Skill；系统安全规则、工具目录、白名单、输出 Schema、状态机和审批始终留在代码中。
+
+紧急回滚只需设置 `skills_enabled=false` 并停止新运行绑定；已锁定运行按策略完成或转人工。不得在回滚时删除数据库表、不可变包或历史运行绑定。物理清理由独立延迟 GC 处理。
+
 ## 19. 精确验证命令
 
 Windows项目环境建议：
@@ -1010,7 +1062,9 @@ conda run -n ShieldChain python -m alembic -c backend/alembic.ini upgrade head
 11. 升级和回滚不会静默改变已开始运行；
 12. 前端可以完成完整生命周期管理并安全渲染内容；
 13. 后端全量测试、前端测试、类型检查、Lint和迁移往返通过；
-14. README、架构、安全、测试、操作文档和开发日志与代码一致。
+14. README、架构、安全、测试、操作文档和开发日志与代码一致；
+15. 两条智能体运行路径都通过同一选择和上下文投影服务，且功能关闭时行为保持不变；
+16. 未配置真实管理员认证和 RBAC 时，生产环境不能开放 Skills 管理写接口。
 
 ## 21. 后续演进
 
