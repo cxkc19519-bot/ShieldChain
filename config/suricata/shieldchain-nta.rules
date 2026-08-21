@@ -1,0 +1,37 @@
+# ShieldChain NTA custom detection rules
+# Local SID range: 9000001-9000999
+# These rules alert only. They must not trigger automatic blocking without review.
+# v2: protocol-behaviour signatures developed on the development split only.
+
+alert http any any -> any any (msg:"ShieldChain JBoss JMXInvokerServlet access"; flow:established,to_server; http.uri; content:"/invoker/JMXInvokerServlet"; nocase; classtype:web-application-attack; sid:9000001; rev:1;)
+alert http any any -> any any (msg:"ShieldChain JBoss HTTPServerILServlet exploit endpoint"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/jbossmq-httpil/HTTPServerILServlet"; nocase; classtype:web-application-attack; sid:9000002; rev:1;)
+alert http any any -> any any (msg:"ShieldChain HTTP raw URI path traversal attempt"; flow:established,to_server; http.uri.raw; content:"../"; classtype:web-application-attack; sid:9000003; rev:2;)
+alert http any any -> any any (msg:"ShieldChain suspicious WebShell endpoint"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"shell."; nocase; classtype:web-application-attack; sid:9000004; rev:2;)
+alert http any any -> any any (msg:"ShieldChain unusually large HTTP POST request"; flow:established,to_server; http.method; content:"POST"; http.content_len; pcre:"/^[1-9][0-9]{4,}$/"; classtype:bad-unknown; threshold:type limit, track by_src, count 5, seconds 60; sid:9000005; rev:3;)
+alert http any any -> any any (msg:"ShieldChain malformed duplicated User-Agent prefix"; flow:established,to_server; http.method; content:"POST"; http.user_agent; content:"User-Agent|3a|"; startswith; nocase; classtype:bad-unknown; sid:9000006; rev:2;)
+alert http any any -> any any (msg:"ShieldChain encoded URI path traversal token"; flow:established,to_server; http.uri.raw; content:"%2e%2e"; nocase; classtype:web-application-attack; sid:9000008; rev:1;)
+alert http any any -> any any (msg:"ShieldChain null-byte token in HTTP URI"; flow:established,to_server; http.uri.raw; content:"%00"; nocase; classtype:web-application-attack; sid:9000009; rev:1;)
+
+# WebLogic and Elasticsearch
+alert http any any -> any any (msg:"ShieldChain WebLogic WSAT endpoint exploit attempt"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/wls-wsat/CoordinatorPortType"; nocase; classtype:web-application-attack; sid:9000010; rev:1;)
+alert http any any -> any any (msg:"ShieldChain WebLogic console traversal JNDI request"; flow:established,to_server; http.uri.raw; content:"/console/"; nocase; content:"%2e%2e%2fconsolejndi.portal"; nocase; classtype:web-application-attack; sid:9000011; rev:1;)
+alert http any any -> any any (msg:"ShieldChain Elasticsearch scripted search request"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/_search"; nocase; http.request_body; content:"script"; nocase; classtype:web-application-attack; sid:9000012; rev:1;)
+
+# MSSQL command execution primitives
+alert http any any -> any any (msg:"ShieldChain MSSQL xp_cmdshell through HTTP parameter"; flow:established,to_server; http.uri; content:"xp_cmdshell"; nocase; classtype:web-application-attack; sid:9000013; rev:1;)
+alert tcp any any -> any 1433 (msg:"ShieldChain MSSQL xp_cmdshell command primitive"; flow:established,to_server; content:"xp_cmdshell"; nocase; classtype:trojan-activity; sid:9000014; rev:1;)
+alert tcp any any -> any 1433 (msg:"ShieldChain MSSQL Unicode xp_cmdshell command primitive"; flow:established,to_server; content:"x|00|p|00|_|00|c|00|m|00|d|00|s|00|h|00|e|00|l|00|l|00|"; nocase; classtype:trojan-activity; sid:9000015; rev:1;)
+alert tcp any any -> any 1433 (msg:"ShieldChain MSSQL OLE automation command primitive"; flow:established,to_server; content:"sp_OACreate"; nocase; classtype:trojan-activity; sid:9000016; rev:1;)
+alert tcp any any -> any 1433 (msg:"ShieldChain MSSQL DNS-capable xp_dirtree primitive"; flow:established,to_server; content:"xp_dirtree"; nocase; classtype:trojan-activity; sid:9000017; rev:1;)
+
+# Oracle and generic SQL injection sequences
+alert http any any -> any any (msg:"ShieldChain Oracle DUAL UNION injection sequence"; flow:established,to_server; http.uri; content:"FROM DUAL"; nocase; content:"UNION SELECT"; nocase; classtype:web-application-attack; sid:9000018; rev:1;)
+alert http any any -> any any (msg:"ShieldChain SQL injection ORDER BY comment probe"; flow:established,to_server; http.uri; content:"ORDER BY"; nocase; content:"--"; distance:0; within:64; classtype:web-application-attack; sid:9000019; rev:1;)
+
+# Exploit-to-command and server-side script upload
+alert http any any -> any any (msg:"ShieldChain Struts runtime command execution expression"; flow:established,to_server; http.uri; content:"getRuntime().exec"; nocase; classtype:web-application-attack; sid:9000020; rev:1;)
+alert http any any -> any any (msg:"ShieldChain JBoss readonly invoker deserialization endpoint"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/invoker/readonly"; nocase; classtype:web-application-attack; sid:9000021; rev:1;)
+alert http any any -> any any (msg:"ShieldChain upload of server-side script file"; flow:established,to_server; http.method; content:"POST"; http.request_body; content:"filename="; nocase; pcre:"/filename\s*=\s*[\"'][^\"']+\.(?:jsp|jspx|php|phtml|asp|aspx)[\"']/i"; classtype:web-application-attack; sid:9000022; rev:1;)
+
+alert http any any -> any any (msg:"ShieldChain Oracle time-based blind extraction pattern"; flow:established,to_server; http.uri; content:"ASCII(SUBSTR"; nocase; content:"FROM DUAL"; nocase; content:"SELECT COUNT(*) FROM ALL_USERS"; nocase; classtype:web-application-attack; sid:9000023; rev:1;)
+alert http any any -> any any (msg:"ShieldChain WebLogic console JNDI command expression"; flow:established,to_server; http.uri; content:"consolejndi.portal"; nocase; content:"com.tangosol"; nocase; classtype:web-application-attack; sid:9000024; rev:1;)
