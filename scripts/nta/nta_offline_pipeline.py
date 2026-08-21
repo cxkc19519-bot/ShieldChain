@@ -217,7 +217,13 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         if "wget" in agent or "curl" in agent or "/shell/" in uri:
             transfer_seen = True
         body_len = int(row.get("request_body_len") or 0)
-        if method == "POST" and body_len >= 8192 and uri.endswith((".jsp", ".jspx", ".php", ".asp", ".aspx")):
+        response_len = int(row.get("response_body_len") or 0)
+        script_path = uri.split("?", 1)[0].endswith(
+            (".jsp", ".jspx", ".php", ".asp", ".aspx")
+        )
+        if method == "POST" and body_len >= 8192 and script_path:
+            shell_http.append(uri[:512])
+        if method == "POST" and body_len > 0 and response_len >= 32768 and script_path:
             shell_http.append(uri[:512])
 
     repeated_large_posts = []

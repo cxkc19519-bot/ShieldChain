@@ -75,6 +75,32 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertIn("T1505.003", mitre_ids)
             self.assertTrue(any("WebShell-like" in item for item in findings))
 
+    def test_single_script_post_with_huge_response_gets_webshell_category(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(
+                result / "zeek" / "http.log",
+                [
+                    {
+                        "method": "POST",
+                        "uri": "/console.php",
+                        "request_body_len": 17,
+                        "response_body_len": 42442,
+                    }
+                ],
+            )
+            write_json_lines(result / "zeek" / "conn.log", [])
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, mitre_ids, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似 WebShell 交互")
+            self.assertEqual(severity, 11)
+            self.assertIn("T1505.003", mitre_ids)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

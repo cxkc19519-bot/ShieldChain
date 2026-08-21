@@ -66,6 +66,19 @@ v3 开发回归使用 23 个 development 样本；独立验证使用第三批、
 
 v4 验证样本从前三批未使用的 validation 样本中按固定盐值哈希选择，与旧验证清单零重叠；final-blind 仍封存。
 
+### v5 更新（2026-08-21）
+
+- 规则：`shieldchain-nta.rules.v5-frozen`
+- 规则 SHA-256：`35bd96c2a8b5657359a4a9d301e56654081f5d1b8578c2a2a0458d8f82b9eeca`
+- 流水线：`nta_offline_pipeline.py.v5-frozen`
+- 流水线 SHA-256：`af7b9ebe298a4c53c10f3e1c90a4d35e3ab84f0ac50632291eebf920ed7d6269`
+- 独立验证清单：`validation-sample-v5-24.txt`
+- 锁定结果：`validation-v5-locked-result.json`
+- 锁定结果 SHA-256：`f5fdd7cd92cf745d66e006dd4ab808245f1403d16736bade8f04c900bdcf71ca`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v5-20260821.md`
+
+v5 验证清单使用固定盐值 `shieldchain-v5-20260821` 从尚未使用的 605 个 validation 样本中排序抽取，与此前 96 个验证样本零重叠。规则和流水线先冻结，运行结果先锁定，之后才查看标签映射；final-blind 仍未运行。
+
 ## 5. 同门复现实验
 
 进入项目并配置数据目录：

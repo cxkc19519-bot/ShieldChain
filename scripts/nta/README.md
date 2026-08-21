@@ -10,7 +10,7 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
-当前 v4 规则集包含 48 条 ShieldChain 自定义 Suricata 规则，并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。详细验收结果见 [v4 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v4-20260821.md)。
+当前 v5 规则集包含 53 条 ShieldChain 自定义 Suricata 规则，并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。v5 新增 ASPX Base64 装载、加密 `fish=` 协议、WebShell 管理 Cookie、RC-SHELL/PHP-SHELL HUNTER 响应以及大响应脚本端点行为检测。详细验收结果见 [v5 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v5-20260821.md)。
 
 ## 数据集划分与验收
 
