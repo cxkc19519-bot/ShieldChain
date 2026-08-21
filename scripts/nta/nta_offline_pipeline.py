@@ -170,6 +170,12 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
 
     if alerts:
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
+        if any(word in searchable for word in ("sql injection", "sql extraction")):
+            return "数据库攻击与数据提取", 10, ["T1190", "T1213"], signatures, findings
+        if any(word in searchable for word in ("weak password", "credential access")):
+            return "弱密码与凭据攻击", 9, ["T1110"], signatures, findings
+        if any(word in searchable for word in ("command execution", "command form")):
+            return "命令执行", 11, ["T1059"], signatures, findings
         if any(word in searchable for word in ("tunnel", "reduh")):
             return "隧道与命令控制", 11, ["T1572", "T1071.001"], signatures, findings
         if any(
@@ -202,6 +208,8 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         agent = str(row.get("user_agent") or "").lower()
         method = str(row.get("method") or "").upper()
         per_uri.setdefault(uri, []).append(row)
+        if "jspspy.jsp" in uri or "/bsh.servlet.bshservlet" in uri:
+            shell_http.append(uri[:512])
         if any(token in uri for token in exploit_tokens):
             exploit_http.append(uri[:512])
         if "/shell/" in uri or "shell." in uri:
@@ -227,9 +235,12 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
             (".jsp", ".jspx", ".php", ".asp", ".aspx")
         )
         repeated_medium_payload = len(posts) >= 3 and max_body >= 2048
-        repeated_command_responses = len(posts) >= 8 and max_response >= 4096
+        repeated_large_responses = len(posts) >= 3 and max_response >= 4096
+        repeated_small_commands = len(posts) >= 8 and max_response >= 512
         if script_endpoint and (
-            repeated_medium_payload or repeated_command_responses
+            repeated_medium_payload
+            or repeated_large_responses
+            or repeated_small_commands
         ):
             repeated_large_posts.append(uri[:512])
     shell_http.extend(repeated_large_posts)
@@ -352,8 +363,15 @@ def main() -> int:
         sample_dir = run_dir / f"{index:04d}-{sample_hash[:12]}"
         suricata_code, _ = analyse_with_suricata(pcap, sample_dir / "suricata", index)
         zeek_code, _ = analyse_with_zeek(pcap, sample_dir / "zeek", index)
-        events.append(build_event(pcap, sample_hash, sample_dir, suricata_code, zeek_code))
-        print(f"[{index}/{len(targets)}] {pcap.name} -> Suricata={suricata_code}, Zeek={zeek_code}")
+        event = build_event(pcap, sample_hash, sample_dir, suricata_code, zeek_code)
+        events.append(event)
+        evidence = event["evidence"]
+        category = str(event["rule_id"]).split(":", 1)[-1]
+        print(
+            f"[{index}/{len(targets)}] {pcap.name} -> category={category}, "
+            f"alerts={evidence['suricata_alert_count']}, "
+            f"engine_exit=(Suricata:{suricata_code}, Zeek:{zeek_code})"
+        )
 
     (run_dir / "events.jsonl").write_text(
         "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events), encoding="utf-8"

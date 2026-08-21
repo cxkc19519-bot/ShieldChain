@@ -54,6 +54,18 @@ v3 冻结文件位于运行目录：
 
 v3 开发回归使用 23 个 development 样本；独立验证使用第三批、且未出现在旧验证清单中的 24 个 validation 样本。详细数字见 `docs/reports/xdr-probe-rule-evaluation-v3-20260821.md`。
 
+### v4 更新（2026-08-21）
+
+- 规则：`shieldchain-nta.rules.v4-frozen`
+- 规则 SHA-256：`0db825db024fcc3b749d4efcd223487b1f7e87b0c2b116c53e1bd0e83238439b`
+- 流水线：`nta_offline_pipeline.py.v4-frozen`
+- 流水线 SHA-256：`85a7dbd3b26324b4a870c81e015982c201867d2eeb7d1b6d8b6b125d63062ac7`
+- 独立验证清单：`validation-sample-v4-24.txt`
+- 锁定结果：`validation-v4-locked-result.json`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v4-20260821.md`
+
+v4 验证样本从前三批未使用的 validation 样本中按固定盐值哈希选择，与旧验证清单零重叠；final-blind 仍封存。
+
 ## 5. 同门复现实验
 
 进入项目并配置数据目录：
