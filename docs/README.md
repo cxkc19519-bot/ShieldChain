@@ -1,6 +1,6 @@
 # ShieldChain 文档中心
 
-> 文档状态：当前入口（更新于 2026-08-08）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
+> 文档状态：当前入口（更新于 2026-08-21）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
 
 ## 当前系统
 
@@ -25,6 +25,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 7. [Wazuh 告警接入](operations/wazuh-read-only-ingestion.md)
 8. [部署手册](delivery/deployment-guide.md)
 9. [开发路线](plans/development-roadmap.md)
+10. [可安装 Skills 运行时实施方案](plans/skills-runtime-implementation.md)
 
 ## 文档状态约定
 
