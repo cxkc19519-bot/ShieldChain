@@ -1,6 +1,6 @@
 # ShieldChain 文档中心
 
-> 文档状态：当前入口（更新于 2026-08-21）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
+> 文档状态：当前入口（更新于 2026-08-22）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
 
 ## 当前系统
 
@@ -8,7 +8,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 
 - Wazuh 接收、持久化并展示真实高风险告警；
 - 七个专业角色通过 ReAct 循环按任务自主选择受授权工具；
-- 安全运营报告智能体可使用事件、告警、漏洞、弱密码四类只读 MCP 工具；
+- 安全运营报告智能体可使用事件、告警、漏洞、弱密码四类进程内只读工具；这些工具当前采用 MCP façade 命名，标准 MCP 协议层仍待实施；
 - RAG 支持持久化知识库、语义分块、混合召回、向量检索和重排；
 - 智能助手基于知识库与历史报告回答问题并持久化对话记忆；
 - 可通过外部 DeepSeek API 或本地 vLLM `Qwen3-30B-A3B-Instruct-2507-FP8` 提供模型能力；
@@ -26,6 +26,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 8. [部署手册](delivery/deployment-guide.md)
 9. [开发路线](plans/development-roadmap.md)
 10. [可安装 Skills 运行时实施方案](plans/skills-runtime-implementation.md)
+11. [MCP、响应规划、智能体工具与安全闭环统一实施方案](plans/mcp-agent-tools-response-safety-loop-implementation.md)
 
 ## 文档状态约定
 
