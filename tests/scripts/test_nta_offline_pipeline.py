@@ -75,7 +75,7 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertIn("T1505.003", mitre_ids)
             self.assertTrue(any("WebShell-like" in item for item in findings))
 
-    def test_single_script_post_with_huge_response_gets_webshell_category(self) -> None:
+    def test_single_benign_report_post_with_huge_response_stays_pending(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Path(temp)
             write_json_lines(result / "suricata" / "eve.json", [])
@@ -95,11 +95,9 @@ class ClassifyFindingsTests(unittest.TestCase):
 
             category, severity, mitre_ids, _, _ = nta.classify_findings(result)
 
-            self.assertEqual(category, "疑似 WebShell 交互")
-            self.assertEqual(severity, 11)
-            self.assertIn("T1505.003", mitre_ids)
-
-
+            self.assertEqual(category, "网络行为待研判")
+            self.assertEqual(severity, 5)
+            self.assertNotIn("T1505.003", mitre_ids)
 
 
 if __name__ == "__main__":

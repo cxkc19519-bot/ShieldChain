@@ -79,6 +79,19 @@ v4 验证样本从前三批未使用的 validation 样本中按固定盐值哈�
 
 v5 验证清单使用固定盐值 `shieldchain-v5-20260821` 从尚未使用的 605 个 validation 样本中排序抽取，与此前 96 个验证样本零重叠。规则和流水线先冻结，运行结果先锁定，之后才查看标签映射；final-blind 仍未运行。
 
+### v6 更新（2026-08-22）
+
+- 规则：`shieldchain-nta.rules.v6-frozen`
+- 规则 SHA-256：`358e99f076736d60cb833674da4ab917ac290d1702a07e72a44233e1cb1299a3`
+- 流水线：`nta_offline_pipeline.py.v6-frozen`
+- 流水线 SHA-256：`e220047d82c2d8cf326cbf401de98af150d754a4c6e47553a8dd5c7d80ff2192`
+- 独立验证清单：`validation-sample-v6-24.txt`
+- 锁定结果：`validation-v6-locked-result.json`
+- 锁定结果 SHA-256：`011bb9dd3fa0a461fb45fd706b77a2bdb89bcc1fa9edc1e9491c27fc1e53fdbc`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v6-20260822.md`
+
+v6 验证清单使用固定盐值 `shieldchain-v6-20260821` 从尚未使用的 581 个 validation 样本中排序抽取，与此前 120 个验证样本零重叠。v6 还新增可复现的合成正常 HTTP PCAP，用来阻止规则把普通报表下载和表单参数误判为 WebShell；该合成样本不能代替真实正常流量语料。final-blind 仍未运行。
+
 ## 5. 同门复现实验
 
 进入项目并配置数据目录：

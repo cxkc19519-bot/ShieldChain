@@ -223,8 +223,6 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         )
         if method == "POST" and body_len >= 8192 and script_path:
             shell_http.append(uri[:512])
-        if method == "POST" and body_len > 0 and response_len >= 32768 and script_path:
-            shell_http.append(uri[:512])
 
     repeated_large_posts = []
     for uri, rows in per_uri.items():

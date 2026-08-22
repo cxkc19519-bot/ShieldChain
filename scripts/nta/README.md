@@ -8,9 +8,10 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 
 - `nta_offline_pipeline.py`：离线运行 Suricata/Zeek 并生成 `events.jsonl`。
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
+- `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
-当前 v5 规则集包含 53 条 ShieldChain 自定义 Suricata 规则，并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。v5 新增 ASPX Base64 装载、加密 `fish=` 协议、WebShell 管理 Cookie、RC-SHELL/PHP-SHELL HUNTER 响应以及大响应脚本端点行为检测。详细验收结果见 [v5 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v5-20260821.md)。
+当前 v6 规则集包含 54 条 ShieldChain 自定义 Suricata 规则定义（其中 1 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。v6 将高熵 `fish=` 从单请求告警改为请求/响应关联检测，并删除会误报正常报表下载的单次大响应判断。详细验收结果见 [v6 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v6-20260822.md)。
 
 ## 数据集划分与验收
 
@@ -54,6 +55,14 @@ python3 scripts/nta/nta_offline_pipeline.py \
 ```bash
 python3 scripts/nta/nta_offline_pipeline.py --all
 ```
+
+生成不联网的正常业务回归 PCAP：
+
+```bash
+python3 scripts/nta/generate_benign_fixture.py /tmp/benign-business.pcap
+```
+
+该 PCAP 包含正常大报表响应、普通 `fish=` 表单参数和登录请求，只用于检查候选规则是否把常见业务流量误判为 WebShell。它是合成护栏，不代表真实生产流量分布。
 
 每次运行会在结果目录生成独立的 `run-YYYYMMDD-HHMMSS` 目录，包括：
 
