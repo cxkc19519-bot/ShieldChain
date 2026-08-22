@@ -17,7 +17,7 @@ from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.schemas import RetrievalRequest
 
-from .mcp_tools import ReadOnlyMcpTool
+from .mcp_tools import ReadOnlyAgentTool
 from .schemas import AgentRoleRunView, McpToolCallView
 
 
@@ -35,7 +35,7 @@ _ALERTS = "security.alerts.list"
 _VULNERABILITIES = "security.vulnerabilities.list"
 _WEAK_PASSWORDS = "security.weak_passwords.list"
 _RAG = "knowledge.rag.retrieve"
-_TOOL_CATALOG: dict[str, dict[str, object]] = {
+AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
     _EVENTS: {
         "label": "事件 MCP",
         "description": (
@@ -137,7 +137,7 @@ _TOOL_CATALOG: dict[str, dict[str, object]] = {
         ),
     },
 }
-_TOOL_LABELS = {name: str(item["label"]) for name, item in _TOOL_CATALOG.items()}
+AGENT_TOOL_LABELS = {name: str(item["label"]) for name, item in AGENT_TOOL_CATALOG.items()}
 
 _SUPERAGENT = RoleDefinition("superagent", "总控智能体", "观察公开状态并选择下一位专业智能体。")
 _SPECIALISTS = {
@@ -189,11 +189,11 @@ _FALLBACK_ORDER = tuple(_SPECIALISTS)
 _REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 
 
-class _ToolBroker:
+class AgentToolBroker:
     """Execute allowlisted read-only tools once and cache their observations."""
 
     def __init__(
-        self, tools: tuple[ReadOnlyMcpTool, ...], start_at: datetime, end_at: datetime
+        self, tools: tuple[ReadOnlyAgentTool, ...], start_at: datetime, end_at: datetime
     ) -> None:
         self._tools = {tool.name: tool for tool in tools}
         self._start_at = start_at
@@ -207,7 +207,7 @@ class _ToolBroker:
 
     def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, object]]:
         return [
-            {"name": name, **_TOOL_CATALOG[name]}
+            {"name": name, **AGENT_TOOL_CATALOG[name]}
             for name in allowed
             if name == _RAG or name in self._tools
         ]
@@ -245,9 +245,9 @@ class RealDataAgentTeam:
         self._principal_id = principal_id
 
     async def run(
-        self, tools: tuple[ReadOnlyMcpTool, ...], start_at: datetime, end_at: datetime
+        self, tools: tuple[ReadOnlyAgentTool, ...], start_at: datetime, end_at: datetime
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
-        broker = _ToolBroker(tools, start_at, end_at)
+        broker = AgentToolBroker(tools, start_at, end_at)
         remaining = set(_SPECIALISTS)
         results: list[AgentRoleRunView] = []
         model: str | None = None
@@ -343,7 +343,7 @@ class RealDataAgentTeam:
             return fallback, fallback_reason, None
 
     async def _run_role(
-        self, definition: RoleDefinition, broker: _ToolBroker, results: list[AgentRoleRunView]
+        self, definition: RoleDefinition, broker: AgentToolBroker, results: list[AgentRoleRunView]
     ) -> tuple[str, str | None, str]:
         if not self._settings.deepseek_api_key.get_secret_value():
             return await self._fallback_role(definition, broker)
@@ -391,13 +391,15 @@ class RealDataAgentTeam:
                 if tool_name not in available:
                     raise ValueError("unallowed tool")
                 used.add(tool_name)
-                decisions.append(public_reason or f"需要调用{_TOOL_LABELS[tool_name]}补充证据")
+                decisions.append(
+                    public_reason or f"需要调用{AGENT_TOOL_LABELS[tool_name]}补充证据"
+                )
                 if tool_name == _RAG:
                     query = " ".join(str(parsed.get("query", "")).split())[:1000]
                     observation = await asyncio.to_thread(
                         self._retrieve, query or handoffs or definition.responsibility
                     )
-                    observations.append(f"{_TOOL_LABELS[_RAG]}：{observation}")
+                    observations.append(f"{AGENT_TOOL_LABELS[_RAG]}：{observation}")
                 else:
                     observations.append(self._tool_observation(await broker.call(tool_name)))
             except (LlmError, ValueError, json.JSONDecodeError):
@@ -409,15 +411,15 @@ class RealDataAgentTeam:
         return summary, model or fallback_model, "工具决策：" + reason
 
     async def _fallback_role(
-        self, definition: RoleDefinition, broker: _ToolBroker
+        self, definition: RoleDefinition, broker: AgentToolBroker
     ) -> tuple[str, None, str]:
         observations: list[str] = []
         selected: list[str] = []
         for name in definition.fallback_tools:
-            selected.append(_TOOL_LABELS[name])
+            selected.append(AGENT_TOOL_LABELS[name])
             if name == _RAG:
                 observations.append(
-                    f"{_TOOL_LABELS[_RAG]}：{self._retrieve(definition.responsibility)}"
+                    f"{AGENT_TOOL_LABELS[_RAG]}：{self._retrieve(definition.responsibility)}"
                 )
             else:
                 observations.append(self._tool_observation(await broker.call(name)))

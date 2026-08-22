@@ -11,8 +11,8 @@ from shieldchain.core.config import Settings
 from shieldchain.operations import service as service_module
 from shieldchain.operations.react_collaboration import (
     _SPECIALISTS,
+    AgentToolBroker,
     RealDataAgentTeam,
-    _ToolBroker,
 )
 from shieldchain.operations.schemas import McpToolCallView, OperationsReportRequest
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
@@ -132,7 +132,7 @@ def test_specialist_model_selects_only_needed_tool() -> None:
     team = _team(Settings(_env_file=None, deepseek_api_key="test-key"))
     tools = _tools()
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker(tools, start_at, start_at)
+    broker = AgentToolBroker(tools, start_at, start_at)
     responses = iter(
         [
             {
@@ -180,7 +180,7 @@ def test_specialist_model_selects_only_needed_tool() -> None:
 def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
     tools = _tools()
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker(tools, start_at, start_at)
+    broker = AgentToolBroker(tools, start_at, start_at)
 
     catalog = broker.catalog(_SPECIALISTS["threat_investigation"].allowed_tools)
 
@@ -207,7 +207,7 @@ def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
 
 def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> None:
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker((), start_at, start_at)
+    broker = AgentToolBroker((), start_at, start_at)
 
     catalog = broker.catalog(_SPECIALISTS["knowledge_retrieval"].allowed_tools)
 

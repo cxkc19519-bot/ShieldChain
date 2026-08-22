@@ -57,7 +57,8 @@
 
 - 已完成统一详细实施方案，覆盖 MCP `2026-07-28`、Agent Tool、响应计划、可信执行、重新规划和人工接管；
 - Task 0 已完成：官方 MCP Python SDK 2.0.0 协商 `2026-07-28`，内存工具发现、调用和现有运营工具回归通过；
-- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 1～14 小步实施；
+- Task 1 已完成：在现有 `operations` 模块中完成协议无关工具与 Broker 命名，保留旧 façade 兼容别名，没有新增架构层；
+- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 2～14 小步实施；
 - 当前仍未实现标准 MCP 网络协议层、外部 MCP 接入和真实设备生产闭环，不得提前标记完成。
 
 ## 下一阶段

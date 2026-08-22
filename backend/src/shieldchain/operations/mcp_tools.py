@@ -29,11 +29,15 @@ def _short(value: str, length: int = 120) -> str:
     return normalized[:length] + ("…" if len(normalized) > length else "")
 
 
-class ReadOnlyMcpTool(Protocol):
+class ReadOnlyAgentTool(Protocol):
     name: str
     label: str
 
     def call(self, start_at: datetime, end_at: datetime) -> McpToolCallView: ...
+
+
+# Kept for callers that still use the old façade name while the protocol adapter is introduced.
+ReadOnlyMcpTool = ReadOnlyAgentTool
 
 
 class _BaseWazuhTool:
@@ -46,7 +50,13 @@ class _BaseWazuhTool:
 
     @staticmethod
     def _view(
-        *, name: str, label: str, start_at: datetime, end_at: datetime, items: list[str], summary: str
+        *,
+        name: str,
+        label: str,
+        start_at: datetime,
+        end_at: datetime,
+        items: list[str],
+        summary: str,
     ) -> McpToolCallView:
         return McpToolCallView(
             name=name,
@@ -82,7 +92,8 @@ class EventMcpTool(_BaseWazuhTool):
                 .limit(50)
             ).all()
         items = [
-            f"{row.tracking_year}-{row.tracking_sequence:04d}｜等级 {row.severity}｜{_short(row.title)}"
+            f"{row.tracking_year}-{row.tracking_sequence:04d}｜"
+            f"等级 {row.severity}｜{_short(row.title)}"
             for row in rows
         ]
         return self._view(
@@ -151,7 +162,9 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
                 if normalized in seen:
                     continue
                 seen.add(normalized)
-                findings.append(f"{normalized}｜关联告警等级 {row.severity}｜{_short(row.title, 70)}")
+                findings.append(
+                    f"{normalized}｜关联告警等级 {row.severity}｜{_short(row.title, 70)}"
+                )
                 if len(findings) == 50:
                     break
             if len(findings) == 50:
@@ -205,10 +218,10 @@ class WeakPasswordMcpTool(_BaseWazuhTool):
         )
 
 
-def standard_mcp_tools(
+def standard_agent_tools(
     session_factory: sessionmaker[Session], tenant_id: UUID
-) -> tuple[ReadOnlyMcpTool, ...]:
-    """The report agent is intentionally bound to these four read-only MCP tools only."""
+) -> tuple[ReadOnlyAgentTool, ...]:
+    """Return the four internal read-only tools available to the report agent."""
 
     return (
         EventMcpTool(session_factory, tenant_id),
@@ -216,3 +229,6 @@ def standard_mcp_tools(
         VulnerabilityMcpTool(session_factory, tenant_id),
         WeakPasswordMcpTool(session_factory, tenant_id),
     )
+
+
+standard_mcp_tools = standard_agent_tools

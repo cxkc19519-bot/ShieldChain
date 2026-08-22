@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-22）。Task 0 协议兼容性基线已完成，Task 1～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-22）。Task 0～1 已完成，Task 2～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -207,33 +207,20 @@ ResponsePlan（仍未授权）
 - MCP Adapter 不直接 import SQLAlchemy Row，也不自行拼装结果；
 - 不允许内部智能体调用 `http://127.0.0.1/.../mcp`，避免额外网络故障和身份混淆。
 
-### 8.2 建议目标目录
+### 8.2 目标文件组织
+
+Agent Tool 继续复用现有 `operations` 模块，不为协议去耦单独建立领域包。只有标准 MCP 网络边界开始实现时才新增最小 `mcp/` 模块；响应计划拥有独立状态和持久化需求时再新增 `response_planning/`。
 
 ```text
 backend/src/shieldchain/
-  agent_tools/
-    __init__.py
-    domain.py              # 协议无关工具定义、调用、结果和错误合同
-    catalog.py             # 确定性目录、角色/租户过滤和目录快照
-    broker.py              # 预算、幂等缓存、执行、裁剪和审计编排
-    policy.py              # 只读工具授权和默认拒绝
-    persistence.py         # Agent Tool 调用审计表
-    repositories.py
-    builtin_operations.py  # 四类当前只读工具 Provider
-    rag_provider.py
+  operations/
+    mcp_tools.py           # 现有四类只读 Provider；保留旧 façade 兼容名
+    react_collaboration.py # 现有目录、角色白名单和 AgentToolBroker
+    service.py             # 当前运营报告入口
   mcp/
-    __init__.py
-    server.py              # MCPServer 构建和 tools 注册
-    mount.py               # ASGI 挂载与应用生命周期
-    authority.py           # MCP 请求身份到服务端 Authority 的映射
-    auth.py                # OAuth Resource Server/JWT 验证边界
-    client.py              # 官方 MCP Client 封装
-    peer_config.py         # 服务器拥有的远端配置与严格加载
-    discovery.py           # tools/list、Schema 固定和目录快照
-    remote_provider.py     # 外部 MCP Tool 到 Agent Tool 的适配
-    transport_security.py  # URL、DNS、重定向、TLS、Origin 和大小限制
-    schemas.py             # 仅 REST 管理/状态公开 Schema
-    api_service.py
+    server.py              # 第一阶段 MCPServer 构建、工具注册和 ASGI 挂载
+    authority.py           # 网络启用时增加的可信身份映射
+    client.py              # 外部 MCP 确认需要时增加的受控 Client
   response_planning/
     __init__.py
     domain.py              # 计划、修订、动作、验证和状态合同
@@ -246,7 +233,7 @@ backend/src/shieldchain/
     api_service.py
 ```
 
-现有 `tools/` 目录继续专门表示可信变更工具，不改名。`agent_tools/` 与 `tools/` 的区别必须在包级 docstring、文档和代码评审清单中保持明确。
+现有 `tools/` 目录继续专门表示可信变更工具，不改名。`operations` 中的只读 Agent Tool 与 `tools/` 中的可信变更工具必须在命名、文档和代码评审中保持明确。
 
 ## 9. 统一 Agent Tool 领域合同
 
@@ -1064,34 +1051,35 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 1：协议无关 Agent Tool 合同
 
-目标：从 `operations/react_collaboration.py` 和 `operations/mcp_tools.py` 提取统一定义、目录、Provider、调用和结果合同。
+> 状态：已完成（2026-08-22）。复用现有 `operations` 模块完成协议去耦命名，没有新增架构包、数据库或配置层。
+
+目标：让 `operations/react_collaboration.py` 和 `operations/mcp_tools.py` 中的现有内部工具合同使用协议无关名称，同时保持当前行为和兼容入口。
 
 修改：
 
-- 新增 `agent_tools/domain.py`、`catalog.py`、`policy.py`；
-- 建立严格不可变合同和单调目录 revision；
-- 定义工具权限交集；
-- 保留旧 `ReadOnlyMcpTool` 兼容适配。
+- 在现有 `mcp_tools.py` 增加协议无关 `ReadOnlyAgentTool` 和 `standard_agent_tools`；
+- 在现有 `react_collaboration.py` 将 Broker 和目录改为协议无关公开名称；
+- 服务和测试切换到新名称；
+- 保留旧 `ReadOnlyMcpTool`、`standard_mcp_tools` 直接别名，避免现有调用方立即中断。
 
 验收：
 
-- 重复 alias、未知 classification、无界 Schema、额外权限默认拒绝；
-- 目录排序和 revision 变化规则确定；
-- Skill 或模型声明不能扩大权限。
+- 现有角色白名单、工具选择、单运行缓存和安全降级行为保持；
+- MCP 协议基线、运营工具单元测试和运营报告 API 测试通过；
+- 修改文件 Ruff 通过。
 
 建议提交：`feat: add protocol independent agent tool contracts`
 
 ### Task 2：迁移四类内置 Provider 与 Broker
 
-目标：让内部智能体不再依赖名为 MCP 的进程内 façade。
+目标：在标准 MCP Server 接线前，为现有四类 Provider 和 Broker 补齐网络边界真正需要的输入校验与稳定失败结果；不移动文件、不复制查询实现。
 
 修改：
 
-- 新增 `agent_tools/builtin_operations.py`、`broker.py`；
-- 迁移四类 SQL 查询、输入和输出裁剪；
-- 实现单运行缓存、deadline、预算和稳定错误；
-- `operations/react_collaboration.py` 使用 Broker；
-- 保持 API 输出兼容。
+- 复用 `operations/mcp_tools.py` 和 `AgentToolBroker`；
+- 增加统一时间范围校验，明确 failed、empty 和 succeeded；
+- 保持现有单运行缓存和 API 输出兼容；
+- 只增加标准 MCP Server 调用所必需的错误边界，不提前实现持久化、远端 Client 或复杂预算。
 
 验收：
 

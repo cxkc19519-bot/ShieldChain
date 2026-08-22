@@ -14,7 +14,7 @@ from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
 
-from .mcp_tools import ReadOnlyMcpTool, standard_mcp_tools
+from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
 from .schemas import (
     McpToolCallView,
@@ -74,7 +74,7 @@ class OperationsReportStore:
 
 
 class SecurityOperationsReportAgent:
-    """Grounded security-operations agent with model-selected read-only MCP tools."""
+    """Grounded security-operations agent with model-selected read-only tools."""
 
     agent_name = "安全运营报告智能体"
 
@@ -87,11 +87,11 @@ class SecurityOperationsReportAgent:
         store: OperationsReportStore,
         knowledge,
         principal_id: UUID,
-        tools: tuple[ReadOnlyMcpTool, ...] | None = None,
+        tools: tuple[ReadOnlyAgentTool, ...] | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
-        self._tools = tools or standard_mcp_tools(session_factory, tenant_id)
+        self._tools = tools or standard_agent_tools(session_factory, tenant_id)
         self._team = RealDataAgentTeam(
             settings, knowledge, tenant_id=tenant_id, principal_id=principal_id
         )
