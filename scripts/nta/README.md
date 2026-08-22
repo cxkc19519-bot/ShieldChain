@@ -111,3 +111,5 @@ python3 scripts/nta/benign_lab/run_service_lab.py smb /tmp/smb-smoke --limit 1
 ```
 
 这些入口执行真实协议事务并抓取专用 Docker bridge，不会根据文件名制造检测结果。Windows 管理场景必须等待 Windows VM/测试主机。
+
+Windows 管理采集链路已经提供：`windows_capture_plan.py` 生成受保护执行计划，隔离 Windows 控制机运行 `Collect-ShieldChainWindowsBaseline.ps1`，服务器再用 `import_windows_captures.py` 校验 SHA-256、数量和匿名文件名后导入。完整命令见正常流量基线文档；没有独立 Windows 靶机时不得伪造该部分样本。

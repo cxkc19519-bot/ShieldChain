@@ -86,6 +86,53 @@ python3 scripts/nta/benign_lab/run_service_lab.py smb \
 
 先用 `--limit 1` 做冒烟测试。若结果 JSONL 已存在，工具会拒绝覆盖。
 
+## Windows 管理流量采集
+
+Windows 场景必须在隔离实验网中使用两台 Windows 主机：一台控制机运行采集器，另一台授权测试机接收 WinRM 管理操作。服务器只有 KVM 能力但当前没有 Windows 镜像或虚拟机，因此仓库不会把 Linux 容器行为伪装成 Windows 样本。
+
+前置条件：
+
+- 控制机和靶机均为测试资产，地址位于 RFC1918 私网或链路本地网段；
+- 靶机已显式启用 WinRM，并配置三个测试角色账号；也可冒烟测试时使用一个账号；
+- 控制机安装 Wireshark，能以管理员权限运行 `dumpcap.exe`；
+- 软件安装场景使用专门制作的无害测试 MSI，禁止使用生产安装包；
+- 最好将两台主机置于专用虚拟交换机/VLAN，禁止连接生产网络。
+
+先在仓库中生成只含固定 development 场景的执行计划：
+
+```powershell
+python scripts/nta/benign_lab/windows_capture_plan.py windows-development-plan.json
+```
+
+在管理员 PowerShell 中查看网卡编号：
+
+```powershell
+& 'C:\Program Files\Wireshark\dumpcap.exe' -D
+```
+
+执行 18 条真实 WinRM 管理事务并逐场景采集 classic PCAP：
+
+```powershell
+.\scripts\nta\benign_lab\Collect-ShieldChainWindowsBaseline.ps1 `
+  -PlanPath .\windows-development-plan.json `
+  -OutputDirectory D:\ShieldChainLab\windows-development `
+  -TargetHost 192.168.56.20 `
+  -CaptureInterface 4 `
+  -LabMsiPath D:\ShieldChainLab\ShieldChainBenignFixture.msi
+```
+
+采集器会执行真实的临时文件删除、PowerShell 资产查询、测试 MSI 安装/卸载、计划任务创建/删除和专用注册表值写入/删除；所有写操作均限制在 `ShieldChainBenignLab` 名称空间。默认按三个 profile 分别提示输入凭据；冒烟时可用 `-UseSingleCredential`。
+
+将输出目录复制到服务器后先验签、验数量，再导入正式语料：
+
+```bash
+python3 scripts/nta/benign_lab/import_windows_captures.py \
+  /home/user/jhk/incoming/windows-development \
+  /home/user/jhk/nta-benign-corpus-v10/windows-development
+```
+
+导入器校验 18 个场景、匿名文件名、大小和 SHA-256，拒绝重复、缺失、篡改或覆盖。`validation` 与 `final_blind` 各 6 条，只有规则冻结后才能显式添加 `--allow-held-out` 生成计划和导入。
+
 ## 离线误报评估
 
 将正式 development PCAP 放入单独输入目录，使用现有离线链路运行 Suricata 与 Zeek：
