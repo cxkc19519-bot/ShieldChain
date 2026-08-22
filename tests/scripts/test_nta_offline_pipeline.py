@@ -49,6 +49,51 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertIn("T1190", mitre_ids)
             self.assertEqual(len(signatures), 1)
 
+    def test_framework_exploit_alert_gets_vulnerability_category(self) -> None:
+        for signature in (
+            "ShieldChain ThinkPHP filter remote code execution",
+            "ShieldChain Shiro rememberMe deserialization exploit",
+            "ET WEB_SERVER Possible CVE Struts Exploit Attempt",
+            "ET WEB_SERVER Possible Fastjson Attack",
+        ):
+            with (
+                self.subTest(signature=signature),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                result = Path(temp)
+                write_json_lines(
+                    result / "suricata" / "eve.json",
+                    [
+                        {
+                            "event_type": "alert",
+                            "alert": {"signature": signature},
+                        }
+                    ],
+                )
+                category, severity, mitre_ids, _, _ = nta.classify_findings(result)
+                self.assertEqual(category, "漏洞利用")
+                self.assertEqual(severity, 11)
+                self.assertIn("T1190", mitre_ids)
+
+    def test_command_form_alert_gets_command_category(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(
+                result / "suricata" / "eve.json",
+                [
+                    {
+                        "event_type": "alert",
+                        "alert": {
+                            "signature": "ShieldChain certutil download command form"
+                        },
+                    }
+                ],
+            )
+            category, severity, mitre_ids, _, _ = nta.classify_findings(result)
+            self.assertEqual(category, "命令执行")
+            self.assertEqual(severity, 11)
+            self.assertIn("T1059", mitre_ids)
+
     def test_repeated_small_script_commands_get_webshell_category(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Path(temp)

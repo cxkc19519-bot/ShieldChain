@@ -185,7 +185,7 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
             return "命令执行与反弹连接", 11, ["T1059.001", "T1071"], signatures, findings
         if any(word in searchable for word in ("webshell", "web shell", "behinder", "godzilla", "antsword", "chopper")):
             return "命令与 WebShell 行为", 12, ["T1059", "T1505.003"], signatures, findings
-        if any(word in searchable for word in ("exploit", "cve-", "remote code", "code execution", "jboss")):
+        if any(word in searchable for word in ("exploit", "cve-", "remote code", "code execution", "jboss", "struts", "fastjson", "shiro", "weblogic")):
             return "漏洞利用", 11, ["T1190"], signatures, findings
         if any(word in searchable for word in ("malware", "trojan", "command and control", "c2", "coinminer")):
             return "恶意软件或命令控制", 11, ["T1071.001"], signatures, findings

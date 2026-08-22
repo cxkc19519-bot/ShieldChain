@@ -92,6 +92,21 @@ v5 验证清单使用固定盐值 `shieldchain-v5-20260821` 从尚未使用的 6
 
 v6 验证清单使用固定盐值 `shieldchain-v6-20260821` 从尚未使用的 581 个 validation 样本中排序抽取，与此前 120 个验证样本零重叠。v6 还新增可复现的合成正常 HTTP PCAP，用来阻止规则把普通报表下载和表单参数误判为 WebShell；该合成样本不能代替真实正常流量语料。final-blind 仍未运行。
 
+### v7 更新（2026-08-22）
+
+- 规则 SHA-256：`3d5464fb60b561677cc2d27da5e97f8650617d54df964e001bccb278c03c55d0`
+- 流水线 SHA-256：`26492e175874a782af7a9b5ef74683cab9cdb9efd9d4bd56191d3c11dc3e1471`
+- development 完整回归：`run-20260822-135346`，23/24 分类
+- 合成正常业务回归：`run-20260822-135309`，0 条告警
+- 独立验证清单：`validation-sample-v7-24.txt`
+- validation 运行：`run-20260822-140330`
+- 锁定结果：`validation-v7-locked-result.json`
+- 锁定结果 SHA-256：`5d775afe1b0c9747c86dced6c19c9adc9e64f47e2f02316af8d91224b85edebe`
+- 独立验收：5/24 分类、19/24 待研判、4 个告警样本、12 条告警
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v7-20260822.md`
+
+v7 清单从排除前六轮 144 个样本后的 557 个 validation 样本中，使用固定盐值 `shieldchain-v7-20260822` 排序抽取，与此前样本零重叠。规则与分类器先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v7，final-blind 仍未运行。
+
 ## 5. 同门复现实验
 
 进入项目并配置数据目录：

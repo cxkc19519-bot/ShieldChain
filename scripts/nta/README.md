@@ -11,7 +11,7 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 - `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
-当前 v6 规则集包含 54 条 ShieldChain 自定义 Suricata 规则定义（其中 1 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、可疑反弹连接、SQL 注入等场景。v6 将高熵 `fish=` 从单请求告警改为请求/响应关联检测，并删除会误报正常报表下载的单次大响应判断。详细验收结果见 [v6 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v6-20260822.md)。
+当前 v7 规则集包含 70 条 ShieldChain 自定义 Suricata 规则定义（其中 2 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。规则覆盖 WebShell、reDuh 隧道、PowerShell/Unix 命令执行、ThinkPHP/Shiro 等框架利用、SQL 注入与服务端脚本写入等场景。v7 对高频 SQL 探测实施按来源限频，并保留 v6 的请求/响应关联和正常大报表误报护栏。详细验收结果见 [v7 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v7-20260822.md)。
 
 ## 数据集划分与验收
 
