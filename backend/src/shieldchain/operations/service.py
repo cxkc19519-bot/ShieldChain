@@ -116,17 +116,23 @@ class SecurityOperationsReportAgent:
         collaboration, collaboration_model, tool_calls = await self._team.run(
             self._tools, start_at, end_at
         )
+        failed_tools = [item for item in tool_calls if item.status == "failed"]
         stages.append(
             ReportStageView(
                 key="mcp_tools",
                 label="ReAct 按需选择 MCP 工具",
-                status="completed",
+                status="fallback" if failed_tools else "completed",
                 detail=(
                     "智能体未选择运营数据工具。"
                     if not tool_calls
                     else "智能体自主选择并调用：" + "、".join(item.label for item in tool_calls)
                 )
-                + "；全部调用均为受限只读查询。",
+                + "；全部调用均为受限只读查询。"
+                + (
+                    f"其中 {len(failed_tools)} 类工具调用失败，未取得可信结果。"
+                    if failed_tools
+                    else ""
+                ),
             )
         )
         analysis = self._analyze(tool_calls)
@@ -134,7 +140,7 @@ class SecurityOperationsReportAgent:
             ReportStageView(
                 key="tool_analysis",
                 label="分析工具返回结果",
-                status="completed",
+                status="fallback" if analysis["failed_tools"] else "completed",
                 detail=analysis["summary"],
             )
         )
@@ -204,17 +210,23 @@ class SecurityOperationsReportAgent:
         alerts = count("security.alerts.list")
         vulnerabilities = count("security.vulnerabilities.list")
         weak_passwords = count("security.weak_passwords.list")
+        failed_tools = [item.name for item in tool_calls if item.status == "failed"]
+        failure_summary = (
+            f"有 {len(failed_tools)} 类工具调用失败，未取得可信结果，不能据此判定无风险。"
+            if failed_tools
+            else "未调用类别不表示结果为零。"
+        )
         return {
             "events": events,
             "alerts": alerts,
             "vulnerabilities": vulnerabilities,
             "weak_passwords": weak_passwords,
             "selected_tools": list(by_name),
+            "failed_tools": failed_tools,
             "summary": (
                 f"智能体按需调用 {len(by_name)} 类运营工具；已调用工具返回 {events} 个待复核事件、"
                 f"{alerts} 条告警、{vulnerabilities} 个 CVE 标识线索、"
-                f"{weak_passwords} 条弱口令线索。"
-                "未调用类别不表示结果为零。"
+                f"{weak_passwords} 条弱口令线索。{failure_summary}"
             ),
         }
 
@@ -229,13 +241,19 @@ class SecurityOperationsReportAgent:
             "time_window": {"start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
             "analysis": analysis,
             "tools": [
-                {"name": item.name, "summary": item.summary, "items": item.items[:12]}
+                {
+                    "name": item.name,
+                    "status": item.status,
+                    "reason_code": item.reason_code,
+                    "summary": item.summary,
+                    "items": item.items[:12],
+                }
                 for item in tool_calls
             ],
         }
         system = (
             "你是 ShieldChain 的网络安全运营报告分析专家。任务是根据给出的受控事件、告警、"
-            "漏洞、弱口令 MCP 结果及本地知识依据，完成概括总结，并生成面向安全运营人员的"
+            "漏洞、弱口令工具结果及本地知识依据，完成概括总结，并生成面向安全运营人员的"
             "实用、精简、可复核建议。工作要求：一，先理解时间范围、威胁背景、风险类型和潜在影响；"
             "二，概括已观察到的行为、受影响对象、风险线索和仍待确认事项；三，结合 ShieldChain"
             " 已接入的事件与告警复查、Wazuh 终端日志、NTA 网络流量、本地 RAG、漏洞和弱口令线索，"
@@ -281,12 +299,18 @@ class SecurityOperationsReportAgent:
         alerts = int(analysis["alerts"])
         vulnerabilities = int(analysis["vulnerabilities"])
         weak_passwords = int(analysis["weak_passwords"])
-        priority = "高" if events or alerts else "低"
+        failed_tools = list(analysis["failed_tools"])
+        priority = "未知" if failed_tools else ("高" if events or alerts else "低")
+        failure_note = (
+            f"有 {len(failed_tools)} 类工具调用失败，不能把零计数解释为无风险。"
+            if failed_tools
+            else ""
+        )
         return "\n\n".join(
             [
                 (
                     f"概括总结：本时间范围内存在 {alerts} 条告警与 {events} 个"
-                    f"待人工复核事件，当前运营关注优先级为{priority}。"
+                    f"待人工复核事件，当前运营关注优先级为{priority}。{failure_note}"
                 ),
                 (
                     f"概括总结补充：{vulnerabilities} 个 CVE 标识仅来自告警元数据，"
@@ -322,7 +346,7 @@ class SecurityOperationsReportAgent:
                 f"{end_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
             ),
             f"- 综合分析模型：{model or '保守规则降级（DeepSeek 未可用）'}",
-            "- 安全边界：智能体仅可自主选择受授权的只读 MCP；本报告不执行处置操作。",
+            "- 安全边界：智能体仅可自主选择受授权的只读工具；本报告不执行处置操作。",
             "",
             "## 工具返回汇总",
             "",
@@ -333,7 +357,9 @@ class SecurityOperationsReportAgent:
             lines.append(f"### {tool.label}")
             lines.append(tool.summary)
             lines.extend(f"- {item}" for item in tool.items[:12])
-            if not tool.items:
+            if tool.status == "failed":
+                lines.append(f"- 调用失败原因：{tool.reason_code}；未取得可信结果。")
+            elif not tool.items:
                 lines.append("- 本时间范围内未返回匹配记录。")
             lines.append("")
         lines.extend(

@@ -13,7 +13,7 @@ class OperationsReportRequest(BaseModel):
     end_at: datetime | None = None
 
     @model_validator(mode="after")
-    def validate_range(self) -> "OperationsReportRequest":
+    def validate_range(self) -> OperationsReportRequest:
         if self.start_at is not None and self.end_at is not None and self.start_at > self.end_at:
             raise ValueError("start_at must not be later than end_at")
         return self
@@ -22,11 +22,21 @@ class OperationsReportRequest(BaseModel):
 class McpToolCallView(BaseModel):
     name: str
     label: str
-    status: Literal["succeeded", "empty"]
+    status: Literal["succeeded", "empty", "failed"]
+    reason_code: Literal["tool_dependency_failed"] | None = None
     arguments: dict[str, str | int]
     result_count: int = Field(ge=0)
     summary: str
     items: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_failure_shape(self) -> McpToolCallView:
+        if self.status == "failed":
+            if self.reason_code is None or self.result_count != 0 or self.items:
+                raise ValueError("failed tool calls require a reason and no result data")
+        elif self.reason_code is not None:
+            raise ValueError("successful tool calls cannot include a failure reason")
+        return self
 
 
 class ReportStageView(BaseModel):

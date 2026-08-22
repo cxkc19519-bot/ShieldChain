@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
+
+import pytest
 
 from shieldchain.core.config import Settings
 from shieldchain.operations import service as service_module
@@ -36,6 +38,18 @@ class FakeTool:
             summary=f"{self.label} 返回 {len(self.items)} 项。",
             items=self.items,
         )
+
+
+class FailingTool:
+    name = "security.alerts.list"
+    label = "告警 MCP"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def call(self, _start_at: datetime, _end_at: datetime) -> McpToolCallView:
+        self.calls += 1
+        raise RuntimeError("private dependency detail")
 
 
 def _tools() -> tuple[FakeTool, ...]:
@@ -214,6 +228,63 @@ def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> Non
     assert [item["name"] for item in catalog] == ["knowledge.rag.retrieve"]
     assert "query" in catalog[0]["parameters"]
     assert "当前事件的已确认事实" in catalog[0]["do_not_use_when"]
+
+
+@pytest.mark.parametrize(
+    ("start_at", "end_at"),
+    [
+        (datetime(2026, 8, 1), datetime(2026, 8, 2)),
+        (datetime(2026, 8, 2, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC)),
+        (
+            datetime(2026, 8, 1, tzinfo=UTC),
+            datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=31, seconds=1),
+        ),
+    ],
+)
+def test_agent_tool_broker_rejects_invalid_time_windows(
+    start_at: datetime, end_at: datetime
+) -> None:
+    with pytest.raises(ValueError):
+        AgentToolBroker((), start_at, end_at)
+
+
+def test_agent_tool_broker_caches_sanitized_failure() -> None:
+    tool = FailingTool()
+    now = datetime(2026, 8, 1, tzinfo=UTC)
+    broker = AgentToolBroker((tool,), now, now)
+
+    first = asyncio.run(broker.call(tool.name))
+    second = asyncio.run(broker.call(tool.name))
+
+    assert first is second
+    assert first.status == "failed"
+    assert first.reason_code == "tool_dependency_failed"
+    assert first.result_count == 0
+    assert first.items == []
+    assert "private dependency detail" not in first.summary
+    assert tool.calls == 1
+
+
+def test_failed_tool_is_not_analyzed_as_zero_risk() -> None:
+    failed = McpToolCallView(
+        name="security.alerts.list",
+        label="告警 MCP",
+        status="failed",
+        reason_code="tool_dependency_failed",
+        arguments={
+            "start_at": "2026-08-01T00:00:00+00:00",
+            "end_at": "2026-08-02T00:00:00+00:00",
+            "limit": 50,
+        },
+        result_count=0,
+        summary="告警工具调用失败；未取得可信结果，需人工复核。",
+        items=[],
+    )
+
+    analysis = SecurityOperationsReportAgent._analyze([failed])
+
+    assert analysis["failed_tools"] == ["security.alerts.list"]
+    assert "不能据此判定无风险" in str(analysis["summary"])
 
 
 def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(

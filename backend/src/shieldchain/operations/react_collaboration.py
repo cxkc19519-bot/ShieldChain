@@ -6,10 +6,11 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import httpx
+import structlog
 
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
@@ -19,6 +20,8 @@ from shieldchain.rag.schemas import RetrievalRequest
 
 from .mcp_tools import ReadOnlyAgentTool
 from .schemas import AgentRoleRunView, McpToolCallView
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,7 @@ class AgentToolBroker:
     def __init__(
         self, tools: tuple[ReadOnlyAgentTool, ...], start_at: datetime, end_at: datetime
     ) -> None:
+        self._validate_window(start_at, end_at)
         self._tools = {tool.name: tool for tool in tools}
         self._start_at = start_at
         self._end_at = end_at
@@ -216,9 +220,30 @@ class AgentToolBroker:
         if name not in self._tools:
             raise ValueError("tool is not registered")
         if name not in self._cache:
-            self._cache[name] = await asyncio.to_thread(
-                self._tools[name].call, self._start_at, self._end_at
-            )
+            tool = self._tools[name]
+            try:
+                result = await asyncio.to_thread(tool.call, self._start_at, self._end_at)
+            except Exception as error:
+                logger.warning(
+                    "agent_tool_call_failed",
+                    tool_name=tool.name,
+                    error_type=type(error).__name__,
+                )
+                result = McpToolCallView(
+                    name=tool.name,
+                    label=tool.label,
+                    status="failed",
+                    reason_code="tool_dependency_failed",
+                    arguments={
+                        "start_at": self._start_at.isoformat(),
+                        "end_at": self._end_at.isoformat(),
+                        "limit": 50,
+                    },
+                    result_count=0,
+                    summary=f"{tool.label}调用失败；未取得可信结果，需人工复核。",
+                    items=[],
+                )
+            self._cache[name] = result
             self._order.append(name)
         return self._cache[name]
 
@@ -226,6 +251,16 @@ class AgentToolBroker:
         if not self._order:
             return "尚未调用运营数据工具。"
         return "\n".join(f"{item.label}：{item.summary}" for item in self.results)[:limit]
+
+    @staticmethod
+    def _validate_window(start_at: datetime, end_at: datetime) -> None:
+        for value in (start_at, end_at):
+            if value.tzinfo is None or value.utcoffset() != timedelta(0):
+                raise ValueError("agent tool time window must use aware UTC datetimes")
+        if start_at > end_at:
+            raise ValueError("agent tool start_at must not be later than end_at")
+        if end_at - start_at > timedelta(days=31):
+            raise ValueError("agent tool time window cannot exceed 31 days")
 
 
 class RealDataAgentTeam:

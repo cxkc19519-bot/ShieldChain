@@ -3,7 +3,7 @@ import { FileDown, FileText, Play, ShieldCheck, Wrench } from 'lucide-react'
 
 import { PageHeader } from '../../components/ui/PageHeader'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/States'
-import { createOperationsReport, listOperationsReports, type OperationsReport } from './api'
+import { createOperationsReport, listOperationsReports, type OperationsReport, type ToolCall } from './api'
 import './operations.css'
 
 function localInput(value: Date): string {
@@ -14,6 +14,12 @@ function localInput(value: Date): string {
 function dateTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function toolStatus(tool: ToolCall): string {
+  if (tool.status === 'failed') return '调用失败 · 未取得可信结果'
+  if (tool.status === 'empty') return '返回 0 项 · 无匹配记录'
+  return `返回 ${tool.result_count} 项 · 调用完成`
 }
 
 const STEP_ICONS = [ShieldCheck, Wrench, FileText, ShieldCheck, FileText, Play]
@@ -96,8 +102,8 @@ export function OperationsReportPage() {
         <section aria-label="智能体执行阶段" className="operations-stages">
           {selected.stages.map((stage, index) => { const Icon = STEP_ICONS[index] ?? ShieldCheck; return <article key={stage.key}><Icon size={18} aria-hidden="true" /><div><strong>{index + 1}. {stage.label}</strong><p>{stage.detail}</p></div><span className={stage.status === 'fallback' ? 'is-fallback' : ''}>{stage.status === 'fallback' ? '保守降级' : '已完成'}</span></article> })}
         </section>
-        <section className="operations-collaboration"><header><div><p className="eyebrow">??????????</p><h3>??????</h3></div><span>????</span></header><div>{selected.collaboration.map((role, index) => <article key={role.role}><strong>? {role.iteration} ? ? {role.label}</strong><span className={role.status === 'fallback' ? 'is-fallback' : ''}>{role.status === 'fallback' ? '????' : '????'}</span><p>{role.summary}</p><small>?????{role.decision_reason}</small>{role.handoff_to && <small> ? ????{role.handoff_to}</small>}</article>)}</div></section>
-        <section className="operations-tools"><header><div><p className="eyebrow">受控数据获取</p><h3>ReAct 自主工具调用记录</h3></div><span>只读</span></header><div>{selected.tool_calls.length === 0 && <p>本次运行未选择运营数据工具。</p>}{selected.tool_calls.map((tool) => <article key={tool.name}><div><strong>{tool.label}</strong><span>{tool.name}</span></div><p>{tool.summary}</p><small>返回 {tool.result_count} 项 · {tool.status === 'empty' ? '无匹配记录' : '调用完成'}</small>{tool.items.length > 0 && <details><summary>查看规范化返回项</summary><ul>{tool.items.map((item) => <li key={item}>{item}</li>)}</ul></details>}</article>)}</div></section>
+        <section className="operations-collaboration"><header><div><p className="eyebrow">??????????</p><h3>??????</h3></div><span>????</span></header><div>{selected.collaboration.map((role) => <article key={role.role}><strong>? {role.iteration} ? ? {role.label}</strong><span className={role.status === 'fallback' ? 'is-fallback' : ''}>{role.status === 'fallback' ? '????' : '????'}</span><p>{role.summary}</p><small>?????{role.decision_reason}</small>{role.handoff_to && <small> ? ????{role.handoff_to}</small>}</article>)}</div></section>
+        <section className="operations-tools"><header><div><p className="eyebrow">受控数据获取</p><h3>ReAct 自主工具调用记录</h3></div><span>只读</span></header><div>{selected.tool_calls.length === 0 && <p>本次运行未选择运营数据工具。</p>}{selected.tool_calls.map((tool) => <article key={tool.name}><div><strong>{tool.label}</strong><span>{tool.name}</span></div><p>{tool.summary}</p><small>{toolStatus(tool)}</small>{tool.reason_code && <code>{tool.reason_code}</code>}{tool.items.length > 0 && <details><summary>查看规范化返回项</summary><ul>{tool.items.map((item) => <li key={item}>{item}</li>)}</ul></details>}</article>)}</div></section>
         <section className="operations-preview"><header><div><p className="eyebrow">格式转换与结果回显</p><h3>报告预览</h3></div><div><button type="button" className={preview === 'html' ? '' : 'secondary-button'} onClick={() => setPreview('html')}>HTML 预览</button><button type="button" className={preview === 'markdown' ? '' : 'secondary-button'} onClick={() => setPreview('markdown')}>Markdown</button></div></header>{preview === 'html' ? <iframe title={`${selected.id} HTML 报告预览`} sandbox="" srcDoc={selected.html} /> : <pre>{selected.markdown}</pre>}</section>
       </div>
     </div>}

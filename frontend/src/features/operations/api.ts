@@ -1,7 +1,8 @@
 export type ToolCall = {
   name: string
   label: string
-  status: 'succeeded' | 'empty'
+  status: 'succeeded' | 'empty' | 'failed'
+  reason_code: 'tool_dependency_failed' | null
   arguments: Record<string, string | number>
   result_count: number
   summary: string

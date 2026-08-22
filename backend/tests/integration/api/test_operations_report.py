@@ -12,6 +12,14 @@ from shieldchain.main import create_app
 from shieldchain.wazuh.persistence import WazuhAlertRow
 
 
+class FailingAlertTool:
+    name = "security.alerts.list"
+    label = "告警 MCP"
+
+    def call(self, _start_at: datetime, _end_at: datetime):
+        raise RuntimeError("private upstream failure")
+
+
 def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoints(
     tmp_path: Path,
 ) -> None:
@@ -59,4 +67,41 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         assert calls["security.alerts.list"]["result_count"] == 1
         assert calls["security.vulnerabilities.list"]["items"][0].startswith("CVE-2026-1234")
         assert len(body["stages"]) == 6
+    engine.dispose()
+
+
+def test_operations_report_exposes_sanitized_tool_failure(tmp_path: Path) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'operations-failure.db'}")
+    Base.metadata.create_all(engine)
+    settings = Settings(_env_file=None, assistant_data_root=tmp_path / "assistant")
+    app = create_app(database_engine=engine, settings=settings)
+    agent = app.state.security_operations_report_agent
+    agent._tools = tuple(
+        FailingAlertTool() if tool.name == "security.alerts.list" else tool
+        for tool in agent._tools
+    )
+
+    async def fallback(*_args):
+        return "工具失败，必须人工复核。", None, True
+
+    agent._synthesize = fallback
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/operations/reports",
+            json={"start_at": "2026-08-01T00:00:00Z", "end_at": "2026-08-02T00:00:00Z"},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    failed = next(
+        item for item in body["tool_calls"] if item["name"] == "security.alerts.list"
+    )
+    assert failed["status"] == "failed"
+    assert failed["reason_code"] == "tool_dependency_failed"
+    assert failed["result_count"] == 0
+    assert failed["items"] == []
+    assert "private upstream failure" not in str(failed)
+    assert next(stage for stage in body["stages"] if stage["key"] == "mcp_tools")["status"] == (
+        "fallback"
+    )
     engine.dispose()
