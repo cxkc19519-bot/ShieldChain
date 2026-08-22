@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-22）。Task 0～2 已完成，Task 3～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-22）。Task 0～3 已完成，Task 4～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -21,6 +21,7 @@
 | --- | --- | --- |
 | `operations/mcp_tools.py` | 事件、告警、漏洞线索、弱口令线索四类租户化只读查询 | 提取为协议无关的内置 Agent Tool Provider；保留兼容适配直至调用方迁移完成 |
 | `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级 | 改为使用统一工具目录和调用审计；响应规划角色改为严格 Schema 输出 |
+| `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布和 `/mcp` Streamable HTTP | 保持为协议适配边界；完成鉴权前禁止生产启用 |
 | `agents/` | 角色、上下文、交接、预算、结构化领域合同 | 保留并接入通用运行模型；不恢复已经退役的旧调查页面 |
 | `tools/` | 工具注册、策略、审批、幂等、租约、执行、验证、恢复和控制 | 继续作为唯一可信变更执行边界；外部 MCP 不能绕过它 |
 | `react/` | 失败分类、预算、循环检测、确定性重新规划、轨迹和人工控制 | 接入当前运营链路的通用运行 ID、响应计划和真实工具回执 |
@@ -29,14 +30,14 @@
 
 ### 2.2 必须补齐的缺口
 
-- 当前所谓 MCP 是进程内 Python façade，没有标准 MCP Server、MCP Client、协议协商、标准传输或兼容性测试；
+- 已有默认关闭的最小标准 MCP Server、协议协商、Streamable HTTP 和官方 SDK 测试；仍缺少生产鉴权、调用审计、受控 MCP Client 和外部平台验收；
 - 当前运营报告以本地 JSON 文件保存，没有通用 `run_id`，无法稳定关联工具调用、响应计划、审批、执行、验证和重新规划；
 - 当前响应规划主要是自然语言摘要或 `proposed:` 字符串，缺少现行的严格输出 Schema、计划编译器、证据重绑定和版本化持久化；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 当前阶段 4～6 数据模型依赖早期 `investigation_runs`，而该表又依赖已退役的仿真事件，不能直接代表当前安全运营报告运行；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
 - 尚无 MCP 鉴权、Origin 校验、SSRF 防护、远端 Schema 固定、结果大小限制、速率限制、熔断、Token 隔离和协议级审计；
-- 尚无 MCP 官方一致性测试和外部平台兼容性验收证据。
+- 已有官方 Python SDK 的内存与 ASGI 兼容性基线；尚无完整 conformance、安全门禁和外部平台兼容性验收证据。
 
 ## 3. 完成定义
 
@@ -1093,7 +1094,39 @@ LIVE_MCP_CALL_LIMIT=0
 
 建议提交：`refactor: route operations tools through agent tool broker`
 
-### Task 3：通用 Agent Run 迁移
+### Task 3：最小标准 MCP Server
+
+> 状态：已完成（2026-08-22）。实施顺序经评审调整：最小、默认关闭的协议适配器不依赖通用运行持久化，因此先完成可独立验证的 MCP Server；调用审计和生产鉴权仍保持后续门禁，不能因本 Task 完成而在生产开放。
+
+目标：通过 `/mcp` 标准发布四类只读工具，同时复用现有 Provider 和 Broker。
+
+修改：
+
+- 新增单一 `mcp_server.py`，没有提前拆分 server、mount 和 authority 子模块；
+- 使用官方 SDK 注册稳定排序的四类只读工具，发布只读 annotations 和结构化结果；
+- FastAPI 父生命周期管理 SDK session manager，并提供无尾斜杠重定向的 `/mcp`；
+- 增加 `MCP_SERVER_ENABLED=false`，复用现有 Host、Origin 和请求大小边界；
+- 完成 OAuth 前，`production + MCP_SERVER_ENABLED=true` 在 Settings 校验阶段失败。
+
+验收：
+
+- 官方 Client 协商 `2026-07-28`，发现并调用真实 Provider；
+- 工具目录按 alias 稳定排序且全部标记只读；
+- `/mcp` 开启时可完成 `server/discover`，关闭时为普通 404；
+- 内部智能体继续直接调用 Broker，不走本机 HTTP；
+- 聚焦测试与 Ruff 通过。
+
+实施与验证记录（2026-08-22）：
+
+- MCP、配置、HTTP 安全、Broker 和运营报告聚焦回归：`37 passed`；
+- 本 Task 修改的 Python 文件 Ruff check、format check 和 `git diff --check` 通过；
+- 当前临时 Python 环境未安装可选 `torch`，全量测试首次在本地模型测试收集阶段停止；
+- 排除该可选测试后，仓库既有全量基线为 `1035 passed, 1 skipped, 20 failed, 17 errors`；失败主要来自已退役调查 API 测试仍传入 `investigation_runner`，以及 Windows 临时运行时的 Alembic 子进程和多进程模块路径，均未通过本 Task 顺带修改或隐藏；
+- 仓库全量 Ruff 仍有 37 个既有错误；本 Task 涉及文件为零错误。以上既有基线必须在后续专门任务中处理，不能把本记录解释为全仓门禁已通过。
+
+建议提交：`feat: expose read only security tools over mcp`
+
+### Task 4：通用 Agent Run 迁移
 
 目标：解除当前闭环模型对退役仿真 `investigation_runs` 的独占依赖。
 
@@ -1114,7 +1147,7 @@ LIVE_MCP_CALL_LIMIT=0
 
 建议提交：`feat: introduce generic agent run persistence`
 
-### Task 4：Agent Tool 调用审计
+### Task 5：Agent Tool 调用审计
 
 目标：内部、入站 MCP 和出站 MCP 使用同一公开审计合同。
 
@@ -1132,27 +1165,6 @@ LIVE_MCP_CALL_LIMIT=0
 - 敏感字段扫描通过。
 
 建议提交：`feat: persist bounded agent tool call audits`
-
-### Task 5：标准 MCP Server
-
-目标：通过 `/mcp` 标准发布四类只读工具。
-
-修改：
-
-- 新增 `mcp/server.py`、`mount.py`、`authority.py`；
-- tools/list 和 tools/call 适配 Broker；
-- FastAPI 生命周期和路由挂载；
-- 配置默认关闭；
-- 协议错误与工具错误分层。
-
-验收：
-
-- 官方 Client 可发现和调用；
-- 工具目录稳定；
-- 无 MCP Session 依赖；
-- 内部智能体未走本机 HTTP。
-
-建议提交：`feat: expose read only security tools over mcp`
 
 ### Task 6：MCP 入站鉴权与传输加固
 
@@ -1492,4 +1504,4 @@ conda run -n ShieldChain python -m alembic -c backend/alembic.ini upgrade head
 | 成功判据 | 新遥测与执行后验证 | Adapter 返回成功不能证明安全状态已改变 |
 | 自动化 | 默认关闭、逐层放量 | 先验证只读、计划和仿真，再评审真实设备 |
 
-本文评审通过后，开发从 Task 0 开始；不得跳过协议 Spike、通用运行迁移、响应计划编译或安全测试，直接把现有 Python façade 对外命名为标准 MCP。
+本文评审通过后，开发从 Task 0 开始。允许先实现默认关闭且生产禁用的最小协议适配器，但不得跳过通用运行迁移、调用审计、生产鉴权、响应计划编译或安全测试，就把该入口描述为可生产开放的完整 MCP 能力。

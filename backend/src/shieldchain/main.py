@@ -35,6 +35,7 @@ from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
+from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 from shieldchain.qwen_experience.api import router as qwen_experience_router
 from shieldchain.qwen_experience.service import QwenExperienceService
@@ -65,12 +66,22 @@ def create_app(
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
     knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
+    mcp_server = (
+        create_mcp_server(session_factory, tenant_id=settings.rag_demo_tenant_id)
+        if settings.mcp_server_enabled
+        else None
+    )
+    mcp_http_app = create_mcp_http_app(mcp_server, settings) if mcp_server is not None else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _app.state.accepting_requests = True
         try:
-            yield
+            if mcp_server is None:
+                yield
+            else:
+                async with mcp_server.session_manager.run():
+                    yield
         finally:
             _app.state.accepting_requests = False
             if owns_engine:
@@ -78,6 +89,7 @@ def create_app(
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
+    app.state.mcp_server = mcp_server
     app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
@@ -148,4 +160,6 @@ def create_app(
     app.include_router(react_router, prefix="/api/v1")
     app.include_router(wazuh_router, prefix="/api/v1")
     app.include_router(operations_router, prefix="/api/v1")
+    if mcp_http_app is not None:
+        app.mount("/", mcp_http_app)
     return app

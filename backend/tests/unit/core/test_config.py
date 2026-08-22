@@ -17,6 +17,7 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.http_allowed_hosts == ("127.0.0.1", "localhost", "testserver")
     assert settings.http_allowed_origins == ("http://127.0.0.1:5173", "http://localhost:5173")
     assert settings.http_max_request_bytes == 26 * 1024 * 1024
+    assert settings.mcp_server_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -60,6 +61,24 @@ def test_production_rejects_wildcard_trust_but_development_can_explicitly_use_it
         Settings(
             _env_file=None,
             environment="production",
+            http_allowed_hosts=("*",),
+        )
+
+
+def test_production_rejects_mcp_server_until_authorization_is_implemented() -> None:
+    with pytest.raises(ValidationError, match="authorization"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            mcp_server_enabled=True,
+        )
+
+
+def test_enabled_mcp_server_rejects_wildcard_http_trust() -> None:
+    with pytest.raises(ValidationError, match="MCP trust"):
+        Settings(
+            _env_file=None,
+            mcp_server_enabled=True,
             http_allowed_hosts=("*",),
         )
 

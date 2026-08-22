@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -17,6 +19,7 @@ class Settings(BaseSettings):
         "http://localhost:5173",
     )
     http_max_request_bytes: int = Field(26 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
+    mcp_server_enabled: bool = False
     database_url: str = "sqlite:///./data/shieldchain.db"
     deepseek_base_url: AnyHttpUrl = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
@@ -85,11 +88,17 @@ class Settings(BaseSettings):
         return normalized
 
     @model_validator(mode="after")
-    def production_rejects_wildcard_http_trust(self) -> "Settings":
+    def validate_network_boundaries(self) -> Settings:
         if self.environment == "production" and (
             "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins
         ):
             raise ValueError("production HTTP trust must not contain wildcards")
+        if self.mcp_server_enabled and (
+            "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins
+        ):
+            raise ValueError("MCP trust must not contain wildcards")
+        if self.environment == "production" and self.mcp_server_enabled:
+            raise ValueError("production MCP server requires authorization")
         return self
 
 
