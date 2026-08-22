@@ -1,4 +1,5 @@
 # Local agent and worktree state
+AGENTS.md
 .agents/
 .superpowers/
 .worktrees/
