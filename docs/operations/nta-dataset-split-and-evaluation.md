@@ -122,6 +122,21 @@ v7 清单从排除前六轮 144 个样本后的 557 个 validation 样本中，�
 
 v8 清单从排除前七轮 168 个样本后的 533 个 validation 样本中，使用固定盐值 `shieldchain-v8-20260822` 排序抽取，与此前样本零重叠。规则先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v8，final-blind 仍未运行。
 
+### v9 更新（2026-08-22）
+
+- 规则 SHA-256：`0c87908e60f5b3d1f082292d55c3a75586c5682b5facceee488716eb4f31ec03`
+- 流水线 SHA-256：`39f894d242c284a1b9e31fe15b39ec139df0f8f7805a3392ae8722adf5c2d3b5`
+- development 完整回归：`run-20260822-152756`，24/24 分类
+- 合成正常 HTTP 回归：`run-20260822-152733`，0 条告警
+- 独立验证清单：`validation-sample-v9-24.txt`
+- validation 运行：`run-20260822-153730`
+- 锁定结果：`validation-v9-locked-result.json`
+- 锁定结果 SHA-256：`e60488b0d7bf632b20ca42565a4dddc8aca46e4b766a79167729eb11eb8c02c3`
+- 独立验收：16/24 分类、8/24 待研判、16 个告警样本、16 条告警
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v9-20260822.md`
+
+v9 清单从排除前八轮 192 个样本后的 509 个 validation 样本中，使用固定盐值 `shieldchain-v9-20260822` 排序抽取，与此前样本零重叠。规则与分类器先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v9，final-blind 仍未运行。
+
 ## 5. 同门复现实验
 
 进入项目并配置数据目录：

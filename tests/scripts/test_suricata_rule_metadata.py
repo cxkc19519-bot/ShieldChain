@@ -18,7 +18,7 @@ class SuricataRuleMetadataTests(unittest.TestCase):
         rules = RULES_PATH.read_text(encoding="utf-8")
         sids = [int(value) for value in re.findall(r"\bsid:(\d+);", rules)]
 
-        self.assertGreaterEqual(len(sids), 74)
+        self.assertGreaterEqual(len(sids), 78)
         self.assertEqual(len(sids), len(set(sids)))
         self.assertTrue(all(9_000_001 <= sid <= 9_000_999 for sid in sids))
 

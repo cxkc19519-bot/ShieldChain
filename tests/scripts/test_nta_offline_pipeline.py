@@ -49,6 +49,29 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertIn("T1190", mitre_ids)
             self.assertEqual(len(signatures), 1)
 
+    def test_phishing_alert_gets_email_credential_category(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(
+                result / "suricata" / "eve.json",
+                [
+                    {
+                        "event_type": "alert",
+                        "alert": {
+                            "signature": (
+                                "ShieldChain POP3 phishing hexadecimal IP login link"
+                            )
+                        },
+                    }
+                ],
+            )
+
+            category, severity, mitre_ids, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "钓鱼邮件与凭据诱导")
+            self.assertEqual(severity, 9)
+            self.assertIn("T1566.002", mitre_ids)
+
     def test_framework_exploit_alert_gets_vulnerability_category(self) -> None:
         for signature in (
             "ShieldChain ThinkPHP filter remote code execution",

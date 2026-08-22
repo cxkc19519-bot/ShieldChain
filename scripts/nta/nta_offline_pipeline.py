@@ -172,6 +172,8 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
         if any(word in searchable for word in ("sql injection", "sql extraction")):
             return "数据库攻击与数据提取", 10, ["T1190", "T1213"], signatures, findings
+        if "phishing" in searchable:
+            return "钓鱼邮件与凭据诱导", 9, ["T1566.002"], signatures, findings
         if any(word in searchable for word in ("weak password", "credential access")):
             return "弱密码与凭据攻击", 9, ["T1110"], signatures, findings
         if any(word in searchable for word in ("command execution", "command form")):
