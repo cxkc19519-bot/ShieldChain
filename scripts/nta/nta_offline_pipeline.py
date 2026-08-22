@@ -150,23 +150,27 @@ def json_lines(path: Path) -> list[dict[str, object]]:
     return rows
 
 
-def is_decoder_alert(row: dict[str, object]) -> bool:
+def is_non_security_alert(row: dict[str, object]) -> bool:
     alert = row.get("alert") or {}
     signature = str(alert.get("signature") or "")
     category = str(alert.get("category") or "")
-    return signature.startswith("SURICATA ") or category == "Generic Protocol Command Decode"
+    return (
+        signature.startswith(("SURICATA ", "ET INFO "))
+        or category == "Generic Protocol Command Decode"
+        or category == "Not Suspicious Traffic"
+    )
 
 
 def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str], list[str]]:
     suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
     raw_alerts = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    alerts = [row for row in raw_alerts if not is_decoder_alert(row)]
+    alerts = [row for row in raw_alerts if not is_non_security_alert(row)]
     signatures = [str((row.get("alert") or {}).get("signature") or "") for row in alerts]
     searchable = " ".join(signatures).lower()
     findings: list[str] = []
-    decoder_count = len(raw_alerts) - len(alerts)
-    if decoder_count:
-        findings.append(f"Ignored {decoder_count} Suricata decoder/checksum event(s)")
+    informational_count = len(raw_alerts) - len(alerts)
+    if informational_count:
+        findings.append(f"Ignored {informational_count} Suricata informational/decoder event(s)")
 
     if alerts:
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
@@ -291,8 +295,8 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
     zeek_http_rows = json_lines(result_dir / "zeek" / "http.log")
     zeek_dns_rows = json_lines(result_dir / "zeek" / "dns.log")
     raw_alert_rows = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    decoder_alert_count = sum(is_decoder_alert(row) for row in raw_alert_rows)
-    alert_count = len(raw_alert_rows) - decoder_alert_count
+    ignored_alert_count = sum(is_non_security_alert(row) for row in raw_alert_rows)
+    alert_count = len(raw_alert_rows) - ignored_alert_count
     return {
         "external_id": f"nta-offline:{pcap_hash}",
         "occurred_at": datetime.now(timezone.utc).isoformat(),
@@ -311,7 +315,7 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
             "zeek_exit_code": zeek_code,
             "suricata_alert_count": alert_count,
             "suricata_raw_alert_count": len(raw_alert_rows),
-            "suricata_decoder_event_count": decoder_alert_count,
+            "suricata_ignored_informational_event_count": ignored_alert_count,
             "suricata_signatures": signatures[:50],
             "zeek_conn_record_count": len(zeek_conn_rows),
             "zeek_http_record_count": len(zeek_http_rows),

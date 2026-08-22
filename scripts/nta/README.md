@@ -90,7 +90,24 @@ python3 -m unittest tests/scripts/test_nta_offline_pipeline.py
 
 ## 安全边界
 
+
 - 分析容器使用 `--network none`、只读根文件系统和最小权限。
 - 离线 PCAP 使用 `-k none` 忽略采集文件中的校验和卸载伪差；实时检测不应照搬此参数。
 - 自定义规则只产生告警，不自动阻断或执行处置。
 - 没有经过确认的正常流量集时，只能报告检测覆盖率，不能宣称准确率或误报率。
+
+## 正常流量基线
+
+正常流量场景清单、隔离采集、保留集保护、当前 162 条 development PCAP 状态和复现命令见 [正常流量基线构建与误报验收](../../docs/operations/benign-traffic-baseline.md)。
+
+快速冒烟测试：
+
+```bash
+python3 scripts/nta/benign_lab/run_service_lab.py database /tmp/db-smoke --limit 1
+python3 scripts/nta/benign_lab/run_service_lab.py mail /tmp/mail-smoke --limit 1
+python3 scripts/nta/benign_lab/run_service_lab.py dns /tmp/dns-smoke --limit 1
+python3 scripts/nta/benign_lab/run_service_lab.py ssh /tmp/ssh-smoke --limit 1
+python3 scripts/nta/benign_lab/run_service_lab.py smb /tmp/smb-smoke --limit 1
+```
+
+这些入口执行真实协议事务并抓取专用 Docker bridge，不会根据文件名制造检测结果。Windows 管理场景必须等待 Windows VM/测试主机。

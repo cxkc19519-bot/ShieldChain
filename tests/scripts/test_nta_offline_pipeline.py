@@ -167,6 +167,28 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertEqual(severity, 5)
             self.assertNotIn("T1505.003", mitre_ids)
 
+    def test_informational_ntlm_handshake_is_not_a_security_alert(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(
+                result / "suricata" / "eve.json",
+                [
+                    {
+                        "event_type": "alert",
+                        "alert": {
+                            "signature": "ET INFO NTLM Session Setup Request - Negotiate",
+                            "category": "Not Suspicious Traffic",
+                        },
+                    }
+                ],
+            )
+            category, severity, mitre_ids, signatures, findings = nta.classify_findings(result)
+            self.assertEqual(category, "未检出有效网络行为")
+            self.assertEqual(severity, 3)
+            self.assertEqual(mitre_ids, [])
+            self.assertEqual(signatures, [])
+            self.assertTrue(any("informational/decoder" in item for item in findings))
+
 
 if __name__ == "__main__":
     unittest.main()
