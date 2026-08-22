@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：待实施设计（2026-08-22）。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-22）。Task 0 协议兼容性基线已完成，Task 1～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -261,12 +261,12 @@ backend/src/shieldchain/
 - `remote_name`：仅外部 MCP 使用，不能代替内部 alias；
 - `version`：本地策略版本，不盲信远端版本字符串；
 - `title`、`description`、`use_when`、`do_not_use_when`、`limitations`；
-- `input_schema`、`output_schema` 及二者 SHA-256；
+- `input_schema`、`output_schema` 和服务端维护的 `schema_revision`；
 - `classification`：第一版只允许 `read_only`；
 - `allowed_roles`；
 - `timeout_seconds`、`max_result_bytes`、`max_items`；
 - `cache_policy`：是否允许单运行缓存以及 TTL；
-- `enabled`、`catalog_revision` 和 `catalog_digest`。
+- `enabled` 和单调递增的 `catalog_revision`。
 
 工具描述用于模型选择，但授权只依据服务器保存的 identity、classification、allowed roles 和策略版本。
 
@@ -276,11 +276,11 @@ backend/src/shieldchain/
 
 - `call_id`、`request_id`、`tenant_id`、`principal_id`；
 - `run_id`、`case_id` 和 `role`；外部直接 MCP 查询可以没有 run/case，但仍必须有认证主体；
-- 固定的 `tool_identity`、`alias`、`catalog_digest`；
+- 固定的 `tool_identity`、`alias`、`catalog_revision` 和 `schema_revision`；
 - 已校验的规范化参数和参数摘要；
 - 调用预算快照、创建时间和绝对 deadline。
 
-HTTP/MCP 请求不能提供或覆盖 tenant、principal、role、classification、catalog digest、预算或审计主体。
+HTTP/MCP 请求不能提供或覆盖 tenant、principal、role、classification、目录/Schema revision、预算或审计主体。
 
 ### 9.3 `AgentToolResult`
 
@@ -460,10 +460,10 @@ servers:
 3. 使用官方 Client `auto` 模式探测 2026-07-28，并在允许时兼容 2025-11-25；
 4. 调用 `tools/list`，限制页数、工具总数、名称长度、描述长度和 Schema 大小；
 5. 只接受配置 `allowed_tools` 中逐项映射的 remote name；
-6. 规范化并保存 input/output Schema、远端名称、发现时间、协议版本和 SHA-256；
+6. 校验并保存 input/output Schema、远端名称、发现时间、协议版本和服务端 Schema revision；
 7. 管理员配置的 classification 和 role allowlist 是本地权威，远端 annotation 只作审计对照；
-8. 一次智能体运行保存 catalog digest，运行期间远端变化不替换该快照；
-9. Schema digest 不匹配时停止该工具新调用并产生 `mcp_schema_changed`，不得自动接受；
+8. 一次智能体运行保存 catalog revision，运行期间远端变化不替换该快照；
+9. 远端 Schema 与已批准结构不一致时停止该工具新调用并产生 `mcp_schema_changed`，由管理员更新配置或批准新 revision，不计算额外哈希；
 10. 刷新失败保留最近已知目录只用于展示，不能在过期后继续新调用。
 
 ### 11.3 SSRF 和网络策略
@@ -598,17 +598,17 @@ Schema 强制：
 8. 校验 expected state 与工具验证器兼容；
 9. 由服务端评估风险、审批要求、回滚能力和预算；
 10. 为计划、revision 和动作生成 UUID；
-11. 生成规范化摘要和 SHA-256；
+11. 生成服务端计划、revision 和动作 ID；
 12. 原子保存计划 revision、动作和审计事件。
 
-任何一步失败时整份候选不进入 `proposed`，只保存解析失败原因码、模型标识、Prompt 策略版本和候选摘要哈希，不保存可能包含敏感内容的原始模型输出。
+任何一步失败时整份候选不进入 `proposed`，只保存解析失败原因码、模型标识和 Prompt 策略版本，不保存可能包含敏感内容的原始模型输出，也不为失败候选额外计算哈希。
 
 ### 12.4 计划领域对象
 
 `ResponsePlan`：
 
 - `id`、`tenant_id`、`case_id`、`run_id`；
-- `status`、`current_revision`、`request_digest`；
+- `status` 和 `current_revision`；
 - `created_by_role=response_planning`；
 - `created_at`、`updated_at`。
 
@@ -616,8 +616,7 @@ Schema 强制：
 
 - `id`、`plan_id`、`revision`、`parent_revision`；
 - `public_summary`、`assumptions`、`stop_conditions`、`operator_notes`；
-- `reason_code`、`model_id`、`prompt_policy_version`；
-- `candidate_digest`、`compiled_digest`、`created_at`。
+- `reason_code`、`model_id`、`prompt_policy_version` 和 `created_at`。
 
 `ResponsePlanAction`：
 
@@ -663,7 +662,7 @@ draft
 ### 13.1 主流程
 
 1. 创建通用 `AgentRun` 和当前运营任务输入；
-2. 固定本次运行的 Agent Tool Catalog digest；
+2. 固定本次运行的 Agent Tool Catalog revision；
 3. 总控和专业角色调用获授权的只读工具形成结构化观察；
 4. 响应规划角色产生候选计划；
 5. 服务端编译、重绑定并保存计划；
@@ -737,7 +736,7 @@ draft
 - `principal_id`；
 - `run_kind`：`incident_investigation` 或 `operations_report`；
 - `status`：`pending`、`running`、`awaiting_approval`、`awaiting_execution`、`verifying`、`needs_review`、`completed`、`failed`、`cancelled`；
-- `goal`、`catalog_digest`、`revision`；
+- `goal`、`catalog_revision`、`revision`；
 - `created_at`、`updated_at`、`completed_at`。
 
 迁移步骤：
@@ -770,8 +769,8 @@ draft
 
 - tenant、principal、run/case、role；
 - direction：`internal`、`mcp_inbound`、`mcp_outbound`；
-- provider kind/id、tool identity/alias、catalog digest；
-- 参数公开投影和摘要；
+- provider kind/id、tool identity/alias、catalog/schema revision；
+- 参数公开投影；
 - status、reason code、result count、公开摘要、引用；
 - duration、attempt、bytes read、truncated；
 - request ID、created/finished time。
@@ -779,7 +778,7 @@ draft
 `mcp_peer_snapshots`：
 
 - peer ID、协议版本、server info 公共摘要；
-- catalog digest、工具数量、发现时间、过期时间；
+- catalog revision、工具数量、发现时间、过期时间；
 - 状态和稳定错误码；
 - 不保存 endpoint 凭据、Token 或原始 tools/list body。
 
@@ -808,7 +807,7 @@ draft
 - 状态和风险使用 CheckConstraint；
 - revision、attempt、sequence 非负且有上界；
 - JSON 字段在领域层验证类型、键集合、长度和总大小；
-- idempotency、plan revision、action order、tool snapshot digest 使用唯一约束；
+- idempotency、plan revision、action order 和 tool snapshot revision 使用唯一约束；
 - 调用、观察、事件、审批、尝试和验证按 run/time 建索引；
 - 迁移不能依赖 SQLite 关闭外键后静默丢数据，复制前后必须验证数量和摘要。
 
@@ -877,7 +876,7 @@ POST /api/v1/response-plans/{plan_id}/reject
 增加：
 
 - 计划 revision 和动作 ID；
-- MCP catalog digest 和工具选择原因；
+- MCP catalog revision 和工具选择原因；
 - 工具回执与新遥测的引用；
 - 查询状态、只读重试、重规划、人工接管的原因码；
 - 计划旧/新差异，不展示原始模型输出。
@@ -951,7 +950,7 @@ LIVE_MCP_CALL_LIMIT=0
 | 跨租户访问 | 服务端 Authority、复合外键、SQL tenant 条件 | 猜测 run/call/plan/handle 均返回不存在 |
 | DNS rebinding/SSRF | Origin、Host、DNS/IP 策略、禁止重定向 | loopback、link-local、私网、元数据、DNS 切换 |
 | Token passthrough | peer 独立凭据和 audience | 入站 Token 不出现在远端请求或日志 |
-| 工具目录投毒 | 管理员映射、Schema digest、运行固定快照 | 远端改名、改 Schema、增加工具、恶意描述 |
+| 工具目录投毒 | 管理员映射、显式 Schema revision、运行固定快照 | 远端改名、改 Schema、增加工具、恶意描述 |
 | Prompt 注入 | 工具结果不可信包络、输出裁剪、系统规则优先 | 结果要求泄密、改权限、调用未授权工具 |
 | 参数注入 | JSON Schema、具体类型、additionalProperties=false | Shell、URL、SQL、超长、额外字段、Unicode 边界 |
 | 结果炸弹 | 流式读取上限、条目/深度/字符串限制 | 巨大 JSON、深嵌套、无限 SSE、压缩异常 |
@@ -967,10 +966,10 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### 19.1 单元测试
 
-- Agent Tool 定义、目录排序、目录 digest、权限交集；
+- Agent Tool 定义、目录排序、目录 revision、权限交集；
 - 四类内置工具输入/输出 Schema 和租户过滤；
 - MCP peer 配置、URL、DNS、TLS、Origin 和重定向策略；
-- 远端工具名称映射、Schema 大小、digest 和 annotation 不可信；
+- 远端工具名称映射、Schema 大小/结构变化和 annotation 不可信；
 - 响应计划候选 Schema、依赖图、证据重绑定和计划编译；
 - 计划状态机、revision、摘要和幂等键；
 - 失败分类、重新规划、预算和循环检测；
@@ -1044,6 +1043,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 0：基线锁定与协议 Spike
 
+> 状态：已完成（2026-08-22）。官方 MCP Python SDK 2.0.0 在项目 Python 3.12 测试环境中协商到协议 `2026-07-28`，内存 `tools/list`、`tools/call` 和现有运营工具回归通过。
+
 目标：确认官方 SDK v2 与当前 Python/FastAPI/Starlette 组合可用，锁定当前行为。
 
 修改：
@@ -1068,14 +1069,14 @@ LIVE_MCP_CALL_LIMIT=0
 修改：
 
 - 新增 `agent_tools/domain.py`、`catalog.py`、`policy.py`；
-- 建立严格不可变合同和目录 digest；
+- 建立严格不可变合同和单调目录 revision；
 - 定义工具权限交集；
 - 保留旧 `ReadOnlyMcpTool` 兼容适配。
 
 验收：
 
 - 重复 alias、未知 classification、无界 Schema、额外权限默认拒绝；
-- 目录排序和 digest 确定；
+- 目录排序和 revision 变化规则确定；
 - Skill 或模型声明不能扩大权限。
 
 建议提交：`feat: add protocol independent agent tool contracts`
@@ -1130,7 +1131,7 @@ LIVE_MCP_CALL_LIMIT=0
 
 - 新增 `agent_tool_calls` 表、仓储和 API 投影；
 - Broker 原子记录调用开始和终态；
-- 增加 request ID、catalog digest、耗时、大小和截断；
+- 增加 request ID、catalog revision、耗时、大小和截断；
 - 不保存原始载荷。
 
 验收：
@@ -1193,7 +1194,7 @@ LIVE_MCP_CALL_LIMIT=0
 - `peer_config.py`、`transport_security.py`、`discovery.py`；
 - example YAML；
 - `mcp_peer_snapshots`、`mcp_tool_snapshots`；
-- Schema digest 和过期策略；
+- Schema revision、结构变化检测和过期策略；
 - SSRF/TLS/DNS/redirect 防护。
 
 验收：
@@ -1214,7 +1215,7 @@ LIVE_MCP_CALL_LIMIT=0
 - `mcp/client.py`、`remote_provider.py`；
 - timeout、大小、并发、速率和熔断；
 - 远端结果不可信解析和裁剪；
-- 目录固定到 run digest；
+- 目录 revision 固定到 run；
 - 独立凭据和 Token 缓存。
 
 验收：
@@ -1496,7 +1497,7 @@ conda run -n ShieldChain python -m alembic -c backend/alembic.ini upgrade head
 | 响应规划 | 严格候选 Schema + 服务端编译 | 模型建议不等于可执行请求 |
 | 当前运行 | 新增通用 `agent_runs` | 不能用退役仿真 incident 伪造当前运营任务 |
 | MCP 配置 | 文件和 Secret 引用，REST 只读 | 当前没有真实管理员 RBAC，不能安全开放动态写控制面 |
-| 目录变化 | 新运行生效，旧运行固定 digest | 保证恢复、审计和结果可复现 |
+| 目录变化 | 新运行生效，旧运行固定 revision | 保证恢复、审计和结果可复现，不引入额外哈希计算 |
 | 成功判据 | 新遥测与执行后验证 | Adapter 返回成功不能证明安全状态已改变 |
 | 自动化 | 默认关闭、逐层放量 | 先验证只读、计划和仿真，再评审真实设备 |
 
