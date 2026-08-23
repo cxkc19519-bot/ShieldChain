@@ -33,6 +33,15 @@ def test_remote_mcp_limits_are_bounded_and_empty_path_is_disabled() -> None:
         ("mcp_remote_max_tools", 101),
         ("mcp_remote_max_schema_bytes", 65_537),
         ("mcp_remote_max_catalog_schema_bytes", 1_048_577),
+        ("mcp_remote_max_request_bytes", 262_145),
+        ("mcp_remote_max_response_bytes", 2_097_153),
+        ("mcp_remote_max_public_result_bytes", 65_537),
+        ("mcp_remote_call_timeout_seconds", 31),
+        ("mcp_remote_max_calls_per_run", 11),
+        ("mcp_remote_peer_concurrency", 5),
+        ("mcp_remote_peer_calls_per_minute", 121),
+        ("mcp_remote_circuit_failure_threshold", 11),
+        ("mcp_remote_circuit_open_seconds", 301),
     ):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, **{field: value})

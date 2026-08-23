@@ -3,7 +3,7 @@ from ipaddress import ip_address
 
 import pytest
 
-from shieldchain.mcp_remote.discovery import build_remote_http_client
+from shieldchain.mcp_remote.client import build_remote_http_client
 from shieldchain.mcp_remote.peer_config import McpPeerConfig
 from shieldchain.mcp_remote.transport_security import (
     EndpointRejected,
@@ -135,9 +135,12 @@ def test_connection_is_pinned_and_actual_peer_must_match_resolution() -> None:
 
 def test_remote_http_client_never_follows_redirects_or_ambient_proxies() -> None:
     resolved = asyncio.run(resolve_and_validate_endpoint(_peer(), resolver=_resolver("8.8.8.8")))
-    client = build_remote_http_client(_peer(), "dedicated-token", resolved)
+    client = build_remote_http_client(
+        _peer(), "dedicated-token", resolved, maximum_response_bytes=2 * 1024 * 1024
+    )
 
     assert client.follow_redirects is False
     assert client._trust_env is False
     assert client.headers["Authorization"] == "Bearer dedicated-token"
+    assert client.headers["Accept-Encoding"] == "identity"
     asyncio.run(client.aclose())

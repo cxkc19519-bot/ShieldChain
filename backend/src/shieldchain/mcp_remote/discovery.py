@@ -3,30 +3,25 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import uuid4
 
-import httpx2
 import structlog
-from mcp import Client
-from mcp.client.streamable_http import streamable_http_client
 
 from shieldchain.core.config import Settings
 
+from .client import official_remote_client
 from .peer_config import McpPeerConfig, McpRemoteConfig
 from .persistence import McpSnapshotStore, McpToolSnapshot
 from .transport_security import (
     AddressResolver,
     EndpointRejected,
     ResolvedEndpoint,
-    pinned_endpoint,
     resolve_and_validate_endpoint,
     system_resolver,
-    validate_connected_peer,
     validate_dns_rebinding,
 )
 
@@ -63,69 +58,26 @@ class _PreparedCatalog:
     tools: tuple[McpToolSnapshot, ...]
 
 
-@asynccontextmanager
-async def official_discovery_client(
-    peer: McpPeerConfig,
-    token: str,
-    resolved: ResolvedEndpoint,
-) -> AsyncIterator[DiscoveryClient]:
-    async with build_remote_http_client(peer, token, resolved) as http_client:
-        transport = streamable_http_client(
-            pinned_endpoint(resolved),
-            http_client=http_client,
-            terminate_on_close=False,
-        )
-        async with Client(
-            transport,
-            mode="auto",
-            cache=None,
-            read_timeout_seconds=30,
-        ) as client:
-            yield client
-
-
-def build_remote_http_client(
-    peer: McpPeerConfig,
-    token: str,
-    resolved: ResolvedEndpoint,
-) -> httpx2.AsyncClient:
-    timeout = httpx2.Timeout(30.0, connect=5.0)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Host": f"[{resolved.host}]" if ":" in resolved.host else resolved.host,
-        "User-Agent": "ShieldChain-MCP-Discovery/0.1",
-    }
-
-    async def pin_request(request: httpx2.Request) -> None:
-        request.extensions["sni_hostname"] = resolved.host
-
-    async def verify_response(response: httpx2.Response) -> None:
-        validate_connected_peer(resolved, response)
-
-    return httpx2.AsyncClient(
-        headers=headers,
-        timeout=timeout,
-        follow_redirects=False,
-        limits=httpx2.Limits(max_connections=4, max_keepalive_connections=4),
-        event_hooks={"request": [pin_request], "response": [verify_response]},
-        trust_env=False,
-        verify=str(peer.tls_ca_bundle) if peer.tls_ca_bundle is not None else True,
-    )
-
-
 class McpDiscoveryService:
     def __init__(
         self,
         store: McpSnapshotStore,
         settings: Settings,
         *,
-        client_factory: ClientFactory = official_discovery_client,
+        client_factory: ClientFactory | None = None,
         resolver: AddressResolver = system_resolver,
         getenv: Callable[[str], str | None] = os.getenv,
     ) -> None:
         self._store = store
         self._settings = settings
-        self._client_factory = client_factory
+        self._client_factory = client_factory or (
+            lambda peer, token, resolved: official_remote_client(
+                peer,
+                token,
+                resolved,
+                maximum_response_bytes=settings.mcp_remote_max_response_bytes,
+            )
+        )
         self._resolver = resolver
         self._getenv = getenv
 

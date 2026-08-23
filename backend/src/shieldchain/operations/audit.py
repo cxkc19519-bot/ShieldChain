@@ -85,8 +85,10 @@ class AgentToolAuditStore:
         *,
         duration_ms: int,
         now: datetime,
+        result_bytes: int | None = None,
+        truncated: bool = False,
     ) -> None:
-        result_bytes = len(
+        public_result_bytes = len(
             json.dumps(result.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
         )
         with self._session_factory.begin() as session:
@@ -96,7 +98,8 @@ class AgentToolAuditStore:
             row.result_count = result.result_count
             row.summary = result.summary[:1000]
             row.duration_ms = max(duration_ms, 0)
-            row.result_bytes = result_bytes
+            row.result_bytes = public_result_bytes if result_bytes is None else max(result_bytes, 0)
+            row.truncated = truncated
             row.finished_at = now
 
     def cancel(self, call_id: UUID, *, duration_ms: int, now: datetime) -> None:

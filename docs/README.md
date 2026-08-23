@@ -11,7 +11,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 - 安全运营报告智能体可直接使用事件、告警、漏洞、弱密码四类进程内只读工具；同一 Provider 已通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器发布，生产启用必须配置外部 issuer/JWKS、固定 subject 映射、最小 scope 和上游 TLS；
 - 新安全运营报告拥有租户化通用运行 ID；历史 JSON 报告明确标记 `legacy_without_run`，不会伪造不存在的轨迹或执行事实；
 - 内部运营工具和入站 MCP 调用保存裁剪后的公开审计；恢复时没有终态的调用标记为结果未知，不保存原始载荷、Token 或异常堆栈；
-- 外部 MCP Server 只能通过管理员固定 YAML 发现；HTTPS、DNS/CIDR、TLS、重定向、工具映射和 Schema revision 受服务端约束。当前只保存目录快照，尚不执行远程工具调用；
+- 外部 MCP Server 只能通过管理员固定 YAML 发现；HTTPS、DNS/CIDR、TLS、重定向、工具映射和 Schema revision 受服务端约束。批准的未过期快照可作为只读 Provider 进入 Broker，并受结果裁剪、预算、并发、速率、熔断、独立凭据和出站审计约束；
 - RAG 支持持久化知识库、语义分块、混合召回、向量检索和重排；
 - 智能助手基于知识库与历史报告回答问题并持久化对话记忆；
 - 可通过外部 DeepSeek API 或本地 vLLM `Qwen3-30B-A3B-Instruct-2507-FP8` 提供模型能力；

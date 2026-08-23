@@ -43,6 +43,17 @@ def test_remote_mcp_example_is_inert_and_runtime_configuration_is_external() -> 
     assert "config/mcp/servers.yaml" in ignored
     assert "config/mcp/servers.yaml" in set(_read(".dockerignore").splitlines())
     assert "MCP_REMOTE_CONFIG_PATH: ${MCP_REMOTE_CONFIG_PATH:-}" in compose
+    for setting in (
+        "MCP_REMOTE_MAX_REQUEST_BYTES",
+        "MCP_REMOTE_MAX_RESPONSE_BYTES",
+        "MCP_REMOTE_MAX_PUBLIC_RESULT_BYTES",
+        "MCP_REMOTE_MAX_CALLS_PER_RUN",
+        "MCP_REMOTE_PEER_CONCURRENCY",
+        "MCP_REMOTE_PEER_CALLS_PER_MINUTE",
+        "MCP_REMOTE_CIRCUIT_FAILURE_THRESHOLD",
+        "MCP_REMOTE_CIRCUIT_OPEN_SECONDS",
+    ):
+        assert setting in compose
     assert '"httpx2>=2,<3"' in pyproject
     assert '"PyYAML>=6,<7"' in pyproject
 

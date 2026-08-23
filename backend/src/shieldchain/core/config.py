@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     mcp_remote_max_tools: int = Field(100, ge=1, le=100)
     mcp_remote_max_schema_bytes: int = Field(64 * 1024, ge=1024, le=64 * 1024)
     mcp_remote_max_catalog_schema_bytes: int = Field(1024 * 1024, ge=64 * 1024, le=1024 * 1024)
+    mcp_remote_max_request_bytes: int = Field(256 * 1024, ge=1024, le=256 * 1024)
+    mcp_remote_max_response_bytes: int = Field(2 * 1024 * 1024, ge=64 * 1024, le=2 * 1024 * 1024)
+    mcp_remote_max_public_result_bytes: int = Field(64 * 1024, ge=1024, le=64 * 1024)
+    mcp_remote_call_timeout_seconds: float = Field(30.0, ge=1.0, le=30.0)
+    mcp_remote_max_calls_per_run: int = Field(10, ge=1, le=10)
+    mcp_remote_peer_concurrency: int = Field(4, ge=1, le=4)
+    mcp_remote_peer_calls_per_minute: int = Field(30, ge=1, le=120)
+    mcp_remote_circuit_failure_threshold: int = Field(5, ge=1, le=10)
+    mcp_remote_circuit_open_seconds: int = Field(60, ge=10, le=300)
     database_url: str = "sqlite:///./data/shieldchain.db"
     deepseek_base_url: AnyHttpUrl = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"

@@ -16,6 +16,7 @@ from shieldchain.core.config import get_settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
+from shieldchain.operations.mcp_tools import AgentToolExecutionResult
 from shieldchain.operations.persistence import AgentToolCallRow
 from shieldchain.operations.react_collaboration import AgentToolBroker
 from shieldchain.operations.schemas import McpToolCallView
@@ -54,6 +55,37 @@ class AuditedTool:
 class SecretFailingTool(AuditedTool):
     def call(self, _start_at: datetime, _end_at: datetime) -> McpToolCallView:
         raise RuntimeError("Authorization: Bearer private-token database=/private/path")
+
+
+class RemoteAuditedTool(AuditedTool):
+    identity = UUID("00000000-0000-4000-8000-000000001099")
+    name = "external.approved.alerts.list"
+    label = name
+    provider_kind = "remote_mcp"
+    provider_id = "approved-peer"
+    catalog_revision = "remote-catalog-v1"
+    schema_revision = "approved-v1"
+    allowed_roles = ("alert_triage",)
+    catalog_entry = {"label": label, "description": "Approved remote read-only data."}
+
+    async def call(self, start_at: datetime, end_at: datetime) -> AgentToolExecutionResult:
+        return AgentToolExecutionResult(
+            view=McpToolCallView(
+                name=self.name,
+                label=self.label,
+                status="succeeded",
+                arguments={
+                    "start_at": start_at.isoformat(),
+                    "end_at": end_at.isoformat(),
+                    "limit": 50,
+                },
+                result_count=1,
+                summary="远程公开线索。",
+                items=["公开线索"],
+            ),
+            result_bytes=1234,
+            truncated=True,
+        )
 
 
 @pytest.fixture
@@ -163,6 +195,40 @@ def test_failure_audit_does_not_persist_private_exception_material(audit_store) 
         assert "/private/path" not in persisted
         assert row.status == "failed"
         assert row.reason_code == "tool_dependency_failed"
+
+
+def test_remote_async_tool_uses_dynamic_role_catalog_and_outbound_audit(audit_store) -> None:
+    store, factory = audit_store
+    broker = AgentToolBroker(
+        (RemoteAuditedTool(),),
+        NOW,
+        NOW,
+        audit_store=store,
+        audit_context=AgentToolAuditContext(
+            tenant_id=TENANT,
+            principal_id=PRINCIPAL,
+            direction="internal",
+            request_id="remote-outbound",
+            run_id=RUN,
+        ),
+    )
+
+    available = broker.available_for_role("alert_triage", (), set())
+    assert available == ("external.approved.alerts.list",)
+    assert broker.available_for_role("verification", (), set()) == ()
+    assert broker.catalog(available)[0]["description"] == "Approved remote read-only data."
+    with pytest.raises(ValueError, match="not allowed"):
+        asyncio.run(broker.call(available[0], role="verification"))
+    result = asyncio.run(broker.call(available[0], role="alert_triage"))
+    assert result.status == "succeeded"
+
+    with factory() as session:
+        row = session.scalar(select(AgentToolCallRow))
+        assert row is not None
+        assert row.direction == "mcp_outbound"
+        assert row.provider_kind == "remote_mcp"
+        assert row.result_bytes == 1234
+        assert row.truncated is True
 
 
 def test_recovery_marks_interrupted_running_calls_unknown(audit_store) -> None:
@@ -280,7 +346,7 @@ def test_agent_tool_audit_migration_round_trips(
     _migrate(root, database, "head", monkeypatch)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260823_03",
+            "20260823_04",
         )
 
 

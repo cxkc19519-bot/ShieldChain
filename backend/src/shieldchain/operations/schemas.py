@@ -24,7 +24,24 @@ class McpToolCallView(BaseModel):
     name: str
     label: str
     status: Literal["succeeded", "empty", "failed"]
-    reason_code: Literal["tool_dependency_failed"] | None = None
+    reason_code: (
+        Literal[
+            "tool_dependency_failed",
+            "mcp_remote_budget_exhausted",
+            "mcp_remote_catalog_expired",
+            "mcp_remote_circuit_open",
+            "mcp_remote_credentials_missing",
+            "mcp_remote_invalid_result",
+            "mcp_remote_rate_limited",
+            "mcp_remote_request_too_large",
+            "mcp_remote_response_too_large",
+            "mcp_remote_schema_changed",
+            "mcp_remote_timed_out",
+            "mcp_remote_tool_error",
+            "mcp_remote_unavailable",
+        ]
+        | None
+    ) = None
     arguments: dict[str, str | int]
     result_count: int = Field(ge=0)
     summary: str

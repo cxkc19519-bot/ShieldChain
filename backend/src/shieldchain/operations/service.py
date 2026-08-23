@@ -15,6 +15,8 @@ from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
+from shieldchain.mcp_remote.persistence import AgentRunMcpSnapshotRow
+from shieldchain.mcp_remote.runtime import McpRemoteRuntime, RemoteRunCatalog
 from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
 from shieldchain.operations.persistence import OperationsRunRow
 
@@ -93,6 +95,7 @@ class SecurityOperationsReportAgent:
         principal_id: UUID,
         tools: tuple[ReadOnlyAgentTool, ...] | None = None,
         audit_store: AgentToolAuditStore | None = None,
+        remote_runtime: McpRemoteRuntime | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
@@ -101,6 +104,7 @@ class SecurityOperationsReportAgent:
         self._audit_store = audit_store or AgentToolAuditStore(session_factory)
         self._store = store
         self._tools = tools or standard_agent_tools(session_factory, tenant_id)
+        self._remote_runtime = remote_runtime
         self._team = RealDataAgentTeam(
             settings, knowledge, tenant_id=tenant_id, principal_id=principal_id
         )
@@ -118,7 +122,12 @@ class SecurityOperationsReportAgent:
 
         run_id = uuid4()
         report_id = f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
-        self._create_run(run_id, report_id, start_at, end_at, now)
+        remote_catalog = (
+            self._remote_runtime.prepare_run(now=now)
+            if self._remote_runtime is not None
+            else RemoteRunCatalog("builtin-read-only-v1", (), ())
+        )
+        self._create_run(run_id, report_id, start_at, end_at, now, remote_catalog)
         audit_context = AgentToolAuditContext(
             tenant_id=self._tenant_id,
             principal_id=self._principal_id,
@@ -134,6 +143,7 @@ class SecurityOperationsReportAgent:
                 start_at=start_at,
                 end_at=end_at,
                 audit_context=audit_context,
+                tools=self._tools + remote_catalog.tools,
             )
         except asyncio.CancelledError:
             self._finish_run(run_id, "cancelled", datetime.now(UTC))
@@ -153,6 +163,7 @@ class SecurityOperationsReportAgent:
         start_at: datetime,
         end_at: datetime,
         audit_context: AgentToolAuditContext,
+        tools: tuple[ReadOnlyAgentTool, ...],
     ) -> OperationsReportView:
         stages = [
             ReportStageView(
@@ -163,7 +174,7 @@ class SecurityOperationsReportAgent:
             )
         ]
         collaboration, collaboration_model, tool_calls = await self._team.run(
-            self._tools,
+            tools,
             start_at,
             end_at,
             audit_store=self._audit_store,
@@ -256,6 +267,7 @@ class SecurityOperationsReportAgent:
         start_at: datetime,
         end_at: datetime,
         now: datetime,
+        remote_catalog: RemoteRunCatalog,
     ) -> None:
         with self._session_factory.begin() as session:
             session.add(
@@ -266,7 +278,7 @@ class SecurityOperationsReportAgent:
                     run_kind="operations_report",
                     status="running",
                     goal="Generate a bounded security operations report.",
-                    catalog_revision="builtin-read-only-v1",
+                    catalog_revision=remote_catalog.catalog_revision,
                     revision=0,
                     created_at=now,
                     updated_at=now,
@@ -281,6 +293,16 @@ class SecurityOperationsReportAgent:
                     report_id=report_id,
                     created_at=now,
                 )
+            )
+            session.add_all(
+                AgentRunMcpSnapshotRow(
+                    run_id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    peer_id=binding.peer_id,
+                    peer_snapshot_id=str(binding.peer_snapshot_id),
+                    catalog_revision=binding.catalog_revision,
+                )
+                for binding in remote_catalog.bindings
             )
 
     def _finish_run(self, run_id: UUID, status: str, now: datetime) -> None:

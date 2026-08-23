@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from uuid import UUID
@@ -20,7 +21,7 @@ from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.schemas import RetrievalRequest
 
 from .audit import AgentToolAuditContext, AgentToolAuditStore
-from .mcp_tools import ReadOnlyAgentTool
+from .mcp_tools import AgentToolExecutionResult, ReadOnlyAgentTool
 from .schemas import AgentRoleRunView, McpToolCallView
 
 logger = structlog.get_logger(__name__)
@@ -222,15 +223,42 @@ class AgentToolBroker:
         return [self._cache[name] for name in self._order]
 
     def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, object]]:
-        return [
-            {"name": name, **AGENT_TOOL_CATALOG[name]}
-            for name in allowed
-            if name == _RAG or name in self._tools
-        ]
+        items = []
+        for name in allowed:
+            if name == _RAG:
+                items.append({"name": name, **AGENT_TOOL_CATALOG[name]})
+            elif name in self._tools:
+                catalog = getattr(self._tools[name], "catalog_entry", AGENT_TOOL_CATALOG.get(name))
+                if catalog is not None:
+                    items.append({"name": name, **catalog})
+        return items
+
+    def available_for_role(
+        self,
+        role: str,
+        builtins: tuple[str, ...],
+        used: set[str],
+    ) -> tuple[str, ...]:
+        allowed = [name for name in builtins if name not in used]
+        allowed.extend(
+            name
+            for name, tool in self._tools.items()
+            if name not in used and role in getattr(tool, "allowed_roles", ())
+        )
+        return tuple(dict.fromkeys(allowed))
+
+    def label(self, name: str) -> str:
+        if name == _RAG:
+            return AGENT_TOOL_LABELS[name]
+        tool = self._tools.get(name)
+        return tool.label if tool is not None else name
 
     async def call(self, name: str, *, role: str | None = None) -> McpToolCallView:
         if name not in self._tools:
             raise ValueError("tool is not registered")
+        allowed_roles = getattr(self._tools[name], "allowed_roles", ())
+        if allowed_roles and role not in allowed_roles:
+            raise ValueError("tool is not allowed for this role")
         if name not in self._cache:
             tool = self._tools[name]
             arguments = {
@@ -241,15 +269,31 @@ class AgentToolBroker:
             call_id = None
             started_at = perf_counter()
             if self._audit_store is not None and self._audit_context is not None:
+                audit_context = (
+                    replace(self._audit_context, direction="mcp_outbound")
+                    if tool.provider_kind == "remote_mcp"
+                    else self._audit_context
+                )
                 call_id = self._audit_store.start(
-                    self._audit_context,
+                    audit_context,
                     tool,
                     role=role,
                     arguments=arguments,
                     now=datetime.now(UTC),
                 )
+            result_bytes = None
+            truncated = False
             try:
-                result = await asyncio.to_thread(tool.call, self._start_at, self._end_at)
+                if inspect.iscoroutinefunction(tool.call):
+                    execution = await tool.call(self._start_at, self._end_at)
+                else:
+                    execution = await asyncio.to_thread(tool.call, self._start_at, self._end_at)
+                if isinstance(execution, AgentToolExecutionResult):
+                    result = execution.view
+                    result_bytes = execution.result_bytes
+                    truncated = execution.truncated
+                else:
+                    result = execution
             except asyncio.CancelledError:
                 if call_id is not None and self._audit_store is not None:
                     self._audit_store.cancel(
@@ -284,6 +328,8 @@ class AgentToolBroker:
                     result,
                     duration_ms=round((perf_counter() - started_at) * 1000),
                     now=datetime.now(UTC),
+                    result_bytes=result_bytes,
+                    truncated=truncated,
                 )
             self._cache[name] = result
             self._order.append(name)
@@ -442,7 +488,7 @@ class RealDataAgentTeam:
         model: str | None = None
         handoffs = "\n".join(f"{item.label}：{item.summary}" for item in results[-3:])[:1800]
         for _ in range(4):
-            available = tuple(name for name in definition.allowed_tools if name not in used)
+            available = broker.available_for_role(definition.key, definition.allowed_tools, used)
             prompt = json.dumps(
                 {
                     "responsibility": definition.responsibility,
@@ -480,9 +526,7 @@ class RealDataAgentTeam:
                 if tool_name not in available:
                     raise ValueError("unallowed tool")
                 used.add(tool_name)
-                decisions.append(
-                    public_reason or f"需要调用{AGENT_TOOL_LABELS[tool_name]}补充证据"
-                )
+                decisions.append(public_reason or f"需要调用{broker.label(tool_name)}补充证据")
                 if tool_name == _RAG:
                     query = " ".join(str(parsed.get("query", "")).split())[:1000]
                     observation = await asyncio.to_thread(

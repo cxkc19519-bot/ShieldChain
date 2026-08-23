@@ -2,7 +2,7 @@
 
 > 文档状态：当前参考（更新于 2026-08-23）。运营 MCP 查询与真实处置工具是两条不同的安全边界。
 
-当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现。外部 MCP 已能从管理员固定配置安全发现并保存获批准的只读目录快照，但尚未构造成 Broker Provider，不能执行远程 `tools/call`。真实身份平台/TLS 联调、远程调用限额与外部平台验收仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
+当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现。外部 MCP 只读工具可从管理员固定配置安全发现、保存快照并以受控 Provider 进入 Broker；运行固定 snapshot revision，调用受结果上限、预算、并发、速率、熔断和独立凭据约束。真实身份平台、外部 peer/TLS 联调和 OAuth Client Credentials 仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
 
 ## 两类工具
 
@@ -16,7 +16,7 @@
 
 ### 外部 MCP 目录
 
-外部 peer 只能从未提交的管理员 YAML 启用。发现阶段固定 HTTPS endpoint、DNS/CIDR、TLS、凭据环境变量引用和允许工具映射；远端描述与 annotation 不具有授权效力。Schema 变化必须由管理员提升本地 `schema_revision` 才能形成新目录。快照过期或发现失败时，不得据此发起新调用。
+外部 peer 只能从未提交的管理员 YAML 启用。发现阶段固定 HTTPS endpoint、DNS/CIDR、TLS、凭据环境变量引用和允许工具映射；远端描述与 annotation 不具有授权效力。Schema 变化必须由管理员提升本地 `schema_revision` 才能形成新目录。快照过期或最近一次发现失败时，不得据此发起新调用。远程 Provider 只发送服务端时间窗口参数，只接收裁剪后的 `summary/items`，任何远程变更能力仍不能进入该目录。
 
 ## 调用流程
 

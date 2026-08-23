@@ -41,6 +41,7 @@ from shieldchain.mcp_auth import build_mcp_auth_runtime
 from shieldchain.mcp_remote.discovery import McpDiscoveryService
 from shieldchain.mcp_remote.peer_config import load_mcp_remote_config
 from shieldchain.mcp_remote.persistence import McpSnapshotStore
+from shieldchain.mcp_remote.runtime import McpRemoteRuntime
 from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
 from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
@@ -79,8 +80,12 @@ def create_app(
         if settings.mcp_remote_config_path is not None
         else None
     )
+    mcp_snapshot_store = McpSnapshotStore(session_factory)
     mcp_remote_discovery = (
-        McpDiscoveryService(McpSnapshotStore(session_factory), settings)
+        McpDiscoveryService(mcp_snapshot_store, settings) if mcp_remote_config is not None else None
+    )
+    mcp_remote_runtime = (
+        McpRemoteRuntime(mcp_snapshot_store, mcp_remote_config, settings)
         if mcp_remote_config is not None
         else None
     )
@@ -120,6 +125,7 @@ def create_app(
     app.state.settings = settings
     app.state.mcp_server = mcp_server
     app.state.mcp_remote_discovery = mcp_remote_discovery
+    app.state.mcp_remote_runtime = mcp_remote_runtime
     app.state.mcp_remote_discovery_outcomes = ()
     app.state.agent_tool_audit_store = agent_tool_audit_store
     app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
@@ -157,6 +163,7 @@ def create_app(
         knowledge=knowledge_service,
         principal_id=settings.rag_demo_principal_id,
         audit_store=agent_tool_audit_store,
+        remote_runtime=mcp_remote_runtime,
     )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(

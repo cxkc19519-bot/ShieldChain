@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～7 已完成，Task 8～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-23）。Task 0～8 已完成，Task 9～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -22,7 +22,7 @@
 | `operations/mcp_tools.py` | 事件、告警、漏洞线索、弱口令线索四类租户化、协议无关的只读 Agent Tool Provider | 保留旧 façade 名称兼容入口，标准 MCP 仅作为边界适配器 |
 | `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计 | 保持 Broker 边界；响应规划角色后续改为严格 Schema 输出 |
 | `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布、OAuth Resource Server 和 `/mcp` Streamable HTTP | 保持为入站协议适配边界；真实身份平台和 TLS 仍需部署验收 |
-| `mcp_remote/` | 管理员固定 YAML、外部 endpoint 网络策略、官方 Client 目录发现和不可变工具快照 | Task 8 只从未过期且已批准的快照构造远程只读 Provider；不得把发现等同于已允许调用 |
+| `mcp_remote/` | 管理员固定 YAML、外部 endpoint 网络策略、官方 Client、不可变快照，以及受预算/并发/速率/熔断约束的远程只读 Provider | 保持服务端参数构造、结果裁剪和运行快照绑定；不得接入外部变更工具 |
 | `agents/` | 角色、上下文、交接、预算、结构化领域合同 | 保留并接入通用运行模型；不恢复已经退役的旧调查页面 |
 | `tools/` | 工具注册、策略、审批、幂等、租约、执行、验证、恢复和控制 | 继续作为唯一可信变更执行边界；外部 MCP 不能绕过它 |
 | `react/` | 失败分类、预算、循环检测、确定性重新规划、轨迹和人工控制 | 接入当前运营链路的通用运行 ID、响应计划和真实工具回执 |
@@ -31,13 +31,13 @@
 
 ### 2.2 必须补齐的缺口
 
-- 已有默认关闭的标准 MCP Server、协议协商、Streamable HTTP、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现和目录快照；仍缺少远程 Provider 调用、外部身份平台联调和真实平台验收；
+- 已有默认关闭的标准 MCP Server、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现、目录快照和受控只读 Provider；仍缺少外部身份平台/真实 peer 联调和真实平台验收；
 - 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
 - 当前响应规划主要是自然语言摘要或 `proposed:` 字符串，缺少现行的严格输出 Schema、计划编译器、证据重绑定和版本化持久化；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
-- 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 已具备固定配置、SSRF/DNS/redirect/TLS 边界和远端 Schema 快照，结果限制、调用预算、熔断及远程 Provider Token 生命周期仍待 Task 8 实现；
+- 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 已具备固定配置、SSRF/DNS/redirect/TLS、Schema 快照、结果限制、调用预算、速率、并发、熔断和 bearer_env 凭据隔离；OAuth Client Credentials 和真实 peer 兼容性仍待部署验证；
 - 已有官方 Python SDK 的内存与 ASGI 兼容性基线；尚无完整 conformance、安全门禁和外部平台兼容性验收证据。
 
 ## 3. 完成定义
@@ -1274,6 +1274,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 8：受控外部 MCP Provider
 
+> 状态：已完成（2026-08-23）。只有最新一次发现成功、尚未过期且仍与管理员 endpoint 一致的快照进入运行；外部状态变更工具仍统一拒绝。
+
 目标：让获批准的外部只读工具进入统一 Broker。
 
 修改：
@@ -1290,6 +1292,21 @@ LIVE_MCP_CALL_LIMIT=0
 - 超时、巨大结果、无效 structured content、断流和熔断；
 - 入站 Token 不透传；
 - 外部变更工具默认拒绝。
+
+实施与验证记录（2026-08-23）：
+
+- 新增 `mcp_remote/client.py` 和 `remote_provider.py`，继续使用官方 `Client(..., mode="auto")`；HTTP 连接沿用 Task 7 的 IP 固定、Host/SNI、实际 peer、TLS、无代理和无重定向边界；
+- 请求参数只能由服务端时间窗口生成，第一版固定为 `start_at`、`end_at` 和 `limit=50`；模型不能提供 URL、Token、任意 target 或额外远程参数；
+- 每次 `tools/call` 前重新执行受限 `tools/list` 并与运行固定的 input/output Schema 直接比较；名称缺失或 Schema 漂移返回 `mcp_remote_schema_changed`，不调用工具；
+- 只接受 `structuredContent` 中的 `summary: string` 和 `items: string[]`；忽略非公开字段和所有非结构化 content，最多保留 50 条、单条 512 字、摘要 1000 字和 64 KiB 公开结果；
+- HTTP 流对 Content-Length 和 chunked 数据执行 2 MiB 硬上限，要求 `Accept-Encoding: identity` 并拒绝压缩响应，避免压缩展开绕过；超限立即中止且不保存原文；
+- 每次运行共享最多 10 次外部调用预算；每 peer 默认并发 4、每分钟 30 次，连续 5 次失败后熔断 60 秒。Settings 具有硬上界，模型和远端结果不能扩大；
+- bearer secret 每次只从 peer 专属环境变量读取并放入内存 Authorization Header；入站 MCP Token、原始远端错误、响应原文和异常堆栈均不持久化；
+- Broker 以本地 `allowed_roles` 动态发布远程别名，远端描述和 annotation 不进入模型工具说明；同步内置 Provider 与异步远程 Provider 复用同一 Broker；
+- 远程调用自动覆盖审计方向为 `mcp_outbound`，保存 peer、工具 identity、peer catalog/schema revision、公开参数、稳定终态、结果字节数和裁剪标记；
+- 新增 Alembic `20260823_04` 和 `agent_run_mcp_snapshots`，把每个运行选择的 peer snapshot/revision 持久化；刷新目录不会替换运行中的快照；
+- 官方 Test Server 成功调用、Tool Error、无效 structured content、超时、超大/压缩边界、Schema 漂移、过期、缺凭据、预算、速率、并发、熔断、角色拒绝、出站审计、运行绑定和迁移测试通过；Task 0～8 相关组合回归：`268 passed`；
+- 当前未与真实外部 MCP 平台进行网络、TLS、Bearer audience、长期限流或故障恢复联调；只实现 `bearer_env`，没有 OAuth Client Credentials Token 获取/刷新缓存，不能表述为真实平台已经商用验收。
 
 建议提交：`feat: call approved external mcp read tools safely`
 

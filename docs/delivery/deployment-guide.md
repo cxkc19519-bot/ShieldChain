@@ -104,9 +104,9 @@ curl --include https://shieldchain.example.edu/mcp
 
 关闭后 `/mcp` 不应再由后端提供。保留数据库中的 `agent_tool_calls` 审计；已有审计行时 Alembic 会拒绝降级删除审计表。若必须回滚代码，先备份数据库并按留存要求迁移审计记录，不得关闭外键或直接删除表绕过保护。
 
-## 外部 MCP 目录发现
+## 外部 MCP 只读 Provider
 
-外部 MCP 默认未配置且不会联网。当前实现只发现目录并保存快照，不执行远程 `tools/call`；远程 Provider、结果裁剪、调用预算和熔断属于后续 Task 8。
+外部 MCP 默认未配置且不会联网。管理员启用 peer 且启动发现成功后，未过期的批准快照可进入新安全运营报告的 Broker；只有模型在本地 `allowed_roles` 范围内选择该别名时才执行远程 `tools/call`。模型不可用时的确定性降级不会自动调用外部工具。
 
 从示例复制实际配置。实际文件已被 `.gitignore` 排除：
 
@@ -124,6 +124,8 @@ chmod 600 config/mcp/servers.yaml
 - `schema_revision` 是管理员审批标签。远端 Schema 变化时先保持旧值启动验证；看到 `mcp_schema_changed` 后复核新结构，确认安全才提升 revision；
 - `token_env` 只写环境变量名称，不写 Token。每个 peer 使用独立 Token，不得复用 ShieldChain 入站用户 Token；
 - TLS 校验不能关闭。内部 CA 使用容器内绝对路径 `tls_ca_bundle`，并以只读 bind mount 注入。
+- 第一版远程工具必须接受服务端生成的 `start_at: string`、`end_at: string`、`limit: integer`，并返回 `structuredContent={"summary": string, "items": string[]}`；其他形状会失败关闭，不从自由文本猜测结果；
+- peer 使用的服务身份必须在远端仅授予所列只读工具权限。远端 annotation 不能证明实现没有副作用，管理员必须在目标平台同时执行最小权限控制。
 
 示例内网配置片段：
 
@@ -148,7 +150,8 @@ services:
 启动与更新：
 
 ```bash
-export APPROVED_SECURITY_PLATFORM_MCP_TOKEN='从受控 Secret 系统注入，不要写入 shell 历史'
+read -rsp 'Remote MCP token: ' APPROVED_SECURITY_PLATFORM_MCP_TOKEN
+export APPROVED_SECURITY_PLATFORM_MCP_TOKEN
 docker compose config --quiet
 docker compose run --rm migrate
 docker compose up -d --build backend
@@ -157,14 +160,16 @@ docker compose logs --since=10m backend
 
 启动时官方 MCP Client 使用 `auto` 协商，优先 `2026-07-28` 并可兼容 `2025-11-25`。连接固定到预解析且通过策略的 IP，同时保留原 Host/TLS SNI 并核对实际 socket peer；发现结束后 DNS 答案改变会拒绝本次目录。重定向、环境代理和 TLS 关闭均不允许。
 
-发现成功会写入 `mcp_peer_snapshots` 与 `mcp_tool_snapshots`。快照不保存 Bearer Token、Authorization Header 或异常详情。刷新失败会保存稳定原因码；最近一次成功目录可供管理员查看，但过期后不能用于新调用。目录 revision 为随机 UUID，Schema 变化通过结构比较和管理员 `schema_revision` 审批，不额外计算文件或 Schema 哈希。
+发现成功会写入 `mcp_peer_snapshots` 与 `mcp_tool_snapshots`。每个新运行再通过 `agent_run_mcp_snapshots` 固定所选 peer snapshot；运行期间刷新不会替换它。快照和审计不保存 Bearer Token、Authorization Header、响应原文或异常详情。刷新失败后旧目录只供查看，不进入新运行。目录 revision 为随机 UUID，Schema 变化通过结构比较和管理员 `schema_revision` 审批，不额外计算文件或 Schema 哈希。
+
+远程调用默认限制：每运行 10 次、每 peer 并发 4、每分钟 30 次、连续 5 次失败后熔断 60 秒；请求 256 KiB、HTTP 响应 2 MiB、公开结果 64 KiB。压缩响应被拒绝，最多公开 50 条字符串线索。调用前再次核对远端 Schema；漂移、超时、超限、Tool Error、断流和熔断均返回稳定失败结果，不能被解释为“未发现风险”。可通过 `/api/v1/mcp/runs/{run_id}/calls` 核对 `mcp_outbound` 审计和裁剪标记。
 
 关闭、轮换与回滚：
 
 1. 将 peer 改为 `enabled: false` 或清空 `MCP_REMOTE_CONFIG_PATH`，滚动重启后端；
 2. Token 轮换时只更新 Secret 注入并重启，不修改或提交 YAML；
-3. 保留快照用于审计。`20260823_03` 在存在快照时拒绝降级删表；确需回滚必须先备份并按留存策略迁移记录；
-4. 当前没有远程工具调用，因此关闭发现不会产生远端动作，也不需要伪造撤销结果。
+3. 保留快照和出站审计。`20260823_04` 在运行仍引用快照时拒绝降级，`20260823_03` 在存在快照时拒绝删表；确需回滚必须先备份并按留存策略迁移记录；
+4. 配置关闭只影响重启后的新运行。正在执行的调用若因重启中断，会按现有恢复规则标记结果未知；不得猜测远端调用成功或失败。
 
 ## 本地模型覆盖
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
@@ -38,7 +40,16 @@ class ReadOnlyAgentTool(Protocol):
     catalog_revision: str
     schema_revision: str
 
-    def call(self, start_at: datetime, end_at: datetime) -> McpToolCallView: ...
+    def call(
+        self, start_at: datetime, end_at: datetime
+    ) -> McpToolCallView | AgentToolExecutionResult | Awaitable[AgentToolExecutionResult]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolExecutionResult:
+    view: McpToolCallView
+    result_bytes: int | None = None
+    truncated: bool = False
 
 
 # Kept for callers that still use the old façade name while the protocol adapter is introduced.
@@ -134,10 +145,7 @@ class AlertMcpTool(_BaseWazuhTool):
                 .order_by(WazuhAlertRow.severity.desc(), WazuhAlertRow.occurred_at.desc())
                 .limit(50)
             ).all()
-        items = [
-            f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}"
-            for row in rows
-        ]
+        items = [f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}" for row in rows]
         critical = sum(1 for row in rows if row.severity >= 12)
         return self._view(
             name=self.name,

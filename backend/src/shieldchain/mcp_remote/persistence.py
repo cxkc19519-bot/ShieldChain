@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     UniqueConstraint,
@@ -84,6 +85,35 @@ class McpToolSnapshotRow(Base):
 Index("ix_mcp_tool_snapshot_alias", McpToolSnapshotRow.alias)
 
 
+class AgentRunMcpSnapshotRow(Base):
+    __tablename__ = "agent_run_mcp_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id", "tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
+            name="fk_agent_run_mcp_snapshot_run_tenant",
+        ),
+        UniqueConstraint("run_id", "peer_id", name="uq_agent_run_mcp_snapshot_peer"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    peer_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    peer_snapshot_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("mcp_peer_snapshots.id"),
+        nullable=False,
+    )
+    catalog_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+Index(
+    "ix_agent_run_mcp_snapshot_peer",
+    AgentRunMcpSnapshotRow.peer_id,
+    AgentRunMcpSnapshotRow.peer_snapshot_id,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class McpToolSnapshot:
     tool_identity: UUID
@@ -134,13 +164,13 @@ class McpSnapshotStore:
                 select(McpPeerSnapshotRow)
                 .where(
                     McpPeerSnapshotRow.peer_id == peer_id,
-                    McpPeerSnapshotRow.status == "accepted",
-                    McpPeerSnapshotRow.expires_at > now,
                 )
                 .order_by(McpPeerSnapshotRow.discovered_at.desc(), McpPeerSnapshotRow.id.desc())
                 .limit(1)
             )
-            return self._to_snapshot(session, row) if row is not None else None
+            if row is None or row.status != "accepted" or _utc(row.expires_at) <= _utc(now):
+                return None
+            return self._to_snapshot(session, row)
 
     def save_accepted(
         self,
@@ -251,3 +281,7 @@ class McpSnapshotStore:
                 for tool in tools
             ),
         )
+
+
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
