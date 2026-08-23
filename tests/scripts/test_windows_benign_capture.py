@@ -103,5 +103,19 @@ def test_powershell_collector_keeps_mutations_in_named_lab_scope() -> None:
     assert "ShieldChainBenignLab" in text
     assert "AllowHeldOut" in text
     assert "LabMsiPath" in text
+    assert "CredentialDirectory" in text
+    assert "Import-Clixml" in text
     assert "'-F', 'pcap'" in text
+    assert """'-f', ('"host {0} and tcp"' -f $targetAddress)""" in text
     assert "Remove-Item -Recurse" not in text
+
+
+def test_benign_msi_fixture_has_no_service_or_firewall_side_effects() -> None:
+    source = (MODULE_DIR / "ShieldChainBenignFixture.wxs").read_text(encoding="utf-8")
+    payload = (MODULE_DIR / "ShieldChainBenignFixture.txt").read_text(encoding="utf-8")
+    assert 'Scope="perMachine"' in source
+    assert 'Source="ShieldChainBenignFixture.txt"' in source
+    assert "<ServiceInstall" not in source
+    assert "<ServiceControl" not in source
+    assert "FirewallException" not in source
+    assert "isolated ShieldChain laboratory" in payload

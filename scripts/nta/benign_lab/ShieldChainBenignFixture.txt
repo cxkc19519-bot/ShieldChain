@@ -1,0 +1,4 @@
+ShieldChain benign Windows administration fixture.
+
+This file exists only to produce an authorized software installation and
+uninstallation transaction inside the isolated ShieldChain laboratory.

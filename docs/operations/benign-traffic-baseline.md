@@ -21,7 +21,7 @@ ShieldChain 将 300 个正常场景按相关变体分组后固定划分为：
 
 ## 当前完成状态
 
-截至 2026-08-22，服务器已完成 Linux 容器可真实执行的 development 采集：
+截至 2026-08-23，本地与服务器已完成可真实执行的 development 采集：
 
 - HTTP 36 条；
 - MariaDB 36 条；
@@ -29,9 +29,10 @@ ShieldChain 将 300 个正常场景按相关变体分组后固定划分为：
 - DNS 18 条；
 - SSH 18 条；
 - SMB 18 条；
-- 合计 162 条正式 development PCAP。
+- Windows 管理 18 条（本地隔离 Hyper-V 网络，待导入服务器）；
+- 本地已采集合计 180 条 development PCAP。
 
-Windows 管理流量的 18 条 development 场景仍为待完成状态。不得用 Linux 命令、伪造文本或文件名标签冒充 Windows 管理流量；应连接 Windows VM/测试主机并采集真实 WinRM、SMB、RDP 或 Wazuh/Sysmon 日志。
+服务器已正式保存并完成双引擎检查的仍是 162 条 Linux 协议 PCAP；Windows 18 条已在本地验签，但在 SSH 恢复、上传、服务器导入和 Suricata/Zeek 离线检查完成前，不计入服务器正式结果。
 
 服务器数据根目录：
 
@@ -88,7 +89,7 @@ python3 scripts/nta/benign_lab/run_service_lab.py smb \
 
 ## Windows 管理流量采集
 
-Windows 场景必须在隔离实验网中使用两台 Windows 主机：一台控制机运行采集器，另一台授权测试机接收 WinRM 管理操作。服务器只有 KVM 能力但当前没有 Windows 镜像或虚拟机，因此仓库不会把 Linux 容器行为伪装成 Windows 样本。
+Windows 场景必须在隔离实验网中使用一台 Windows 控制机和一台 Windows 测试机；也可像本次实测一样，由 Windows 宿主机在 Hyper-V 内部交换机上控制隔离 Windows VM。仓库不会把 Linux 命令、文本记录或文件名标签伪装成 Windows 管理样本。
 
 前置条件：
 
@@ -104,6 +105,14 @@ Windows 场景必须在隔离实验网中使用两台 Windows 主机：一台控
 python scripts/nta/benign_lab/windows_capture_plan.py windows-development-plan.json
 ```
 
+项目提供可审计的无害 MSI 源码，只安装一份说明文本，不创建服务、不修改防火墙、不联网。使用 WiX v5 构建：
+
+```powershell
+wix build `
+  .\scripts\nta\benign_lab\ShieldChainBenignFixture.wxs `
+  -out D:\ShieldChainLab\ShieldChainBenignFixture.msi
+```
+
 在管理员 PowerShell 中查看网卡编号：
 
 ```powershell
@@ -114,14 +123,16 @@ python scripts/nta/benign_lab/windows_capture_plan.py windows-development-plan.j
 
 ```powershell
 .\scripts\nta\benign_lab\Collect-ShieldChainWindowsBaseline.ps1 `
-  -PlanPath .\windows-development-plan.json `
-  -OutputDirectory D:\ShieldChainLab\windows-development `
+  -PlanPath D:\ShieldChainLab\windows-development-plan.json `
+  -OutputDirectory D:\ShieldChainLab\captures\windows-development `
   -TargetHost 192.168.56.20 `
-  -CaptureInterface 4 `
-  -LabMsiPath D:\ShieldChainLab\ShieldChainBenignFixture.msi
+  -CaptureInterface 6 `
+  -DumpcapPath D:\Wireshark\dumpcap.exe `
+  -LabMsiPath D:\ShieldChainLab\ShieldChainBenignFixture.msi `
+  -CredentialDirectory D:\ShieldChainLab\credentials
 ```
 
-采集器会执行真实的临时文件删除、PowerShell 资产查询、测试 MSI 安装/卸载、计划任务创建/删除和专用注册表值写入/删除；所有写操作均限制在 `ShieldChainBenignLab` 名称空间。默认按三个 profile 分别提示输入凭据；冒烟时可用 `-UseSingleCredential`。
+采集器会执行真实的临时文件删除、测试 MSI 安装/卸载、计划任务创建/删除和专用注册表值写入/删除；所有写操作均限制在 `ShieldChainBenignLab` 名称空间。默认按三个 profile 分别提示输入凭据；`-CredentialDirectory` 可加载当前 Windows 用户用 `Export-Clixml` 保存的 DPAPI 凭据，密码不以明文写入脚本或日志；冒烟时可用 `-UseSingleCredential`。
 
 将输出目录复制到服务器后先验签、验数量，再导入正式语料：
 
@@ -132,6 +143,18 @@ python3 scripts/nta/benign_lab/import_windows_captures.py \
 ```
 
 导入器校验 18 个场景、匿名文件名、大小和 SHA-256，拒绝重复、缺失、篡改或覆盖。`validation` 与 `final_blind` 各 6 条，只有规则冻结后才能显式添加 `--allow-held-out` 生成计划和导入。
+
+## 2026-08-23 Windows development 本地采集验收
+
+- 隔离网络：Hyper-V 内部交换机 `ShieldChain-Lab`，宿主机 `192.168.56.1/24`，来宾机 `192.168.56.20/24`，无 NAT；
+- 场景：临时文件操作 6 条、无害 MSI 安装/卸载 6 条、计划任务 4 条、注册表操作 2 条；
+- 账号：`interactive_admin` 4 条、`automation_account` 6 条、`security_operator` 8 条；
+- 文件：18/18 个 classic PCAP，合计 2,073,482 字节，单文件 3,545–354,825 字节；
+- 完整性：JSONL 18 条，文件数量、大小和 SHA-256 不一致数为 0；
+- 协议：18/18 个文件均含 TCP/5985 WinRM 流量，每文件 14–382 个 WinRM 数据包；
+- 清理：临时文件、远端 MSI、测试计划任务、测试注册表值、已安装 fixture 文件残留均为 0；
+- 本地目录：`D:\ShieldChainLab\captures\windows-development-20260823-b`；
+- 当前边界：尚未上传服务器，也尚未运行 Suricata/Zeek，因此本节只证明真实采集与本地完整性，不代表误报验收结果。
 
 ## 离线误报评估
 

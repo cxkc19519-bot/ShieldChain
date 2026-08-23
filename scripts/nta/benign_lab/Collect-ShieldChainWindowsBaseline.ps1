@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $CaptureInterface,
     [string] $DumpcapPath = "C:\Program Files\Wireshark\dumpcap.exe",
     [string] $LabMsiPath,
+    [string] $CredentialDirectory,
     [switch] $UseSsl,
     [switch] $UseSingleCredential,
     [switch] $AllowHeldOut,
@@ -40,6 +41,13 @@ function Test-PrivateIPv4([string] $Address) {
 }
 
 function Get-ProfileCredential([string] $Profile) {
+    if ($CredentialDirectory) {
+        $credentialPath = Join-Path $CredentialDirectory "$Profile.clixml"
+        if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
+            throw "credential file not found for profile '$Profile': $credentialPath"
+        }
+        return Import-Clixml -LiteralPath $credentialPath
+    }
     if ($UseSingleCredential) {
         if (-not $script:SingleCredential) {
             $script:SingleCredential = Get-Credential -Message "Credential for the isolated Windows lab target"
@@ -148,7 +156,7 @@ foreach ($scenario in $plan.scenarios) {
     try {
         $arguments = @(
             '-F', 'pcap', '-i', $CaptureInterface,
-            '-f', "host $targetAddress and tcp",
+            '-f', ('"host {0} and tcp"' -f $targetAddress),
             '-a', "duration:$CaptureSeconds", '-w', $pcap, '-q'
         )
         $capture = Start-Process -FilePath $DumpcapPath -ArgumentList $arguments -PassThru -WindowStyle Hidden
