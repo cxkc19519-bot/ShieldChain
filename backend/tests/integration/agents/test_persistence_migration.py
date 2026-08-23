@@ -75,12 +75,31 @@ def test_sqlite_enforces_every_composite_tenant_boundary() -> None:
         "created_at": now,
         "updated_at": now,
     }
+    parent_values = {
+        "principal_id": "00000000-0000-4000-8000-000000000000",
+        "run_kind": "incident_investigation",
+        "status": "pending",
+        "goal": "test investigation",
+        "catalog_revision": "legacy-investigation-v1",
+        "revision": 0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    with engine.begin() as connection:
+        connection.execute(
+            tables["agent_runs"].insert(),
+            {**parent_values, "id": "r-wrong", "tenant_id": OTHER_TENANT},
+        )
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(
             tables["investigation_runs"].insert(),
-            {**run_values, "tenant_id": OTHER_TENANT},
+            {**run_values, "id": "r-wrong", "tenant_id": OTHER_TENANT},
         )
     with engine.begin() as connection:
+        connection.execute(
+            tables["agent_runs"].insert(),
+            {**parent_values, "id": "r", "tenant_id": DEMO_TENANT},
+        )
         connection.execute(
             tables["investigation_runs"].insert(),
             {**run_values, "tenant_id": DEMO_TENANT},

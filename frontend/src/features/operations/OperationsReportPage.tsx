@@ -98,7 +98,7 @@ export function OperationsReportPage() {
         </button>)}
       </aside>
       <div className="operations-detail">
-        <header className="operations-detail__header"><div><p className="eyebrow">{selected.agent_name}</p><h2>{selected.id}</h2><p>{dateTime(selected.start_at)} 至 {dateTime(selected.end_at)}</p></div><div className="operations-downloads"><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=markdown`}><FileDown size={16} />下载 Markdown</a><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=html`}><FileDown size={16} />下载 HTML</a></div></header>
+        <header className="operations-detail__header"><div><p className="eyebrow">{selected.agent_name}</p><h2>{selected.id}</h2><p>{dateTime(selected.start_at)} 至 {dateTime(selected.end_at)}</p><p>{selected.run_status === 'legacy_without_run' ? '历史报告：无通用运行记录（legacy_without_run）' : `运行 ID：${selected.run_id}`}</p></div><div className="operations-downloads"><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=markdown`}><FileDown size={16} />下载 Markdown</a><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=html`}><FileDown size={16} />下载 HTML</a></div></header>
         <section aria-label="智能体执行阶段" className="operations-stages">
           {selected.stages.map((stage, index) => { const Icon = STEP_ICONS[index] ?? ShieldCheck; return <article key={stage.key}><Icon size={18} aria-hidden="true" /><div><strong>{index + 1}. {stage.label}</strong><p>{stage.detail}</p></div><span className={stage.status === 'fallback' ? 'is-fallback' : ''}>{stage.status === 'fallback' ? '保守降级' : '已完成'}</span></article> })}
         </section>

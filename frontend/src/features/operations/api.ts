@@ -20,6 +20,8 @@ export type AgentRoleRun = { role: string; label: string; status: 'completed' | 
 
 export type OperationsReport = {
   id: string
+  run_id: string | null
+  run_status: 'completed' | 'legacy_without_run'
   generated_at: string
   start_at: string
   end_at: string

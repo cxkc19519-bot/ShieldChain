@@ -1,6 +1,6 @@
 # ShieldChain 开发路线
 
-> 文档状态：当前路线（更新于 2026-08-22）。早期 Phase 1–8 计划保存在 `docs/superpowers/`，仅供历史追溯。
+> 文档状态：当前路线（更新于 2026-08-23）。早期 Phase 1–8 计划保存在 `docs/superpowers/`，仅供历史追溯。
 
 ## 已完成
 
@@ -59,13 +59,15 @@
 - Task 0 已完成：官方 MCP Python SDK 2.0.0 协商 `2026-07-28`，内存工具发现、调用和现有运营工具回归通过；
 - Task 1 已完成：在现有 `operations` 模块中完成协议无关工具与 Broker 命名，保留旧 façade 兼容别名，没有新增架构层；
 - Task 2 已完成：补齐 UTC/31 天窗口校验、稳定失败结果、失败缓存和报告/前端失败呈现；
-- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 3～14 小步实施；
-- 当前仍未实现标准 MCP 网络协议层、外部 MCP 接入和真实设备生产闭环，不得提前标记完成。
+- Task 3 已完成：默认关闭的标准 MCP `2026-07-28` `/mcp` 入口可发布四类只读工具，完成鉴权前禁止生产启用；
+- Task 4 已完成：新增通用 `agent_runs`、`operations_runs`，回填旧调查父行并为新运营报告提供真实运行 ID；
+- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 5～14 小步实施；
+- 当前仍未实现 MCP 生产鉴权、外部 MCP 接入、统一调用审计和真实设备生产闭环，不得提前标记完成。
 
 ## 下一阶段
 
-1. 建立协议无关 Agent Tool 和通用运行模型；
-2. 完成标准 MCP Server 的生产鉴权与审计，并实现受控外部 MCP Client 和严格响应计划；
+1. 为内部、入站和出站 Agent Tool 调用增加统一审计；
+2. 完成标准 MCP Server 的生产鉴权，并实现受控外部 MCP Client 和严格响应计划；
 3. 将可信执行回执、新遥测、验证和重规划接成可恢复闭环；
 4. 完成本地模型健康检查和结构化输出验收；
 5. 接入真实漏洞和弱密码数据源；

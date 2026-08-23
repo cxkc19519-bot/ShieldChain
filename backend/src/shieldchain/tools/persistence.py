@@ -39,7 +39,7 @@ class TrustedToolCallRow(Base):
         ),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_trusted_tool_call_run_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_trusted_tool_call_revision"),

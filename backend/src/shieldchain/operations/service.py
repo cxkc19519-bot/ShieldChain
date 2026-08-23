@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 from datetime import UTC, datetime, timedelta
@@ -10,9 +11,11 @@ from uuid import UUID, uuid4
 import httpx
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
+from shieldchain.operations.persistence import OperationsRunRow
 
 from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
@@ -90,6 +93,9 @@ class SecurityOperationsReportAgent:
         tools: tuple[ReadOnlyAgentTool, ...] | None = None,
     ) -> None:
         self._settings = settings
+        self._session_factory = session_factory
+        self._tenant_id = tenant_id
+        self._principal_id = principal_id
         self._store = store
         self._tools = tools or standard_agent_tools(session_factory, tenant_id)
         self._team = RealDataAgentTeam(
@@ -105,6 +111,35 @@ class SecurityOperationsReportAgent:
         if end_at - start_at > timedelta(days=31):
             raise ValueError("单次报告时间范围不能超过 31 天")
 
+        run_id = uuid4()
+        report_id = f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
+        self._create_run(run_id, report_id, start_at, end_at, now)
+        try:
+            report = await self._generate_report(
+                run_id=run_id,
+                report_id=report_id,
+                now=now,
+                start_at=start_at,
+                end_at=end_at,
+            )
+        except asyncio.CancelledError:
+            self._finish_run(run_id, "cancelled", datetime.now(UTC))
+            raise
+        except Exception:
+            self._finish_run(run_id, "failed", datetime.now(UTC))
+            raise
+        self._finish_run(run_id, "completed", datetime.now(UTC))
+        return report
+
+    async def _generate_report(
+        self,
+        *,
+        run_id: UUID,
+        report_id: str,
+        now: datetime,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> OperationsReportView:
         stages = [
             ReportStageView(
                 key="time_window",
@@ -174,7 +209,9 @@ class SecurityOperationsReportAgent:
             )
         )
         report = OperationsReportView(
-            id=f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}",
+            id=report_id,
+            run_id=run_id,
+            run_status="completed",
             generated_at=now,
             start_at=start_at,
             end_at=end_at,
@@ -193,6 +230,50 @@ class SecurityOperationsReportAgent:
 
     def get(self, report_id: str) -> OperationsReportView | None:
         return self._store.get(report_id)
+
+    def _create_run(
+        self,
+        run_id: UUID,
+        report_id: str,
+        start_at: datetime,
+        end_at: datetime,
+        now: datetime,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            session.add(
+                AgentRunRow(
+                    id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    principal_id=str(self._principal_id),
+                    run_kind="operations_report",
+                    status="running",
+                    goal="Generate a bounded security operations report.",
+                    catalog_revision="builtin-read-only-v1",
+                    revision=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                OperationsRunRow(
+                    run_id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    start_at=start_at,
+                    end_at=end_at,
+                    report_id=report_id,
+                    created_at=now,
+                )
+            )
+
+    def _finish_run(self, run_id: UUID, status: str, now: datetime) -> None:
+        with self._session_factory.begin() as session:
+            row = session.get(AgentRunRow, str(run_id))
+            if row is None:
+                raise RuntimeError("operations agent run is missing")
+            row.status = status
+            row.revision += 1
+            row.updated_at = now
+            row.completed_at = now
 
     @staticmethod
     def _utc(value: datetime) -> datetime:

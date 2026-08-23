@@ -37,7 +37,7 @@ class ReactLoopRow(Base):
         UniqueConstraint("run_id", name="uq_react_loop_run"),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_react_loop_run_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_react_loop_revision"),

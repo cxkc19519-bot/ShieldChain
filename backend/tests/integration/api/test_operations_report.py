@@ -4,11 +4,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url
 from shieldchain.main import create_app
+from shieldchain.operations.persistence import OperationsRunRow
 from shieldchain.wazuh.persistence import WazuhAlertRow
 
 
@@ -63,10 +66,21 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         )
         assert response.status_code == 201
         body = response.json()
+        assert body["run_id"]
+        assert body["run_status"] == "completed"
         calls = {item["name"]: item for item in body["tool_calls"]}
         assert calls["security.alerts.list"]["result_count"] == 1
         assert calls["security.vulnerabilities.list"]["items"][0].startswith("CVE-2026-1234")
         assert len(body["stages"]) == 6
+    with app.state.incident_session_factory() as session:
+        run = session.get(AgentRunRow, body["run_id"])
+        operations_run = session.get(OperationsRunRow, body["run_id"])
+        assert run is not None
+        assert run.run_kind == "operations_report"
+        assert run.status == "completed"
+        assert operations_run is not None
+        assert operations_run.report_id == body["id"]
+        assert session.scalar(select(AgentRunRow).where(AgentRunRow.id == body["run_id"])) is run
     engine.dispose()
 
 
@@ -104,4 +118,32 @@ def test_operations_report_exposes_sanitized_tool_failure(tmp_path: Path) -> Non
     assert next(stage for stage in body["stages"] if stage["key"] == "mcp_tools")["status"] == (
         "fallback"
     )
+    engine.dispose()
+
+
+def test_operations_report_failure_marks_generic_run_failed(tmp_path: Path) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'operations-run-failure.db'}")
+    Base.metadata.create_all(engine)
+    settings = Settings(_env_file=None, assistant_data_root=tmp_path / "assistant")
+    app = create_app(database_engine=engine, settings=settings)
+
+    async def fail(*_args):
+        raise RuntimeError("controlled report failure")
+
+    app.state.security_operations_report_agent._team.run = fail
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/v1/operations/reports",
+            json={"start_at": "2026-08-01T00:00:00Z", "end_at": "2026-08-02T00:00:00Z"},
+        )
+
+    assert response.status_code == 500
+    with app.state.incident_session_factory() as session:
+        run = session.scalar(
+            select(AgentRunRow).where(AgentRunRow.run_kind == "operations_report")
+        )
+        assert run is not None
+        assert run.status == "failed"
+        assert run.completed_at is not None
+        assert session.get(OperationsRunRow, run.id) is not None
     engine.dispose()

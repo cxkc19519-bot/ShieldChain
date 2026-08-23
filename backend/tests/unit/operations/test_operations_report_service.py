@@ -10,13 +10,19 @@ from uuid import UUID
 import pytest
 
 from shieldchain.core.config import Settings
+from shieldchain.db.base import Base
+from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.operations import service as service_module
 from shieldchain.operations.react_collaboration import (
     _SPECIALISTS,
     AgentToolBroker,
     RealDataAgentTeam,
 )
-from shieldchain.operations.schemas import McpToolCallView, OperationsReportRequest
+from shieldchain.operations.schemas import (
+    McpToolCallView,
+    OperationsReportRequest,
+    OperationsReportView,
+)
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 
 
@@ -72,8 +78,10 @@ def _team(settings: Settings | None = None) -> RealDataAgentTeam:
 
 def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Path) -> None:
     tools = _tools()
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'operations-unit.db'}")
+    Base.metadata.create_all(engine)
     agent = SecurityOperationsReportAgent(
-        None,  # type: ignore[arg-type]
+        create_session_factory(engine),
         settings=Settings(_env_file=None),
         tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
         store=OperationsReportStore(tmp_path),
@@ -101,6 +109,39 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     assert "<script>" not in report.html
     assert "&lt;script&gt;" in report.html
     assert agent.get(report.id) == report
+    engine.dispose()
+
+
+def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
+    store = OperationsReportStore(tmp_path)
+    path = tmp_path / "operations-reports" / "reports.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "OPS-LEGACY",
+                    "generated_at": "2026-08-01T00:00:00Z",
+                    "start_at": "2026-08-01T00:00:00Z",
+                    "end_at": "2026-08-02T00:00:00Z",
+                    "agent_name": "安全运营报告智能体",
+                    "model": None,
+                    "stages": [],
+                    "collaboration": [],
+                    "tool_calls": [],
+                    "markdown": "legacy",
+                    "html": "<p>legacy</p>",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = store.list()[0]
+
+    assert isinstance(report, OperationsReportView)
+    assert report.run_id is None
+    assert report.run_status == "legacy_without_run"
 
 
 def test_react_superagent_controls_specialist_order() -> None:

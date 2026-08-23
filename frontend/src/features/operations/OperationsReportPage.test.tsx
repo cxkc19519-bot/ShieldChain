@@ -16,6 +16,8 @@ describe('OperationsReportPage', () => {
   it('shows a failed tool as unknown instead of an empty successful query', async () => {
     api.listOperationsReports.mockResolvedValue([{
       id: 'OPS-20260822-FAILURE',
+      run_id: null,
+      run_status: 'legacy_without_run',
       generated_at: '2026-08-22T00:00:00Z',
       start_at: '2026-08-21T00:00:00Z',
       end_at: '2026-08-22T00:00:00Z',
@@ -43,5 +45,6 @@ describe('OperationsReportPage', () => {
     expect(screen.getByText('调用失败 · 未取得可信结果')).toBeVisible()
     expect(screen.queryByText('无匹配记录')).not.toBeInTheDocument()
     expect(screen.queryByText('调用完成')).not.toBeInTheDocument()
+    expect(screen.getByText('历史报告：无通用运行记录（legacy_without_run）')).toBeVisible()
   })
 })

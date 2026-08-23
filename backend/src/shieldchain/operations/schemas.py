@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -58,6 +59,8 @@ class AgentRoleRunView(BaseModel):
 
 class OperationsReportView(BaseModel):
     id: str
+    run_id: UUID | None = None
+    run_status: Literal["completed", "legacy_without_run"] = "legacy_without_run"
     generated_at: datetime
     start_at: datetime
     end_at: datetime

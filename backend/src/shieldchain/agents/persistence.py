@@ -31,6 +31,42 @@ _TERMINATIONS = (
     "'completed','needs_review','budget_exhausted','unsafe',"
     "'dependency_unavailable','failed'"
 )
+_RUN_KINDS = "'incident_investigation','operations_report'"
+_RUN_STATUSES = (
+    "'pending','running','awaiting_approval','awaiting_execution','verifying',"
+    "'needs_review','completed','failed','cancelled'"
+)
+
+
+class AgentRunRow(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_agent_run_id_tenant"),
+        CheckConstraint(f"run_kind IN ({_RUN_KINDS})", name="ck_agent_run_kind"),
+        CheckConstraint(f"status IN ({_RUN_STATUSES})", name="ck_agent_run_status"),
+        CheckConstraint("revision >= 0", name="ck_agent_run_revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    goal: Mapped[str] = mapped_column(String(4096), nullable=False)
+    catalog_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+Index(
+    "ix_agent_run_tenant_status_created",
+    AgentRunRow.tenant_id,
+    AgentRunRow.status,
+    AgentRunRow.created_at,
+    AgentRunRow.id,
+)
 
 
 class CaseContextRow(Base):
@@ -40,7 +76,7 @@ class CaseContextRow(Base):
         UniqueConstraint("id", "tenant_id", name="uq_case_context_id_tenant"),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_case_context_run_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_case_context_revision_nonnegative"),
@@ -105,7 +141,7 @@ class AgentPrivateContextRow(Base):
         UniqueConstraint("run_id", "role", name="uq_private_context_run_role"),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_private_context_run_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_private_context_revision_nonnegative"),
@@ -135,7 +171,7 @@ class AgentHandoffRow(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_agent_handoff_run_tenant",
         ),
         CheckConstraint(f"sender_role IN ({_ROLES})", name="ck_handoff_sender_role"),
@@ -168,7 +204,7 @@ class AgentExecutionRow(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_agent_execution_run_tenant",
         ),
         CheckConstraint(f"role IN ({_ROLES})", name="ck_agent_execution_role"),
