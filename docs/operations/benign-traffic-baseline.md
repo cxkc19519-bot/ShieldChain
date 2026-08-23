@@ -175,6 +175,17 @@ python3 scripts/nta/benign_lab/import_windows_captures.py \
 
 为防止降低攻击检测能力，使用 development 攻击集中的 12 个代表性 PCAP 做规则回归（未使用 validation 或 final_blind 调参）。结果目录为 `/home/user/jhk/nta-dataset/results-winrm-rule-regression/run-20260823-131813`：12/12 个样本双引擎执行成功，12/12 仍被检测为“数据库攻击与数据提取”，累计产生 15 条安全告警。该回归只证明本次修正没有破坏这 12 个已选样本，不能替代冻结集验收。
 
+## 2026-08-23 validation 实测结果
+
+规则和流水线冻结后，重新采集并一次性分析了 60 条 validation 正常流量：HTTP、MariaDB、SMTP 各 12 条，DNS、SSH、SMB、Windows 管理各 6 条。Windows validation 位于本地 `D:\ShieldChainLab\captures\windows-validation-20260823-v10` 和服务器 `/home/user/jhk/nta-benign-corpus-v10/windows-validation`。
+
+- Suricata 成功 60/60，Zeek 成功 60/60；
+- 安全告警样本 0/60，安全告警 0；
+- 上下文观察 83 条，均来自正常 WinRM；
+- 信息/解码事件 2,183 条；
+- 零事件的单侧 95% 精确上界约为 4.87%；该值只描述本轮隔离场景，不是生产误报率。
+
+运行目录为 `/home/user/jhk/nta-benign-corpus-v10/validation-all-v10-analysis/run-20260823-134702`。只读锁定摘要为 `/home/user/jhk/nta-dataset-blind/evaluation/benign-validation-v10-locked-result.json`，SHA-256 为 `ab6f3461730ff389577067c1ab1b0758334c9ad2b1141cdbe3688a89d087b3a6`。`final_blind` 仍未运行。
 ## 离线误报评估
 
 将正式 development PCAP 放入单独输入目录，使用现有离线链路运行 Suricata 与 Zeek：
