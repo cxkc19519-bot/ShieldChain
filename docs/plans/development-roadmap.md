@@ -65,13 +65,14 @@
 - Task 6 已完成：实现外部 issuer/JWKS 的 OAuth Resource Server、固定 subject 映射、scope、RFC 9728 元数据和 Nginx MCP 边界；
 - Task 7 已完成：实现外部 MCP 固定 YAML、SSRF/TLS/DNS/redirect 防护、官方 Client 发现、Schema 审批 revision 和不可变目录快照；
 - Task 8 已完成：实现远程只读 Provider、运行快照固定、结果裁剪、调用预算、并发/速率、熔断、凭据隔离和统一出站审计；
-- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 9～14 小步实施；
+- Task 9 已完成：实现严格响应计划候选、服务端证据/目标/工具重绑定、版本化四表、安全历史导入和失败关闭；
+- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 10～14 小步实施；
 - 当前仍未完成真实身份平台/TLS、真实外部 MCP peer 联调和真实设备生产闭环，不得提前标记完成。
 
 ## 下一阶段
 
-1. 实现严格响应计划领域、计划编译和版本化持久化；
-2. 将响应规划角色接入严格候选 Schema 和确定性降级；
+1. 将响应规划角色接入严格候选 Schema 和确定性降级；
+2. 将版本化计划动作逐项接入可信工具策略、审批和幂等边界；
 3. 将可信执行回执、新遥测、验证和重规划接成可恢复闭环；
 4. 完成本地模型健康检查和结构化输出验收；
 5. 接入真实漏洞和弱密码数据源；

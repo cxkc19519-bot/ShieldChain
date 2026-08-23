@@ -2,7 +2,7 @@
 
 > 文档状态：当前参考（更新于 2026-08-23）。运营 MCP 查询与真实处置工具是两条不同的安全边界。
 
-当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现。外部 MCP 只读工具可从管理员固定配置安全发现、保存快照并以受控 Provider 进入 Broker；运行固定 snapshot revision，调用受结果上限、预算、并发、速率、熔断和独立凭据约束。真实身份平台、外部 peer/TLS 联调和 OAuth Client Credentials 仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
+当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现。外部 MCP 只读工具可从管理员固定配置安全发现、保存快照并以受控 Provider 进入 Broker；运行固定 snapshot revision，调用受结果上限、预算、并发、速率、熔断和独立凭据约束。严格响应计划编译器已经实现服务端证据/目标重绑定、工具定义校验和版本化持久化，但运营响应规划角色尚未接线，计划也尚未生成可信工具调用。真实身份平台、外部 peer/TLS 联调和 OAuth Client Credentials 仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
 
 ## 两类工具
 
@@ -13,6 +13,8 @@
 ### 可信处置工具
 
 隔离主机、封禁 IP、停用账户等真实动作必须进入独立工具网关，经过策略、审批、租户绑定、幂等、租约、超时、恢复和执行后验证。当前报告智能体不会自动调用这些动作。
+
+响应计划只是候选建议。服务端会从同一调查运行的已确认证据重新解析目标，并按本地可信工具定义固定版本、校验参数、评估风险和审批要求；编译成功仍不代表计划接受、动作获批、工具执行或效果验证。
 
 ### 外部 MCP 目录
 

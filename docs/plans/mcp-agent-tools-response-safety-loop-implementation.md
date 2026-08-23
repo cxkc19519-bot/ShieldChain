@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～8 已完成，Task 9～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-23）。Task 0～9 已完成，Task 10～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -20,11 +20,12 @@
 | 当前模块 | 已有能力 | 后续处理 |
 | --- | --- | --- |
 | `operations/mcp_tools.py` | 事件、告警、漏洞线索、弱口令线索四类租户化、协议无关的只读 Agent Tool Provider | 保留旧 façade 名称兼容入口，标准 MCP 仅作为边界适配器 |
-| `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计 | 保持 Broker 边界；响应规划角色后续改为严格 Schema 输出 |
+| `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计 | 保持 Broker 边界；Task 10 再把响应规划角色接到现有严格 Schema |
 | `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布、OAuth Resource Server 和 `/mcp` Streamable HTTP | 保持为入站协议适配边界；真实身份平台和 TLS 仍需部署验收 |
 | `mcp_remote/` | 管理员固定 YAML、外部 endpoint 网络策略、官方 Client、不可变快照，以及受预算/并发/速率/熔断约束的远程只读 Provider | 保持服务端参数构造、结果裁剪和运行快照绑定；不得接入外部变更工具 |
 | `agents/` | 角色、上下文、交接、预算、结构化领域合同 | 保留并接入通用运行模型；不恢复已经退役的旧调查页面 |
 | `tools/` | 工具注册、策略、审批、幂等、租约、执行、验证、恢复和控制 | 继续作为唯一可信变更执行边界；外部 MCP 不能绕过它 |
+| `response_planning/` | 严格候选 Schema、证据/目标重绑定、可信工具定义校验、服务端风险和审批计算、版本化计划四表 | Task 10 接入响应规划角色；Task 11 才把计划动作编译为可信工具调用 |
 | `react/` | 失败分类、预算、循环检测、确定性重新规划、轨迹和人工控制 | 接入当前运营链路的通用运行 ID、响应计划和真实工具回执 |
 | `/api/v1/tools/*`、`/api/v1/react/*` | 可信工具与 ReAct 公开轨迹、审批和人工控制 | 保持兼容，在新运行模型上扩展，不把 MCP 传输端点放入 REST 路由 |
 | `/operations-report`、`/agents`、`/response` | 运营报告、公开 ReAct 轨迹和处置中心页面 | 增加统一运行、响应计划、MCP 调用来源和闭环状态展示 |
@@ -33,7 +34,7 @@
 
 - 已有默认关闭的标准 MCP Server、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现、目录快照和受控只读 Provider；仍缺少外部身份平台/真实 peer 联调和真实平台验收；
 - 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
-- 当前响应规划主要是自然语言摘要或 `proposed:` 字符串，缺少现行的严格输出 Schema、计划编译器、证据重绑定和版本化持久化；
+- 严格响应计划 Schema、计划编译器、证据重绑定和版本化持久化已经完成，但当前响应规划角色仍输出自然语言摘要或 `proposed:` 字符串，尚未在运营运行中调用编译器；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
@@ -1312,6 +1313,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 9：响应计划领域、Schema 与持久化
 
+> 状态：已完成（2026-08-23）。本 Task 只把不可信模型候选编译为可审计计划；没有把计划视为审批，也没有创建或执行可信工具调用。
+
 目标：替换自然语言动作和松散 `proposed:` 字符串。
 
 修改：
@@ -1326,6 +1329,18 @@ LIVE_MCP_CALL_LIMIT=0
 - 证据、工具、参数、依赖图、revision 和状态机测试；
 - 模型不能注入风险、审批、tenant、URL、Shell 或代码；
 - 原子保存和跨租户拒绝。
+
+实施与验证记录（2026-08-23）：
+
+- 新增 `response_planning/`，候选只接受单个完整 JSON 对象；Pydantic 严格拒绝额外字段、重复 key、Markdown 包装、尾随内容、非有限数字、向前依赖和超过 8 个动作；
+- 模型只能给出工具候选、证据引用、非目标公共参数、期望状态和公开说明；tenant、principal、role、risk、approval、policy、幂等键、timeout、credential、URL、Shell、代码和直接目标字段均被拒绝；
+- 编译器在写入前校验同租户 run/case/调查绑定，重新读取同一运行内已确认且 31 天内的新鲜证据，并从证据解析 IP、端点或账号目标；候选不能覆盖服务端目标；
+- 工具名称、固定版本、参数、期望状态和配对验证器复用现有 `TrustedToolRegistry` 校验；风险与审批要求只取服务端定义，模型声明不参与决策；
+- 新增 `response_plans`、`response_plan_revisions`、`response_plan_actions`、`response_plan_events` 四表。重新编译只追加 revision，失败候选保存稳定原因码但不保存原始模型输出或动作；
+- 新增 Alembic `20260823_05`。历史 `trusted_tool_calls` 按 tenant/run 安全导入 `legacy_imported` 计划，保留原 `plan_id`，不推断历史意图、审批或动作；发现同一历史运行跨 case 时迁移拒绝；
+- 为 `trusted_tool_calls` 预留可空 `plan_revision_id` 和 `plan_action_id` 外键；旧调用保持兼容，Task 11 才为新计划动作建立实际调用；
+- 严格候选、状态机、证据新鲜度、动作依赖、失败原子性、跨租户、revision、历史迁移和安全降级测试通过；Task 0～9 相关组合回归：`287 passed`；
+- 当前运营响应规划角色尚未产出该严格候选，也没有 accept/reject API、计划到可信工具调用映射或自动执行；这些分别属于 Task 10 和 Task 11。
 
 建议提交：`feat: add compiled and versioned response plans`
 

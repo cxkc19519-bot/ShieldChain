@@ -171,6 +171,25 @@ docker compose logs --since=10m backend
 3. 保留快照和出站审计。`20260823_04` 在运行仍引用快照时拒绝降级，`20260823_03` 在存在快照时拒绝删表；确需回滚必须先备份并按留存策略迁移记录；
 4. 配置关闭只影响重启后的新运行。正在执行的调用若因重启中断，会按现有恢复规则标记结果未知；不得猜测远端调用成功或失败。
 
+## 响应计划迁移与回滚
+
+`20260823_05` 创建 `response_plans`、`response_plan_revisions`、`response_plan_actions` 和 `response_plan_events`，并为 `trusted_tool_calls` 增加可空的 plan revision/action 关联。执行升级前先做数据库备份，再运行：
+
+```bash
+docker compose run --rm migrate
+docker compose run --rm backend alembic current
+```
+
+历史可信工具调用按 tenant/run 导入为 `legacy_imported` 计划。迁移保留原 `trusted_tool_calls.plan_id`，不会根据旧记录推断计划意图、审批状态或动作；如果同一历史运行关联多个 case，升级会拒绝，需先人工审计数据来源，不能任意选择一个 case。
+
+尚无非历史编译计划时可回退到 `20260823_04`：
+
+```bash
+docker compose run --rm backend alembic downgrade 20260823_04
+```
+
+一旦存在状态不是 `legacy_imported` 的计划，降级会拒绝，防止删除计划历史。需要回退代码时应保留数据库在 `20260823_05`，或先导出并按留存要求归档计划、revision、动作和事件；不得直接删表绕过保护。
+
 ## 本地模型覆盖
 
 ```bash
