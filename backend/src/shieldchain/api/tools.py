@@ -11,7 +11,13 @@ from shieldchain.tools.api_service import ToolApiNotFound, TrustedToolApiService
 from shieldchain.tools.approvals import ApprovalError
 from shieldchain.tools.control import ToolControlError
 from shieldchain.tools.domain import ApprovalOutcome
+from shieldchain.tools.plan_service import (
+    ResponsePlanDecisionConflict,
+    ResponsePlanDecisionNotFound,
+)
 from shieldchain.tools.schemas import (
+    ResponsePlanDecisionInput,
+    ResponsePlanMutationView,
     ToolControlInput,
     ToolDecisionInput,
     ToolEmergencyInput,
@@ -41,6 +47,32 @@ def trace(run_id: UUID, request: Request) -> ToolTraceView:
     except ToolApiNotFound:
         raise ApiError(
             "trusted_tool_trace_not_found", "Trusted tool trace not found", 404
+        ) from None
+
+
+@router.post("/tools/plans/{plan_id}/decision", response_model=ResponsePlanMutationView)
+def decide_plan(
+    plan_id: UUID,
+    payload: ResponsePlanDecisionInput,
+    request: Request,
+) -> ResponsePlanMutationView:
+    tenant_id, actor_id = _authority(request)
+    try:
+        return _service(request).decide_plan(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            plan_id=plan_id,
+            outcome=payload.outcome,
+            reason=payload.reason,
+            now=datetime.now(UTC),
+        )
+    except ResponsePlanDecisionNotFound:
+        raise ApiError("response_plan_not_found", "Response plan not found", 404) from None
+    except ResponsePlanDecisionConflict:
+        raise ApiError(
+            "response_plan_decision_conflict",
+            "Response plan decision is not allowed",
+            409,
         ) from None
 
 

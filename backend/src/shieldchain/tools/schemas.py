@@ -21,8 +21,33 @@ class ToolEmergencyInput(ToolControlInput):
     active: bool
 
 
+class ResponsePlanDecisionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outcome: str = Field(pattern="^(accepted|rejected)$")
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class ResponsePlanToolCallView(BaseModel):
+    action_id: UUID
+    call_id: UUID
+    tool_name: str
+    tool_version: str
+    status: str
+    request_digest: str = Field(pattern="^[0-9a-f]{64}$")
+
+
+class ResponsePlanMutationView(BaseModel):
+    plan_id: UUID
+    status: str
+    revision: int = Field(ge=0)
+    calls: list[ResponsePlanToolCallView]
+
+
 class ToolTraceItem(BaseModel):
     id: UUID
+    plan_id: UUID
+    plan_revision_id: UUID | None = None
+    plan_action_id: UUID | None = None
     tool_name: str
     tool_version: str
     status: str

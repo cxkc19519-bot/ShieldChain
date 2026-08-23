@@ -37,6 +37,11 @@ class TrustedToolCallRow(Base):
             "idempotency_key",
             name="uq_trusted_tool_idempotency",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "plan_action_id",
+            name="uq_trusted_tool_plan_action",
+        ),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
             ["agent_runs.id", "agent_runs.tenant_id"],

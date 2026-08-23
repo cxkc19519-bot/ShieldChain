@@ -323,3 +323,13 @@ def test_stale_confirmed_evidence_is_rejected(compiler_context) -> None:
         session.get(EvidenceRecordRow, str(EVIDENCE)).observed_at = NOW.replace(year=2025)
     result = compiler.compile_json(_candidate(), _context())
     assert result.reason_code == "evidence_stale"
+
+
+def test_accepted_plan_cannot_be_silently_recompiled(compiler_context) -> None:
+    compiler, factory = compiler_context
+    first = compiler.compile_json(_candidate(), _context())
+    with factory.begin() as session:
+        session.get(ResponsePlanRow, str(first.plan_id)).status = "awaiting_execution"
+
+    with pytest.raises(ResponsePlanScopeError, match="not open for revision"):
+        compiler.compile_json(_candidate(), _context())

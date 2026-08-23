@@ -166,6 +166,7 @@ class ResponsePlanEventRow(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     public_summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    actor_subject_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

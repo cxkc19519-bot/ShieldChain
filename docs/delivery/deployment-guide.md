@@ -190,6 +190,16 @@ docker compose run --rm backend alembic downgrade 20260823_04
 
 一旦存在状态不是 `legacy_imported` 的计划，降级会拒绝，防止删除计划历史。需要回退代码时应保留数据库在 `20260823_05`，或先导出并按留存要求归档计划、revision、动作和事件；不得直接删表绕过保护。
 
+`20260823_06` 为同 tenant 的 `plan_action_id` 增加唯一约束，并让计划事件保存操作员 subject。升级会先检查是否已经存在一个动作关联多个可信调用；发现冲突时拒绝迁移，必须人工核对调用来源，不能任意删除记录。
+
+在尚未产生操作员计划事件时，可单独回退到 `20260823_05`：
+
+```bash
+docker compose run --rm backend alembic downgrade 20260823_05
+```
+
+存在 accepted/rejected 操作员事件时，`20260823_06` 拒绝降级，避免丢失操作主体。此时应保留当前数据库版本，或先按审计留存要求导出计划事件及关联调用；不得直接清空 `actor_subject_id` 绕过保护。
+
 ## 本地模型覆盖
 
 ```bash

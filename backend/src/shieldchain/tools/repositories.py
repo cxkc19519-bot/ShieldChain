@@ -98,6 +98,8 @@ class SqlAlchemyTrustedToolRepository:
         tenant_id: UUID,
         bound: BoundToolRequest,
         request_id: str,
+        plan_revision_id: UUID | None = None,
+        plan_action_id: UUID | None = None,
     ) -> tuple[TrustedToolCall, bool]:
         request = bound.request
         run = session.execute(
@@ -117,7 +119,13 @@ class SqlAlchemyTrustedToolRepository:
             )
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.request_digest != bound.request_digest:
+            if (
+                existing.request_digest != bound.request_digest
+                or existing.plan_revision_id
+                != (str(plan_revision_id) if plan_revision_id is not None else None)
+                or existing.plan_action_id
+                != (str(plan_action_id) if plan_action_id is not None else None)
+            ):
                 raise TrustedToolIdempotencyConflict("idempotency key is bound to another request")
             return _call(existing), False
         self._validate_evidence(session, request)
@@ -127,6 +135,8 @@ class SqlAlchemyTrustedToolRepository:
             tenant_id=str(tenant_id),
             case_id=str(request.case_id),
             plan_id=str(request.plan_id),
+            plan_revision_id=(str(plan_revision_id) if plan_revision_id is not None else None),
+            plan_action_id=str(plan_action_id) if plan_action_id is not None else None,
             idempotency_key=request.idempotency_key,
             caller_role=request.caller_role.value,
             tool_name=request.tool_name,

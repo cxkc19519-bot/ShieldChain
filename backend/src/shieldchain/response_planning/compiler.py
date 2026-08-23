@@ -452,6 +452,13 @@ class ResponsePlanCompiler:
             return plan, 0, uuid4()
         if plan.case_id != (str(context.case_id) if context.case_id else None):
             raise ResponsePlanScopeError("existing plan case binding differs")
+        if ResponsePlanStatus(plan.status) not in {
+            ResponsePlanStatus.DRAFT,
+            ResponsePlanStatus.PROPOSED,
+            ResponsePlanStatus.NEEDS_REVIEW,
+            ResponsePlanStatus.REPLANNING,
+        }:
+            raise ResponsePlanScopeError("existing plan is not open for revision")
         revision = plan.current_revision + 1
         plan.current_revision = revision
         plan.status = status.value

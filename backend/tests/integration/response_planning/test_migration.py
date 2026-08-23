@@ -104,7 +104,7 @@ def test_response_plan_migration_safely_backfills_legacy_tool_plan_and_round_tri
     command.upgrade(configuration, "head")
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260823_05",
+            "20260823_06",
         )
     get_settings.cache_clear()
 
@@ -218,4 +218,68 @@ def test_response_plan_migration_rejects_cross_case_historical_run(
 
     with pytest.raises(RuntimeError, match="cross-case historical runs"):
         command.upgrade(configuration, "head")
+    get_settings.cache_clear()
+
+
+def test_plan_tool_link_migration_refuses_to_drop_operator_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(__file__).resolve().parents[4]
+    database = tmp_path / "response-plan-operator-audit.db"
+    configuration = _configuration(root, database, monkeypatch)
+    command.upgrade(configuration, "head")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_runs "
+            "(id,tenant_id,principal_id,run_kind,status,goal,catalog_revision,revision,"
+            "created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                RUN,
+                TENANT,
+                "00000000-0000-4000-8000-000000000002",
+                "operations_report",
+                "running",
+                "operator audit guard",
+                "catalog-v1",
+                0,
+                "2026-08-23 12:00:00",
+                "2026-08-23 12:00:00",
+                None,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO response_plans "
+            "(id,tenant_id,run_id,case_id,status,current_revision,created_by_role,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                CALL,
+                TENANT,
+                RUN,
+                None,
+                "rejected",
+                0,
+                "response_planning",
+                "2026-08-23 12:00:00",
+                "2026-08-23 12:00:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO response_plan_events "
+            "(id,plan_id,tenant_id,revision,event_type,reason_code,public_summary,"
+            "actor_subject_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                SECOND_CALL,
+                CALL,
+                TENANT,
+                0,
+                "plan_rejected",
+                "operator_rejected",
+                "Operator rejected the plan.",
+                "00000000-0000-4000-8000-000000000002",
+                "2026-08-23 12:00:00",
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="operator response plan events exist"):
+        command.downgrade(configuration, "20260823_05")
     get_settings.cache_clear()

@@ -27,8 +27,14 @@ from shieldchain.tools.persistence import (
     ToolVerificationRow,
     TrustedToolCallRow,
 )
+from shieldchain.tools.plan_service import ResponsePlanToolService
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository, _call
-from shieldchain.tools.schemas import ToolMutationView, ToolTraceItem, ToolTraceView
+from shieldchain.tools.schemas import (
+    ResponsePlanMutationView,
+    ToolMutationView,
+    ToolTraceItem,
+    ToolTraceView,
+)
 
 REQUESTER_SERVICE_SUBJECT = UUID("00000000-0000-4000-8000-000000000006")
 
@@ -44,6 +50,26 @@ def _utc(value: datetime) -> datetime:
 class TrustedToolApiService:
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
+        self._plans = ResponsePlanToolService(sessions)
+
+    def decide_plan(
+        self,
+        *,
+        tenant_id: UUID,
+        actor_id: UUID,
+        plan_id: UUID,
+        outcome: str,
+        reason: str,
+        now: datetime,
+    ) -> ResponsePlanMutationView:
+        return self._plans.decide(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            plan_id=plan_id,
+            outcome=outcome,
+            reason=reason,
+            now=now,
+        )
 
     def trace(self, *, tenant_id: UUID, run_id: UUID) -> ToolTraceView:
         with self._sessions() as session:
@@ -228,6 +254,9 @@ class TrustedToolApiService:
         )
         return ToolTraceItem(
             id=call.request.id,
+            plan_id=call.request.plan_id,
+            plan_revision_id=UUID(row.plan_revision_id) if row.plan_revision_id else None,
+            plan_action_id=UUID(row.plan_action_id) if row.plan_action_id else None,
             tool_name=call.request.tool_name,
             tool_version=call.request.tool_version,
             status=call.status.value,
