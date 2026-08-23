@@ -102,4 +102,4 @@ Linux 服务流量 162 条与 Windows 管理流量 18 条合并为 180 条正常
 
 ## 下一步
 
-v11 仍是 development 候选，不应据此宣称独立准确率。下一步应先冻结代码、规则、镜像和评估方案，再决定是否启用一份此前未参与 v11 调参的 validation 清单。final-blind 继续保持未运行状态。
+本报告记录的是 final-blind 启封前的 development 阶段，不应据此宣称独立准确率。v11 后续已在同日完成规则、代码、镜像和方案冻结，并一次性运行 935 条 final-blind；最终结果、哈希和结论边界见 `docs/reports/xdr-probe-final-blind-v11-20260823.md`。final-blind 已消耗，不得用于回改 v11。

@@ -10,7 +10,7 @@
 | --- | ---: | --- |
 | development | 701 | 查看标签、编写和调试 Suricata/Zeek 规则 |
 | validation | 701 | 冻结规则后做独立回归，禁止继续针对该次结果调参 |
-| final-blind | 935 | 最终盲测，当前保持封存 |
+| final-blind | 935 | v11 最终盲测已于 2026-08-23 一次性完成，禁止再作为独立盲集调参 |
 | 合计 | 2337 | 比赛方 NTA PCAP 总量 |
 
 这不是模型训练，也不能称作比赛方官方训练/测试集。这里的“development / validation / final-blind”只是规则工程中的职责隔离：开发集用于写规则，验证集用于检查泛化，最终盲测集用于最后一次验收。
@@ -38,7 +38,7 @@ Suricata 签名、Zeek 行为阈值和分类逻辑同样会产生“过拟合”
 2. 冻结规则文件与流水线，并记录 SHA-256。
 3. 在从未参与调参的 validation 样本上运行。
 4. 先锁定机器输出，再按受控标签映射做人工审计。
-5. final-blind 在规则方案稳定前不运行。
+5. final-blind 只在规则方案稳定、指纹冻结和评估口径写定后运行一次；运行后不得回写 v11。
 
 ## 4. 当前冻结版本
 
@@ -197,7 +197,8 @@ python3 scripts/nta/nta_offline_pipeline.py \
 - 不回放到校园网或生产网络。
 - 不提交原始 PCAP、标签映射、访问令牌和含敏感载荷的完整日志。
 - 规则只产生告警，不自动阻断。
-- final-blind 只有在候选规则冻结、评估方案写定后才能启封。
+- final-blind 已在 v11 候选规则、流水线、镜像和评估方案冻结后一次性启封；后续不得把它重新包装为未见盲集。
+
 ## 8. v11 development 候选（2026-08-23）
 
 v11 严格只用 development 分析和调参，没有运行 validation 或 final-blind。完整 701 条攻击 development 的分类覆盖由 v10 的 585/701（83.45%）提高到 620/701（88.45%），安全告警覆盖由 567/701（80.88%）提高到 602/701（85.88%）；180 条正常 development 的安全告警为 0，引擎失败为 0。
@@ -210,4 +211,25 @@ v11 严格只用 development 分析和调参，没有运行 validation 或 final
 - 锁定摘要：`/home/user/jhk/nta-dataset-blind/evaluation/v11-development-locked-result.json`；
 - 详细报告：`docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
 
-这仍是开发集结果，不是独立准确率。validation 只能在 v11 规则、代码、镜像和评估方案再次冻结后运行；final-blind 继续保持未启封。
+本节只记录启封前的 development 阶段，不是独立准确率。v11 final-blind 的后续一次性结果见下一节；final-blind 结果不得用于回改 v11。
+
+## 9. v11 final-blind 一次性验收（2026-08-23）
+
+v11 在源码、规则、流水线、935 条匿名清单和 Suricata/Zeek 镜像全部冻结后运行。运行前确认 final-blind 与 development/validation 零重叠、PCAP 零缺失，历史事件中也没有出现过这 935 个匿名文件名。28 个分片全部完成，935 条事件零缺失、零重复，引擎失败为 0。
+
+- 明确分类：754/935（80.64%，Wilson 95% 区间 77.99%～83.05%）；
+- Suricata 安全告警样本：737/935（78.82%，Wilson 95% 区间 76.09%～81.32%）；
+- 网络行为待研判：181/935（19.36%）；
+- 安全告警总数：2,461；被过滤的信息/解码器事件：98,696。
+
+机器事件和摘要先锁定并计算 SHA-256，之后才读取映射表。935 条映射的 PCAP SHA-256 全部一致，但映射没有官方攻击类别字段，因此这些数字是检测覆盖率，不是准确率或召回率。
+
+锁定产物：
+
+- 冻结目录：`/home/user/jhk/nta-dataset-blind/evaluation/v11-final-freeze-20260823`；
+- 事件 SHA-256：`f2c124a1b6991b2c7cb8a5bcfa36e2fb5e7d676268da9671e6999b07e2a4a6ad`；
+- 机器摘要 SHA-256：`561c9d536c8f01b0a3c55ffb648290fa1fe14c0a094ffe29d08011f32f4ba316`；
+- 事后审计 SHA-256：`f03f925ca159e9a8da27d52746f4783f0869ec82386c4074dd4fd609b739e5d0`；
+- 详细报告：`docs/reports/xdr-probe-final-blind-v11-20260823.md`。
+
+final-blind 已消耗。后续新增检测规则必须升级为 v12，并使用 development 或新的外部数据开发；不能再次使用这 935 条宣称独立盲测成绩。
