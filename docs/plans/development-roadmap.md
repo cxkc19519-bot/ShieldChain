@@ -27,7 +27,7 @@
 ### 真实安全运营
 
 - Wazuh 告警接收、持久化和实时告警页面；
-- 事件、告警、漏洞、弱密码四类进程内只读智能体工具，以及默认关闭、禁止未鉴权生产启用的最小标准 MCP Server；受控 MCP Client 尚未实现；
+- 事件、告警、漏洞、弱密码四类进程内只读智能体工具，以及默认关闭、禁止未鉴权生产启用的标准 MCP Server；外部 MCP 已实现管理员固定配置、安全发现和目录快照，但尚未接入 Broker 调用；
 - 安全运营报告参数校验、工具分析、建议、排版、HTML/Markdown 和预览；
 - 外部 DeepSeek 与本地 OpenAI 兼容模型配置。
 
@@ -63,13 +63,14 @@
 - Task 4 已完成：新增通用 `agent_runs`、`operations_runs`，回填旧调查父行并为新运营报告提供真实运行 ID；
 - Task 5 已完成：内部运营工具和入站 MCP 调用进入统一 `agent_tool_calls` 审计，遗留运行中调用恢复为明确结果未知；
 - Task 6 已完成：实现外部 issuer/JWKS 的 OAuth Resource Server、固定 subject 映射、scope、RFC 9728 元数据和 Nginx MCP 边界；
-- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 7～14 小步实施；
+- Task 7 已完成：实现外部 MCP 固定 YAML、SSRF/TLS/DNS/redirect 防护、官方 Client 发现、Schema 审批 revision 和不可变目录快照；
+- 后续按 [统一实施方案](mcp-agent-tools-response-safety-loop-implementation.md) 的 Task 8～14 小步实施；
 - 当前仍未完成真实身份平台/TLS 联调、外部 MCP 接入和真实设备生产闭环，不得提前标记完成。
 
 ## 下一阶段
 
-1. 实现管理员固定的外部 MCP 配置、SSRF 防护和目录快照；
-2. 实现受控外部 MCP Client、结果裁剪和严格响应计划；
+1. 从已批准且未过期的快照实现受控外部 MCP Provider、结果裁剪、预算和熔断；
+2. 实现严格响应计划、计划编译和版本化持久化；
 3. 将可信执行回执、新遥测、验证和重规划接成可恢复闭环；
 4. 完成本地模型健康检查和结构化输出验收；
 5. 接入真实漏洞和弱密码数据源；

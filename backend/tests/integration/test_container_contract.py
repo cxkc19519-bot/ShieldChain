@@ -31,6 +31,22 @@ def test_runtime_lock_contains_mcp_oauth_dependencies() -> None:
     } <= runtime
 
 
+def test_remote_mcp_example_is_inert_and_runtime_configuration_is_external() -> None:
+    example = _read("config/mcp/servers.example.yaml")
+    ignored = set(_read(".gitignore").splitlines())
+    compose = _read("compose.yaml")
+    pyproject = _read("backend/pyproject.toml")
+
+    assert "enabled: false" in example
+    assert "https://security-platform.example.invalid/mcp" in example
+    assert "schema_revision: approved-v1" in example
+    assert "config/mcp/servers.yaml" in ignored
+    assert "config/mcp/servers.yaml" in set(_read(".dockerignore").splitlines())
+    assert "MCP_REMOTE_CONFIG_PATH: ${MCP_REMOTE_CONFIG_PATH:-}" in compose
+    assert '"httpx2>=2,<3"' in pyproject
+    assert '"PyYAML>=6,<7"' in pyproject
+
+
 def test_frontend_image_is_multistage_non_root_and_has_healthcheck() -> None:
     dockerfile = _read("frontend/Dockerfile")
     assert "FROM node:24-alpine3.22 AS builder" in dockerfile

@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     mcp_auth_algorithm: Literal["RS256", "ES256"] = "RS256"
     mcp_auth_max_token_lifetime_seconds: int = Field(900, ge=60, le=3600)
     mcp_auth_subject_principals: dict[str, UUID] = Field(default_factory=dict)
+    mcp_remote_config_path: Path | None = None
+    mcp_remote_snapshot_ttl_seconds: int = Field(3600, ge=60, le=86_400)
+    mcp_remote_discovery_timeout_seconds: float = Field(30.0, ge=1.0, le=30.0)
+    mcp_remote_max_discovery_pages: int = Field(5, ge=1, le=10)
+    mcp_remote_max_tools: int = Field(100, ge=1, le=100)
+    mcp_remote_max_schema_bytes: int = Field(64 * 1024, ge=1024, le=64 * 1024)
+    mcp_remote_max_catalog_schema_bytes: int = Field(1024 * 1024, ge=64 * 1024, le=1024 * 1024)
     database_url: str = "sqlite:///./data/shieldchain.db"
     deepseek_base_url: AnyHttpUrl = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
@@ -64,6 +71,13 @@ class Settings(BaseSettings):
         if normalized == "test":
             return "testing"
         return normalized
+
+    @field_validator("mcp_remote_config_path", mode="before")
+    @classmethod
+    def normalize_optional_path(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("http_allowed_hosts")
     @classmethod

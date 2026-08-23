@@ -1,5 +1,6 @@
 # Local agent and worktree state
 AGENTS.md
+config/mcp/servers.yaml
 .agents/
 .superpowers/
 .worktrees/

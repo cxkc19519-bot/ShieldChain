@@ -19,6 +19,23 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.http_max_request_bytes == 26 * 1024 * 1024
     assert settings.mcp_server_enabled is False
     assert settings.mcp_auth_max_token_lifetime_seconds == 900
+    assert settings.mcp_remote_config_path is None
+    assert settings.mcp_remote_snapshot_ttl_seconds == 3600
+    assert settings.mcp_remote_max_tools == 100
+
+
+def test_remote_mcp_limits_are_bounded_and_empty_path_is_disabled() -> None:
+    assert Settings(_env_file=None, mcp_remote_config_path="").mcp_remote_config_path is None
+    for field, value in (
+        ("mcp_remote_snapshot_ttl_seconds", 86_401),
+        ("mcp_remote_discovery_timeout_seconds", 31),
+        ("mcp_remote_max_discovery_pages", 11),
+        ("mcp_remote_max_tools", 101),
+        ("mcp_remote_max_schema_bytes", 65_537),
+        ("mcp_remote_max_catalog_schema_bytes", 1_048_577),
+    ):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, **{field: value})
 
 
 @pytest.mark.parametrize(

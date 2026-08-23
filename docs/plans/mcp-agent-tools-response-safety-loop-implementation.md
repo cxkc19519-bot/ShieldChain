@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～6 已完成，Task 7～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-23）。Task 0～7 已完成，Task 8～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -21,7 +21,8 @@
 | --- | --- | --- |
 | `operations/mcp_tools.py` | 事件、告警、漏洞线索、弱口令线索四类租户化、协议无关的只读 Agent Tool Provider | 保留旧 façade 名称兼容入口，标准 MCP 仅作为边界适配器 |
 | `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计 | 保持 Broker 边界；响应规划角色后续改为严格 Schema 输出 |
-| `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布和 `/mcp` Streamable HTTP | 保持为协议适配边界；完成鉴权前禁止生产启用 |
+| `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布、OAuth Resource Server 和 `/mcp` Streamable HTTP | 保持为入站协议适配边界；真实身份平台和 TLS 仍需部署验收 |
+| `mcp_remote/` | 管理员固定 YAML、外部 endpoint 网络策略、官方 Client 目录发现和不可变工具快照 | Task 8 只从未过期且已批准的快照构造远程只读 Provider；不得把发现等同于已允许调用 |
 | `agents/` | 角色、上下文、交接、预算、结构化领域合同 | 保留并接入通用运行模型；不恢复已经退役的旧调查页面 |
 | `tools/` | 工具注册、策略、审批、幂等、租约、执行、验证、恢复和控制 | 继续作为唯一可信变更执行边界；外部 MCP 不能绕过它 |
 | `react/` | 失败分类、预算、循环检测、确定性重新规划、轨迹和人工控制 | 接入当前运营链路的通用运行 ID、响应计划和真实工具回执 |
@@ -30,13 +31,13 @@
 
 ### 2.2 必须补齐的缺口
 
-- 已有默认关闭的标准 MCP Server、协议协商、Streamable HTTP、OAuth/JWT Resource Server、调用审计和官方 SDK 测试；仍缺少受控 MCP Client、外部身份平台联调和真实平台验收；
+- 已有默认关闭的标准 MCP Server、协议协商、Streamable HTTP、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现和目录快照；仍缺少远程 Provider 调用、外部身份平台联调和真实平台验收；
 - 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
 - 当前响应规划主要是自然语言摘要或 `proposed:` 字符串，缺少现行的严格输出 Schema、计划编译器、证据重绑定和版本化持久化；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
-- 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 的 SSRF 防护、远端 Schema 固定、结果限制、熔断和 Token 隔离仍待实现；
+- 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 已具备固定配置、SSRF/DNS/redirect/TLS 边界和远端 Schema 快照，结果限制、调用预算、熔断及远程 Provider Token 生命周期仍待 Task 8 实现；
 - 已有官方 Python SDK 的内存与 ASGI 兼容性基线；尚无完整 conformance、安全门禁和外部平台兼容性验收证据。
 
 ## 3. 完成定义
@@ -1237,6 +1238,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 7：外部 MCP 配置、发现与快照
 
+> 状态：已完成（2026-08-23）。本 Task 只建立管理员批准的目录，不把远程工具接入 Broker，也不允许模型发起外部调用；该调用能力属于 Task 8。
+
 目标：只从管理员固定配置发现获批准的外部只读工具。
 
 修改：
@@ -1253,6 +1256,19 @@ LIVE_MCP_CALL_LIMIT=0
 - 未映射远端工具不可见；
 - 远端 annotation 不改变分类；
 - 凭据不持久化。
+
+实施与验证记录（2026-08-23）：
+
+- 新增严格 UTF-8 YAML 配置和默认关闭的 `config/mcp/servers.example.yaml`；实际 `config/mcp/servers.yaml` 已忽略，额外字段、重复 key/peer/alias、stdio、明文凭据字段、非只读分类和未知认证模式均拒绝；
+- 只允许固定 HTTPS `/mcp` endpoint 和 443 端口，禁止 userinfo、query、fragment、环境代理和重定向；公共策略要求全部 DNS 结果为公开单播地址，内部策略要求全部结果进入管理员固定 CIDR；
+- 连接 URL 固定到预解析 IP，同时保留原 Host 和 TLS SNI，并从实际 socket peer 再次确认地址；发现结束后 DNS 答案变化会以 `mcp_endpoint_rejected` 拒绝，TLS 验证不能关闭，私有 CA 只能通过绝对路径只读 bundle 注入；
+- 使用官方 `Client(..., mode="auto")` 发现 `2026-07-28`，并允许 SDK 回退到 `2025-11-25`；分页、工具数、名称、描述、annotation 和 input/output Schema 均有硬上界；
+- 仅配置逐项映射的 remote name 进入快照；`classification` 和 `allowed_roles` 只取本地配置，远端 annotation 仅作为受限审计对照；
+- 新增 Alembic `20260823_03`、`mcp_peer_snapshots` 和 `mcp_tool_snapshots`；目录 revision 使用随机 UUID，不额外计算文件或 Schema 哈希；
+- Schema 直接按规范 JSON 结构比较。结构变化且管理员未提升 `schema_revision` 时写入稳定 `mcp_schema_changed` 拒绝记录，旧目录只保留展示且过期后不能用于新调用；
+- bearer secret 只从配置引用的进程环境变量进入内存 HTTP Header，不进入配置、快照、日志或错误摘要；入站用户 Token 没有进入本发现链路；
+- 严格配置、公共/私网、组播/元数据地址、DNS rebinding、实际 peer、redirect、Schema 变化、未映射工具、annotation、凭据、过期、官方 Client 和迁移测试通过；Task 0～7 相关组合回归：`255 passed`；
+- 当前未连接真实外部 MCP 平台，也未实现远程 `tools/call`、结果裁剪、调用审计、速率、熔断或运行目录固定；这些能力不能因本 Task 完成而提前宣称可用。
 
 建议提交：`feat: add allowlisted mcp peer discovery snapshots`
 

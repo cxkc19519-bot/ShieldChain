@@ -38,6 +38,9 @@ from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.mcp_auth import build_mcp_auth_runtime
+from shieldchain.mcp_remote.discovery import McpDiscoveryService
+from shieldchain.mcp_remote.peer_config import load_mcp_remote_config
+from shieldchain.mcp_remote.persistence import McpSnapshotStore
 from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
 from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
@@ -71,6 +74,16 @@ def create_app(
     query_service = incident_query_service or IncidentQueryService(session_factory)
     knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
     agent_tool_audit_store = AgentToolAuditStore(session_factory)
+    mcp_remote_config = (
+        load_mcp_remote_config(settings.mcp_remote_config_path)
+        if settings.mcp_remote_config_path is not None
+        else None
+    )
+    mcp_remote_discovery = (
+        McpDiscoveryService(McpSnapshotStore(session_factory), settings)
+        if mcp_remote_config is not None
+        else None
+    )
     mcp_server = (
         create_mcp_server(
             session_factory,
@@ -87,6 +100,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
+        if mcp_remote_discovery is not None and mcp_remote_config is not None:
+            _app.state.mcp_remote_discovery_outcomes = await mcp_remote_discovery.refresh_enabled(
+                mcp_remote_config
+            )
         _app.state.accepting_requests = True
         try:
             if mcp_server is None:
@@ -102,6 +119,8 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
     app.state.mcp_server = mcp_server
+    app.state.mcp_remote_discovery = mcp_remote_discovery
+    app.state.mcp_remote_discovery_outcomes = ()
     app.state.agent_tool_audit_store = agent_tool_audit_store
     app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine

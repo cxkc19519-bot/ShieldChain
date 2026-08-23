@@ -2,7 +2,7 @@
 
 > 文档状态：当前参考（更新于 2026-08-23）。运营 MCP 查询与真实处置工具是两条不同的安全边界。
 
-当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。官方 Client、Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现；真实身份平台/TLS 联调、受控 MCP Client、完整安全门禁和外部平台验收仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
+当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。Streamable HTTP、JWT/JWKS Resource Server 和裁剪后的调用审计已经实现。外部 MCP 已能从管理员固定配置安全发现并保存获批准的只读目录快照，但尚未构造成 Broker Provider，不能执行远程 `tools/call`。真实身份平台/TLS 联调、远程调用限额与外部平台验收仍待完成。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
 
 ## 两类工具
 
@@ -13,6 +13,10 @@
 ### 可信处置工具
 
 隔离主机、封禁 IP、停用账户等真实动作必须进入独立工具网关，经过策略、审批、租户绑定、幂等、租约、超时、恢复和执行后验证。当前报告智能体不会自动调用这些动作。
+
+### 外部 MCP 目录
+
+外部 peer 只能从未提交的管理员 YAML 启用。发现阶段固定 HTTPS endpoint、DNS/CIDR、TLS、凭据环境变量引用和允许工具映射；远端描述与 annotation 不具有授权效力。Schema 变化必须由管理员提升本地 `schema_revision` 才能形成新目录。快照过期或发现失败时，不得据此发起新调用。
 
 ## 调用流程
 

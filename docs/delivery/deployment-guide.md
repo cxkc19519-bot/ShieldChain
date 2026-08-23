@@ -104,6 +104,68 @@ curl --include https://shieldchain.example.edu/mcp
 
 关闭后 `/mcp` 不应再由后端提供。保留数据库中的 `agent_tool_calls` 审计；已有审计行时 Alembic 会拒绝降级删除审计表。若必须回滚代码，先备份数据库并按留存要求迁移审计记录，不得关闭外键或直接删除表绕过保护。
 
+## 外部 MCP 目录发现
+
+外部 MCP 默认未配置且不会联网。当前实现只发现目录并保存快照，不执行远程 `tools/call`；远程 Provider、结果裁剪、调用预算和熔断属于后续 Task 8。
+
+从示例复制实际配置。实际文件已被 `.gitignore` 排除：
+
+```bash
+cp config/mcp/servers.example.yaml config/mcp/servers.yaml
+chmod 600 config/mcp/servers.yaml
+```
+
+编辑时必须保持以下边界：
+
+- peer 和工具由管理员逐项声明，模型、Skill、RAG 文档和普通 HTTP 请求不能添加 endpoint；
+- 只允许 HTTPS、443 和固定 `/mcp` 路径，不允许 userinfo、query、fragment、stdio 或重定向；
+- `public_https` 的全部 DNS 结果必须为公开单播地址；内网使用 `internal_https` 并设置固定 `allowed_cidrs`；
+- 远端 annotation 不是权限依据，`classification: read_only` 和 `allowed_roles` 以本地配置为准；
+- `schema_revision` 是管理员审批标签。远端 Schema 变化时先保持旧值启动验证；看到 `mcp_schema_changed` 后复核新结构，确认安全才提升 revision；
+- `token_env` 只写环境变量名称，不写 Token。每个 peer 使用独立 Token，不得复用 ShieldChain 入站用户 Token；
+- TLS 校验不能关闭。内部 CA 使用容器内绝对路径 `tls_ca_bundle`，并以只读 bind mount 注入。
+
+示例内网配置片段：
+
+```yaml
+network_policy: internal_https
+allowed_cidrs: [10.20.0.0/16]
+tls_ca_bundle: /run/shieldchain/mcp/internal-ca.pem
+```
+
+Compose 需要显式挂载实际配置并传入该 peer 的独立 Secret。建议放在不提交的 `compose.override.yaml`：
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ./config/mcp/servers.yaml:/run/shieldchain/mcp/servers.yaml:ro
+    environment:
+      MCP_REMOTE_CONFIG_PATH: /run/shieldchain/mcp/servers.yaml
+      APPROVED_SECURITY_PLATFORM_MCP_TOKEN: ${APPROVED_SECURITY_PLATFORM_MCP_TOKEN:?required}
+```
+
+启动与更新：
+
+```bash
+export APPROVED_SECURITY_PLATFORM_MCP_TOKEN='从受控 Secret 系统注入，不要写入 shell 历史'
+docker compose config --quiet
+docker compose run --rm migrate
+docker compose up -d --build backend
+docker compose logs --since=10m backend
+```
+
+启动时官方 MCP Client 使用 `auto` 协商，优先 `2026-07-28` 并可兼容 `2025-11-25`。连接固定到预解析且通过策略的 IP，同时保留原 Host/TLS SNI 并核对实际 socket peer；发现结束后 DNS 答案改变会拒绝本次目录。重定向、环境代理和 TLS 关闭均不允许。
+
+发现成功会写入 `mcp_peer_snapshots` 与 `mcp_tool_snapshots`。快照不保存 Bearer Token、Authorization Header 或异常详情。刷新失败会保存稳定原因码；最近一次成功目录可供管理员查看，但过期后不能用于新调用。目录 revision 为随机 UUID，Schema 变化通过结构比较和管理员 `schema_revision` 审批，不额外计算文件或 Schema 哈希。
+
+关闭、轮换与回滚：
+
+1. 将 peer 改为 `enabled: false` 或清空 `MCP_REMOTE_CONFIG_PATH`，滚动重启后端；
+2. Token 轮换时只更新 Secret 注入并重启，不修改或提交 YAML；
+3. 保留快照用于审计。`20260823_03` 在存在快照时拒绝降级删表；确需回滚必须先备份并按留存策略迁移记录；
+4. 当前没有远程工具调用，因此关闭发现不会产生远端动作，也不需要伪造撤销结果。
+
 ## 本地模型覆盖
 
 ```bash
