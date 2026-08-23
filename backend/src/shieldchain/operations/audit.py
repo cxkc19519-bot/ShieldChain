@@ -109,6 +109,35 @@ class AgentToolAuditStore:
             row.result_bytes = 0
             row.finished_at = now
 
+    def reject(
+        self,
+        context: AgentToolAuditContext,
+        tool: ReadOnlyAgentTool,
+        *,
+        role: str | None,
+        arguments: dict[str, str | int],
+        reason_code: str,
+        summary: str,
+        now: datetime,
+    ) -> UUID:
+        call_id = self.start(
+            context,
+            tool,
+            role=role,
+            arguments=arguments,
+            now=now,
+        )
+        with self._session_factory.begin() as session:
+            row = self._require(session, call_id)
+            row.status = "rejected"
+            row.reason_code = reason_code[:64]
+            row.summary = summary[:1000]
+            row.result_count = 0
+            row.duration_ms = 0
+            row.result_bytes = 0
+            row.finished_at = now
+        return call_id
+
     def recover_interrupted(self, *, now: datetime) -> int:
         with self._session_factory.begin() as session:
             if not inspect(session.connection()).has_table("agent_tool_calls"):

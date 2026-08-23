@@ -37,6 +37,7 @@ from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
+from shieldchain.mcp_auth import build_mcp_auth_runtime
 from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
 from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
@@ -76,6 +77,7 @@ def create_app(
             tenant_id=settings.rag_demo_tenant_id,
             principal_id=settings.rag_demo_principal_id,
             audit_store=agent_tool_audit_store,
+            auth_runtime=build_mcp_auth_runtime(settings),
         )
         if settings.mcp_server_enabled
         else None

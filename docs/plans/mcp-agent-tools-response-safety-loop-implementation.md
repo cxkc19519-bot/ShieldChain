@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～5 已完成，Task 6～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-23）。Task 0～6 已完成，Task 7～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -30,13 +30,13 @@
 
 ### 2.2 必须补齐的缺口
 
-- 已有默认关闭的最小标准 MCP Server、协议协商、Streamable HTTP、调用审计和官方 SDK 测试；仍缺少生产鉴权、受控 MCP Client 和外部平台验收；
+- 已有默认关闭的标准 MCP Server、协议协商、Streamable HTTP、OAuth/JWT Resource Server、调用审计和官方 SDK 测试；仍缺少受控 MCP Client、外部身份平台联调和真实平台验收；
 - 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
 - 当前响应规划主要是自然语言摘要或 `proposed:` 字符串，缺少现行的严格输出 Schema、计划编译器、证据重绑定和版本化持久化；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
-- 尚无 MCP 鉴权、SSRF 防护、远端 Schema 固定、结果大小限制、速率限制、熔断和 Token 隔离；现有调用级审计不等于完整协议、安全和授权审计；
+- 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 的 SSRF 防护、远端 Schema 固定、结果限制、熔断和 Token 隔离仍待实现；
 - 已有官方 Python SDK 的内存与 ASGI 兼容性基线；尚无完整 conformance、安全门禁和外部平台兼容性验收证据。
 
 ## 3. 完成定义
@@ -897,14 +897,14 @@ POST /api/v1/response-plans/{plan_id}/reject
 
 ```text
 MCP_SERVER_ENABLED=false
-MCP_SERVER_PATH=/mcp
-MCP_PROTOCOL_VERSION=2026-07-28
-MCP_ALLOWED_ORIGINS=[]
 MCP_AUTH_MODE=disabled
 MCP_AUTH_ISSUER=
+MCP_AUTH_RESOURCE=
 MCP_AUTH_AUDIENCE=
 MCP_AUTH_JWKS_URL=
-MCP_REQUIRED_SCOPE_PREFIX=shieldchain
+MCP_AUTH_ALGORITHM=RS256
+MCP_AUTH_MAX_TOKEN_LIFETIME_SECONDS=900
+MCP_AUTH_SUBJECT_PRINCIPALS={}
 MCP_REMOTE_CONFIG_PATH=
 MCP_CATALOG_REFRESH_SECONDS=300
 MCP_CONNECT_TIMEOUT_SECONDS=5
@@ -1198,6 +1198,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 6：MCP 入站鉴权与传输加固
 
+> 状态：已完成（2026-08-23）。ShieldChain 仅作为 OAuth Resource Server，使用外部 issuer/JWKS 验证短生命周期 JWT；不实现授权服务器、登录页、动态注册或 Token 签发。
+
 目标：在网络暴露前完成生产安全边界。
 
 修改：
@@ -1215,6 +1217,21 @@ LIVE_MCP_CALL_LIMIT=0
 - DNS rebinding Origin 测试；
 - production 缺配置启动失败；
 - JSON 和请求范围 SSE 都能通过反向代理。
+
+实施与验证记录（2026-08-23）：
+
+- 使用官方 SDK `AuthSettings`、`TokenVerifier` 和 RFC 9728 路由，不复制 Bearer 中间件、401 challenge 或 Protected Resource Metadata 实现；
+- JWT 固定允许 `RS256` 或 `ES256` 中的单一配置值，验证签名、issuer、audience、resource、`exp`、`iat`、subject、client ID 和最长 900 秒生命周期；
+- subject 只能通过服务器配置映射到当前 tenant 下的 UUID principal；任意同名 JWT claim 不能覆盖 tenant/principal；
+- 所有 MCP 请求需要基础 `shieldchain:mcp` scope，四类工具再分别要求 events、alerts、vulnerabilities 和 auth-risk read scope；scope 拒绝写入裁剪后的 `rejected/insufficient_scope` 审计；
+- 缺失/无效 Token 返回 401，缺基础 scope 返回 403；RFC 9728 元数据和 `resource_metadata` challenge 由 SDK 生成；
+- SDK 在后端执行精确 Host、Origin 和 256 KiB 请求体限制；Nginx 对 `/mcp` 单独限速、关闭缓冲/缓存并保留 Authorization 与 MCP 标准头；
+- `production/development + MCP enabled + disabled auth` 启动失败；只有 `testing` 可关闭授权；生产 OAuth URL 必须为 HTTPS 且 resource 必须精确标识 `/mcp`；
+- MCP 及 JWT 运行依赖已进入两个锁文件，runtime lock `pip --dry-run` 解析通过；
+- 认证、scope、算法混淆、过期/超长 Token、未知 subject、DNS rebinding、Origin、请求大小、生产启动、审计、容器合同和 Task 0～6 组合回归：`178 passed`；
+- 当前环境没有 Docker/Nginx 可执行文件，未现场执行 `docker compose config`、容器启动或 `nginx -t`；YAML 解析和静态容器合同通过，真实 TLS/IdP 联调仍须在授权部署环境验收；
+- 当前实现不支持 opaque token introspection 或即时单 Token 撤销；生产必须使用短生命周期 Token、JWKS 轮换和紧急 issuer/key 停用，不能把本 Task 表述为外部 IdP 已完成商用验收。
+- SDK v2 当前把 `required_scopes` 同时用于全局门禁和元数据，因此元数据只广告基础 `shieldchain:mcp`；工具级 scope 在 `tools/call` 内检查，缺失时返回带稳定原因的 Tool Execution Error，而不是 HTTP step-up challenge。接入真实 MCP Client 时必须验证其补 scope 流程，不能假定自动升级权限。
 
 建议提交：`feat: secure mcp server transport and authorization`
 

@@ -19,6 +19,18 @@ def test_backend_image_is_multistage_pinned_and_non_root() -> None:
         assert forbidden not in dockerfile
 
 
+def test_runtime_lock_contains_mcp_oauth_dependencies() -> None:
+    runtime = set(_read("backend/requirements-runtime.lock").splitlines())
+    assert {
+        "mcp==2.0.0",
+        "mcp-types==2.0.0",
+        "PyJWT==2.13.0",
+        "cryptography==50.0.0",
+        "httpx2==2.12.0",
+        "jsonschema==4.26.0",
+    } <= runtime
+
+
 def test_frontend_image_is_multistage_non_root_and_has_healthcheck() -> None:
     dockerfile = _read("frontend/Dockerfile")
     assert "FROM node:24-alpine3.22 AS builder" in dockerfile
@@ -29,10 +41,24 @@ def test_frontend_image_is_multistage_non_root_and_has_healthcheck() -> None:
     assert "latest" not in dockerfile.casefold()
 
 
-def test_nginx_is_spa_safe_proxies_only_api_and_sets_security_headers() -> None:
+def test_nginx_is_spa_safe_and_proxies_only_approved_backend_boundaries() -> None:
     nginx = _read("frontend/nginx.conf")
     assert "try_files $uri $uri/ /index.html" in nginx
-    assert "location /api/" in nginx and "proxy_pass http://backend:8000" in nginx
+    assert "location /api/" in nginx and "set $backend_upstream http://backend:8000" in nginx
+    assert "location = /mcp" in nginx
+    assert "location = /.well-known/oauth-protected-resource/mcp" in nginx
+    assert "location ^~ /mcp/" in nginx and "return 404" in nginx
+    assert "limit_req_zone $binary_remote_addr zone=mcp_per_ip:10m rate=10r/s" in nginx
+    assert "client_max_body_size 256k" in nginx
+    assert "proxy_buffering off" in nginx and "proxy_request_buffering off" in nginx
+    for header in (
+        "Authorization",
+        "MCP-Protocol-Version",
+        "Mcp-Method",
+        "Mcp-Name",
+        "X-Request-ID",
+    ):
+        assert f"proxy_set_header {header}" in nginx
     assert 'proxy_set_header X-Forwarded-For ""' in nginx
     assert "client_max_body_size 26m" in nginx
     for header in (

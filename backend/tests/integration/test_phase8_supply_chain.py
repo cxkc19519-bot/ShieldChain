@@ -24,9 +24,14 @@ def test_python_lock_is_exact_local_and_covers_declared_dependencies() -> None:
         name, version = requirement.strip().split("==", 1)
         assert re.fullmatch(r"[A-Za-z0-9_.-]+", name)
         assert re.fullmatch(r"[A-Za-z0-9_.+-]+", version)
+        normalized_name = re.sub(r"[-_.]+", "-", name).casefold()
         if marker:
-            assert marker.strip() == 'sys_platform != "win32"'
-        pins[re.sub(r"[-_.]+", "-", name).casefold()] = version
+            expected_markers = {
+                "pywin32": 'sys_platform == "win32"',
+                "uvloop": 'sys_platform != "win32"',
+            }
+            assert marker.strip() == expected_markers[normalized_name]
+        pins[normalized_name] = version
 
     pyproject = _read("backend/pyproject.toml")
     for dependency in (

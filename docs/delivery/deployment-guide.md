@@ -1,6 +1,6 @@
 # 部署手册
 
-> 文档状态：当前参考（更新于 2026-08-08）。Docker 与 Wazuh 已在学校服务器环境实际使用；本地 30B 模型仍受权重下载和共享 GPU 可用性约束。
+> 文档状态：当前参考（更新于 2026-08-23）。Docker 与 Wazuh 已在学校服务器环境实际使用；本地 30B 模型仍受权重下载和共享 GPU 可用性约束。MCP OAuth/JWKS 已通过本地协议与配置测试，真实身份平台、TLS 和 Nginx 容器链路尚待授权环境验收。
 
 ## 基础 Compose
 
@@ -26,6 +26,83 @@ ssh -i C:\Users\a\.ssh\shieldchain_lab_ed25519 -p 1100 `
 ```
 
 然后访问 `http://127.0.0.1:18080`。
+
+## MCP 生产入口
+
+MCP 默认关闭。ShieldChain 只作为 OAuth Resource Server，不提供登录页、授权服务器、动态客户端注册或 Token 签发。启用前必须准备：
+
+- 可通过 HTTPS 访问的外部 OAuth/OIDC issuer 和 JWKS；
+- 对外稳定的 MCP resource URI，必须精确到 `/mcp`；
+- Authorization Server 签发给该 audience/resource 的短生命周期 JWT；
+- 经过管理员复核的 subject → ShieldChain principal UUID 映射；
+- 位于当前 Nginx 之前的 TLS 终止层，以及与公网域名一致的 `HTTP_ALLOWED_HOSTS`。
+
+私有 `.env` 示例：
+
+```dotenv
+ENVIRONMENT=production
+MCP_SERVER_ENABLED=true
+MCP_AUTH_MODE=oauth
+MCP_AUTH_ISSUER=https://identity.example.edu
+MCP_AUTH_RESOURCE=https://shieldchain.example.edu/mcp
+MCP_AUTH_JWKS_URL=https://identity.example.edu/.well-known/jwks.json
+MCP_AUTH_AUDIENCE=shieldchain-mcp
+MCP_AUTH_ALGORITHM=RS256
+MCP_AUTH_MAX_TOKEN_LIFETIME_SECONDS=900
+MCP_AUTH_SUBJECT_PRINCIPALS={"security-operator":"00000000-0000-4000-8000-000000000010"}
+HTTP_ALLOWED_HOSTS=["shieldchain.example.edu","backend","localhost","127.0.0.1"]
+HTTP_ALLOWED_ORIGINS=["https://shieldchain.example.edu"]
+```
+
+subject 映射是服务器权限配置，不能从 Token 的 tenant/principal 同名 claim 自动生成。删除、替换或新增映射后必须滚动重启后端。不得把 Access Token、client secret、私钥或完整 JWT 写入 `.env.example`、Compose、Git、日志或报告。
+
+基础 scope 为 `shieldchain:mcp`。调用工具还必须包含对应读取 scope：
+
+| 工具 | scope |
+| --- | --- |
+| `security.events.list` | `shieldchain:events:read` |
+| `security.alerts.list` | `shieldchain:alerts:read` |
+| `security.vulnerabilities.list` | `shieldchain:vulnerabilities:read` |
+| `security.weak_passwords.list` | `shieldchain:auth-risk:read` |
+
+配置与启动：
+
+```bash
+docker compose config --quiet
+docker compose run --rm migrate
+docker compose up -d --build backend frontend
+docker compose ps
+```
+
+验证 Protected Resource Metadata 和未认证 challenge：
+
+```bash
+curl --fail --silent --show-error \
+  https://shieldchain.example.edu/.well-known/oauth-protected-resource/mcp
+
+curl --include --request POST \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: application/json, text/event-stream' \
+  --header 'MCP-Protocol-Version: 2026-07-28' \
+  --header 'Mcp-Method: server/discover' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"deployment-check","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}' \
+  https://shieldchain.example.edu/mcp
+```
+
+第二条命令必须返回 401，`WWW-Authenticate` 必须包含 HTTPS `resource_metadata`。真实 Token 验证应使用短期测试主体和最小 scope；把 Token 放在进程环境或受控 Secret 注入中，禁止写入 shell 历史。测试结束后检查 `/api/v1/mcp/runs/{run_id}/calls` 和服务日志，确认只有公开审计字段且没有 Authorization 内容。
+
+Nginx 对 `/mcp` 使用每 IP 10 请求/秒、burst 20、256 KiB 请求体上限，关闭代理请求/响应缓冲和缓存，并清空不可信 `X-Forwarded-*`。当前 Compose 前端只绑定 `127.0.0.1:8080`，因此生产域名必须由更外层受控反向代理提供 TLS；不得直接把 8080 暴露到公网。
+
+当前仅支持签名 JWT，不支持 opaque token introspection 或即时单 Token 撤销。Authorization Server 必须把 Token 生命周期限制在配置上限内；紧急撤销使用 issuer/JWKS 密钥停用、subject 映射删除和后端重启。JWKS 正常轮换由 SDK 依赖的缓存客户端重新获取，旧密钥停用前需保留合理重叠窗口。
+
+关闭与回滚：
+
+```bash
+MCP_SERVER_ENABLED=false docker compose up -d backend frontend
+curl --include https://shieldchain.example.edu/mcp
+```
+
+关闭后 `/mcp` 不应再由后端提供。保留数据库中的 `agent_tool_calls` 审计；已有审计行时 Alembic 会拒绝降级删除审计表。若必须回滚代码，先备份数据库并按留存要求迁移审计记录，不得关闭外键或直接删除表绕过保护。
 
 ## 本地模型覆盖
 

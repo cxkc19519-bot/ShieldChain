@@ -118,7 +118,11 @@ def test_app_only_mounts_mcp_when_explicitly_enabled(tmp_path: Path) -> None:
     enabled_engine = create_engine_from_url(f"sqlite:///{tmp_path / 'enabled.db'}")
     enabled = create_app(
         database_engine=enabled_engine,
-        settings=Settings(_env_file=None, mcp_server_enabled=True),
+        settings=Settings(
+            _env_file=None,
+            environment="testing",
+            mcp_server_enabled=True,
+        ),
     )
     assert enabled.state.mcp_server is not None
     with TestClient(enabled) as client:
