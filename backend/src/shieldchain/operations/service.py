@@ -15,6 +15,7 @@ from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
+from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
 from shieldchain.operations.persistence import OperationsRunRow
 
 from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
@@ -91,18 +92,22 @@ class SecurityOperationsReportAgent:
         knowledge,
         principal_id: UUID,
         tools: tuple[ReadOnlyAgentTool, ...] | None = None,
+        audit_store: AgentToolAuditStore | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
         self._tenant_id = tenant_id
         self._principal_id = principal_id
+        self._audit_store = audit_store or AgentToolAuditStore(session_factory)
         self._store = store
         self._tools = tools or standard_agent_tools(session_factory, tenant_id)
         self._team = RealDataAgentTeam(
             settings, knowledge, tenant_id=tenant_id, principal_id=principal_id
         )
 
-    async def generate(self, payload: OperationsReportRequest) -> OperationsReportView:
+    async def generate(
+        self, payload: OperationsReportRequest, *, request_id: str | None = None
+    ) -> OperationsReportView:
         now = datetime.now(UTC)
         end_at = self._utc(payload.end_at or now)
         start_at = self._utc(payload.start_at or (end_at - timedelta(hours=24)))
@@ -114,6 +119,13 @@ class SecurityOperationsReportAgent:
         run_id = uuid4()
         report_id = f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
         self._create_run(run_id, report_id, start_at, end_at, now)
+        audit_context = AgentToolAuditContext(
+            tenant_id=self._tenant_id,
+            principal_id=self._principal_id,
+            direction="internal",
+            request_id=request_id or uuid4().hex,
+            run_id=run_id,
+        )
         try:
             report = await self._generate_report(
                 run_id=run_id,
@@ -121,6 +133,7 @@ class SecurityOperationsReportAgent:
                 now=now,
                 start_at=start_at,
                 end_at=end_at,
+                audit_context=audit_context,
             )
         except asyncio.CancelledError:
             self._finish_run(run_id, "cancelled", datetime.now(UTC))
@@ -139,6 +152,7 @@ class SecurityOperationsReportAgent:
         now: datetime,
         start_at: datetime,
         end_at: datetime,
+        audit_context: AgentToolAuditContext,
     ) -> OperationsReportView:
         stages = [
             ReportStageView(
@@ -149,7 +163,11 @@ class SecurityOperationsReportAgent:
             )
         ]
         collaboration, collaboration_model, tool_calls = await self._team.run(
-            self._tools, start_at, end_at
+            self._tools,
+            start_at,
+            end_at,
+            audit_store=self._audit_store,
+            audit_context=audit_context,
         )
         failed_tools = [item for item in tool_calls if item.status == "failed"]
         stages.append(

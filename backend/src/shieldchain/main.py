@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -12,6 +13,7 @@ from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
+from shieldchain.api.mcp import router as mcp_router
 from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
@@ -36,6 +38,7 @@ from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
+from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 from shieldchain.qwen_experience.api import router as qwen_experience_router
 from shieldchain.qwen_experience.service import QwenExperienceService
@@ -66,8 +69,14 @@ def create_app(
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
     knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
+    agent_tool_audit_store = AgentToolAuditStore(session_factory)
     mcp_server = (
-        create_mcp_server(session_factory, tenant_id=settings.rag_demo_tenant_id)
+        create_mcp_server(
+            session_factory,
+            tenant_id=settings.rag_demo_tenant_id,
+            principal_id=settings.rag_demo_principal_id,
+            audit_store=agent_tool_audit_store,
+        )
         if settings.mcp_server_enabled
         else None
     )
@@ -75,6 +84,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
         _app.state.accepting_requests = True
         try:
             if mcp_server is None:
@@ -90,6 +100,7 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
     app.state.mcp_server = mcp_server
+    app.state.agent_tool_audit_store = agent_tool_audit_store
     app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
@@ -124,6 +135,7 @@ def create_app(
         store=OperationsReportStore(settings.assistant_data_root),
         knowledge=knowledge_service,
         principal_id=settings.rag_demo_principal_id,
+        audit_store=agent_tool_audit_store,
     )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(
@@ -156,6 +168,7 @@ def create_app(
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(incidents_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
+    app.include_router(mcp_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(react_router, prefix="/api/v1")
     app.include_router(wazuh_router, prefix="/api/v1")

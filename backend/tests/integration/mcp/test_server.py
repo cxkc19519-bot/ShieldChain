@@ -6,12 +6,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from mcp import Client
+from sqlalchemy import select
 
 from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.main import create_app
 from shieldchain.mcp_server import create_mcp_server
+from shieldchain.operations.persistence import AgentToolCallRow
 from shieldchain.wazuh.persistence import WazuhAlertRow
 
 
@@ -42,7 +44,11 @@ def test_official_client_discovers_and_calls_read_only_security_tools(tmp_path: 
                 received_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
             )
         )
-    server = create_mcp_server(session_factory, tenant_id=settings.rag_demo_tenant_id)
+    server = create_mcp_server(
+        session_factory,
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+    )
 
     async def verify() -> None:
         async with Client(server, raise_exceptions=True) as client:
@@ -72,6 +78,12 @@ def test_official_client_discovers_and_calls_read_only_security_tools(tmp_path: 
             ]
 
     asyncio.run(verify())
+    with session_factory() as session:
+        audit = session.scalar(select(AgentToolCallRow))
+        assert audit is not None
+        assert audit.direction == "mcp_inbound"
+        assert audit.run_id is None
+        assert audit.status == "succeeded"
     engine.dispose()
 
 

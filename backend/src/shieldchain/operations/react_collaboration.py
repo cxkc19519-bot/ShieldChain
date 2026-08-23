@@ -6,7 +6,8 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from uuid import UUID
 
 import httpx
@@ -18,6 +19,7 @@ from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.schemas import RetrievalRequest
 
+from .audit import AgentToolAuditContext, AgentToolAuditStore
 from .mcp_tools import ReadOnlyAgentTool
 from .schemas import AgentRoleRunView, McpToolCallView
 
@@ -196,7 +198,13 @@ class AgentToolBroker:
     """Execute allowlisted read-only tools once and cache their observations."""
 
     def __init__(
-        self, tools: tuple[ReadOnlyAgentTool, ...], start_at: datetime, end_at: datetime
+        self,
+        tools: tuple[ReadOnlyAgentTool, ...],
+        start_at: datetime,
+        end_at: datetime,
+        *,
+        audit_store: AgentToolAuditStore | None = None,
+        audit_context: AgentToolAuditContext | None = None,
     ) -> None:
         self._validate_window(start_at, end_at)
         self._tools = {tool.name: tool for tool in tools}
@@ -204,6 +212,10 @@ class AgentToolBroker:
         self._end_at = end_at
         self._cache: dict[str, McpToolCallView] = {}
         self._order: list[str] = []
+        self._audit_store = audit_store
+        self._audit_context = audit_context
+        if (audit_store is None) != (audit_context is None):
+            raise ValueError("audit store and context must be provided together")
 
     @property
     def results(self) -> list[McpToolCallView]:
@@ -216,13 +228,36 @@ class AgentToolBroker:
             if name == _RAG or name in self._tools
         ]
 
-    async def call(self, name: str) -> McpToolCallView:
+    async def call(self, name: str, *, role: str | None = None) -> McpToolCallView:
         if name not in self._tools:
             raise ValueError("tool is not registered")
         if name not in self._cache:
             tool = self._tools[name]
+            arguments = {
+                "start_at": self._start_at.isoformat(),
+                "end_at": self._end_at.isoformat(),
+                "limit": 50,
+            }
+            call_id = None
+            started_at = perf_counter()
+            if self._audit_store is not None and self._audit_context is not None:
+                call_id = self._audit_store.start(
+                    self._audit_context,
+                    tool,
+                    role=role,
+                    arguments=arguments,
+                    now=datetime.now(UTC),
+                )
             try:
                 result = await asyncio.to_thread(tool.call, self._start_at, self._end_at)
+            except asyncio.CancelledError:
+                if call_id is not None and self._audit_store is not None:
+                    self._audit_store.cancel(
+                        call_id,
+                        duration_ms=round((perf_counter() - started_at) * 1000),
+                        now=datetime.now(UTC),
+                    )
+                raise
             except Exception as error:
                 logger.warning(
                     "agent_tool_call_failed",
@@ -242,6 +277,13 @@ class AgentToolBroker:
                     result_count=0,
                     summary=f"{tool.label}调用失败；未取得可信结果，需人工复核。",
                     items=[],
+                )
+            if call_id is not None and self._audit_store is not None:
+                self._audit_store.finish(
+                    call_id,
+                    result,
+                    duration_ms=round((perf_counter() - started_at) * 1000),
+                    now=datetime.now(UTC),
                 )
             self._cache[name] = result
             self._order.append(name)
@@ -280,9 +322,21 @@ class RealDataAgentTeam:
         self._principal_id = principal_id
 
     async def run(
-        self, tools: tuple[ReadOnlyAgentTool, ...], start_at: datetime, end_at: datetime
+        self,
+        tools: tuple[ReadOnlyAgentTool, ...],
+        start_at: datetime,
+        end_at: datetime,
+        *,
+        audit_store: AgentToolAuditStore | None = None,
+        audit_context: AgentToolAuditContext | None = None,
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
-        broker = AgentToolBroker(tools, start_at, end_at)
+        broker = AgentToolBroker(
+            tools,
+            start_at,
+            end_at,
+            audit_store=audit_store,
+            audit_context=audit_context,
+        )
         remaining = set(_SPECIALISTS)
         results: list[AgentRoleRunView] = []
         model: str | None = None
@@ -436,7 +490,9 @@ class RealDataAgentTeam:
                     )
                     observations.append(f"{AGENT_TOOL_LABELS[_RAG]}：{observation}")
                 else:
-                    observations.append(self._tool_observation(await broker.call(tool_name)))
+                    observations.append(
+                        self._tool_observation(await broker.call(tool_name, role=definition.key))
+                    )
             except (LlmError, ValueError, json.JSONDecodeError):
                 break
         summary, fallback_model = await self._summarize_observations(
@@ -457,7 +513,9 @@ class RealDataAgentTeam:
                     f"{AGENT_TOOL_LABELS[_RAG]}：{self._retrieve(definition.responsibility)}"
                 )
             else:
-                observations.append(self._tool_observation(await broker.call(name)))
+                observations.append(
+                    self._tool_observation(await broker.call(name, role=definition.key))
+                )
         if observations:
             summary = (f"{definition.label}保守降级：" + "；".join(observations))[:800]
             reason = "模型不可用，按角色最小必需集合调用" + "、".join(selected)

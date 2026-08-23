@@ -27,6 +27,12 @@ from shieldchain.operations.service import OperationsReportStore, SecurityOperat
 
 
 class FakeTool:
+    identity = UUID("00000000-0000-4000-8000-000000009999")
+    provider_kind = "builtin"
+    provider_id = "test.operations"
+    catalog_revision = "test-v1"
+    schema_revision = "test-v1"
+
     def __init__(self, name: str, label: str, items: list[str]) -> None:
         self.name = name
         self.label = label
@@ -47,8 +53,13 @@ class FakeTool:
 
 
 class FailingTool:
+    identity = UUID("00000000-0000-4000-8000-000000009998")
     name = "security.alerts.list"
     label = "告警 MCP"
+    provider_kind = "builtin"
+    provider_id = "test.operations"
+    catalog_revision = "test-v1"
+    schema_revision = "test-v1"
 
     def __init__(self) -> None:
         self.calls = 0

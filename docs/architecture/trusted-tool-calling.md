@@ -2,7 +2,7 @@
 
 > 文档状态：当前参考（更新于 2026-08-22）。运营 MCP 查询与真实处置工具是两条不同的安全边界。
 
-当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。官方 Client 和 Streamable HTTP 基线已经实现；生产鉴权、调用审计、受控 MCP Client、完整安全门禁和外部平台验收仍待完成，因此当前入口不得视为可生产开放。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
+当前四类运营工具首先是进程内只读 Agent Tool Provider，并通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器复用同一 Broker。官方 Client、Streamable HTTP 和裁剪后的调用审计已经实现；生产鉴权、受控 MCP Client、完整安全门禁和外部平台验收仍待完成，因此当前入口不得视为可生产开放。后续工作以 [统一实施方案](../plans/mcp-agent-tools-response-safety-loop-implementation.md) 为准。
 
 ## 两类工具
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -16,8 +17,13 @@ from shieldchain.wazuh.persistence import WazuhAlertRow
 
 
 class FailingAlertTool:
+    identity = UUID("00000000-0000-4000-8000-000000009997")
     name = "security.alerts.list"
     label = "告警 MCP"
+    provider_kind = "builtin"
+    provider_id = "test.operations"
+    catalog_revision = "test-v1"
+    schema_revision = "test-v1"
 
     def call(self, _start_at: datetime, _end_at: datetime):
         raise RuntimeError("private upstream failure")
@@ -62,6 +68,7 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         assert client.post("/api/v1/investigations", json={}).status_code == 404
         response = client.post(
             "/api/v1/operations/reports",
+            headers={"X-Request-ID": "operations-audit-test"},
             json={"start_at": "2026-08-01T00:00:00Z", "end_at": "2026-08-02T00:00:00Z"},
         )
         assert response.status_code == 201
@@ -72,6 +79,13 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         assert calls["security.alerts.list"]["result_count"] == 1
         assert calls["security.vulnerabilities.list"]["items"][0].startswith("CVE-2026-1234")
         assert len(body["stages"]) == 6
+        calls_response = client.get(f"/api/v1/mcp/runs/{body['run_id']}/calls")
+        assert calls_response.status_code == 200
+        audit_calls = calls_response.json()["items"]
+        assert audit_calls
+        assert {item["direction"] for item in audit_calls} == {"internal"}
+        assert {item["request_id"] for item in audit_calls} == {"operations-audit-test"}
+        assert all("items" not in item for item in audit_calls)
     with app.state.incident_session_factory() as session:
         run = session.get(AgentRunRow, body["run_id"])
         operations_run = session.get(OperationsRunRow, body["run_id"])

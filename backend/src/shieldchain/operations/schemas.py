@@ -75,3 +75,42 @@ class OperationsReportView(BaseModel):
 
 class OperationsReportListResponse(BaseModel):
     items: list[OperationsReportView]
+
+
+class AgentToolCallAuditView(BaseModel):
+    id: UUID
+    run_id: UUID | None
+    case_id: UUID | None
+    role: str | None
+    direction: Literal["internal", "mcp_inbound", "mcp_outbound"]
+    provider_kind: Literal["builtin", "rag", "remote_mcp"]
+    provider_id: str
+    tool_identity: UUID
+    tool_alias: str
+    catalog_revision: str
+    schema_revision: str
+    arguments: dict[str, str | int]
+    status: Literal[
+        "running",
+        "succeeded",
+        "empty",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "rejected",
+        "unknown",
+    ]
+    reason_code: str | None
+    result_count: int
+    summary: str | None
+    duration_ms: int | None
+    attempt: int
+    result_bytes: int | None
+    truncated: bool
+    request_id: str
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class AgentToolCallAuditListResponse(BaseModel):
+    items: list[AgentToolCallAuditView]
