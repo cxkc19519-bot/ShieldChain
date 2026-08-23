@@ -198,3 +198,16 @@ python3 scripts/nta/nta_offline_pipeline.py \
 - 不提交原始 PCAP、标签映射、访问令牌和含敏感载荷的完整日志。
 - 规则只产生告警，不自动阻断。
 - final-blind 只有在候选规则冻结、评估方案写定后才能启封。
+## 8. v11 development 候选（2026-08-23）
+
+v11 严格只用 development 分析和调参，没有运行 validation 或 final-blind。完整 701 条攻击 development 的分类覆盖由 v10 的 585/701（83.45%）提高到 620/701（88.45%），安全告警覆盖由 567/701（80.88%）提高到 602/701（85.88%）；180 条正常 development 的安全告警为 0，引擎失败为 0。
+
+锁定产物：
+
+- 候选规则：`/home/user/jhk/nta-dataset-blind/evaluation/v11-candidate-rules.rules`；
+- 攻击事件：`/home/user/jhk/nta-dataset-blind/evaluation/v11-development-candidate-events.jsonl`；
+- 正常事件：`/home/user/jhk/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
+- 锁定摘要：`/home/user/jhk/nta-dataset-blind/evaluation/v11-development-locked-result.json`；
+- 详细报告：`docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
+
+这仍是开发集结果，不是独立准确率。validation 只能在 v11 规则、代码、镜像和评估方案再次冻结后运行；final-blind 继续保持未启封。

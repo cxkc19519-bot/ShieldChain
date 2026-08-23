@@ -254,3 +254,14 @@ python3 -m unittest \
 
 仓库完整测试环境还会运行 `tests/scripts/test_benign_service_lab.py`，验证所有 action 都有事务构造器、bridge 名称满足 Linux 限制，并确保没有把 Windows 场景暴露为 Linux Docker 适配器。
 
+## v11 候选规则回归
+
+2026-08-23 将 Linux 服务正常流量 162 条与 Windows 管理正常流量 18 条通过符号链接合并为独立的 `development-all-v11` 集合，使用 v11 候选规则重新运行：
+
+- 样本：180/180；
+- Suricata/Zeek 引擎失败：0；
+- 安全告警样本：0/180；
+- 合并事件：`/home/user/jhk/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
+- 事件 SHA-256：`36c4619af618e7fb752c84af3bf972c25d440e2a60d9ca5194ccb5eb6f5589c7`。
+
+该回归只约束当前隔离实验室场景，不能外推为生产误报率为零。v11 攻击 development 与正常 development 的联合结果见 `docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
