@@ -16,7 +16,7 @@ from shieldchain.mcp_remote.persistence import (
     McpToolSnapshot,
 )
 from shieldchain.mcp_remote.runtime import McpRemoteRuntime
-from shieldchain.operations.schemas import OperationsReportRequest
+from shieldchain.operations.schemas import AgentRoleRunView, OperationsReportRequest
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 
 NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
@@ -142,9 +142,27 @@ def test_operations_run_persists_selected_peer_snapshot_revision(tmp_path: Path)
     )
     captured_tools = []
 
-    async def team_run(tools, *_args, **_kwargs):
+    async def team_run(tools, *_args, **kwargs):
         captured_tools.extend(tools)
-        return [], None, []
+        plan_result = await agent._response_plan_agent.generate(
+            run_id=kwargs["run_id"],
+            public_handoffs=[],
+            observation_summaries="尚未调用运营数据工具。",
+            now=kwargs["now"],
+        )
+        return (
+            [
+                AgentRoleRunView(
+                    role="response_planning",
+                    label="响应规划智能体",
+                    status="fallback",
+                    summary=plan_result.reference.public_summary,
+                    response_plan=plan_result.reference,
+                )
+            ],
+            None,
+            [],
+        )
 
     async def synthesize(*_args):
         return "保守摘要", None, True

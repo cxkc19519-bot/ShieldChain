@@ -19,14 +19,17 @@ from shieldchain.mcp_remote.persistence import AgentRunMcpSnapshotRow
 from shieldchain.mcp_remote.runtime import McpRemoteRuntime, RemoteRunCatalog
 from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
 from shieldchain.operations.persistence import OperationsRunRow
+from shieldchain.response_planning.compiler import ResponsePlanCompiler
 
 from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
+from .response_plan_agent import OperationsResponsePlanAgent
 from .schemas import (
     McpToolCallView,
     OperationsReportRequest,
     OperationsReportView,
     ReportStageView,
+    ResponsePlanReferenceView,
 )
 
 
@@ -96,6 +99,7 @@ class SecurityOperationsReportAgent:
         tools: tuple[ReadOnlyAgentTool, ...] | None = None,
         audit_store: AgentToolAuditStore | None = None,
         remote_runtime: McpRemoteRuntime | None = None,
+        response_plan_agent: OperationsResponsePlanAgent | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
@@ -105,8 +109,18 @@ class SecurityOperationsReportAgent:
         self._store = store
         self._tools = tools or standard_agent_tools(session_factory, tenant_id)
         self._remote_runtime = remote_runtime
+        self._response_plan_agent = response_plan_agent or OperationsResponsePlanAgent(
+            settings,
+            ResponsePlanCompiler(session_factory),
+            session_factory,
+            tenant_id=tenant_id,
+        )
         self._team = RealDataAgentTeam(
-            settings, knowledge, tenant_id=tenant_id, principal_id=principal_id
+            settings,
+            knowledge,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            response_plan_agent=self._response_plan_agent,
         )
 
     async def generate(
@@ -179,7 +193,19 @@ class SecurityOperationsReportAgent:
             end_at,
             audit_store=self._audit_store,
             audit_context=audit_context,
+            run_id=run_id,
+            now=now,
         )
+        response_plan = next(
+            (
+                item.response_plan
+                for item in collaboration
+                if item.role == "response_planning" and item.response_plan is not None
+            ),
+            None,
+        )
+        if response_plan is None:
+            raise RuntimeError("response planning role did not produce a strict plan")
         failed_tools = [item for item in tool_calls if item.status == "failed"]
         stages.append(
             ReportStageView(
@@ -208,6 +234,26 @@ class SecurityOperationsReportAgent:
                 detail=analysis["summary"],
             )
         )
+        stages.append(
+            ReportStageView(
+                key="response_plan",
+                label="严格响应计划编译",
+                status=(
+                    "fallback"
+                    if response_plan.generation_status == "deterministic_fallback"
+                    else "completed"
+                ),
+                detail=(
+                    f"计划 {response_plan.plan_id} 第 {response_plan.revision} 版已保存为"
+                    f" {response_plan.status}；动作数 {response_plan.action_count}，未执行。"
+                )
+                + (
+                    f"安全降级原因：{response_plan.fallback_reason_code}。"
+                    if response_plan.fallback_reason_code
+                    else ""
+                ),
+            )
+        )
         synthesis, model, fallback = await self._synthesize(start_at, end_at, tool_calls, analysis)
         stages.append(
             ReportStageView(
@@ -219,7 +265,15 @@ class SecurityOperationsReportAgent:
                 else "已由安全运营报告智能体基于工具结果生成建议。",
             )
         )
-        markdown = self._render_markdown(start_at, end_at, tool_calls, analysis, synthesis, model)
+        markdown = self._render_markdown(
+            start_at,
+            end_at,
+            tool_calls,
+            analysis,
+            synthesis,
+            model,
+            response_plan,
+        )
         stages.append(
             ReportStageView(
                 key="layout",
@@ -249,6 +303,7 @@ class SecurityOperationsReportAgent:
             stages=stages,
             collaboration=collaboration,
             tool_calls=tool_calls,
+            response_plan=response_plan,
             markdown=markdown,
             html=rendered_html,
         )
@@ -457,6 +512,7 @@ class SecurityOperationsReportAgent:
         analysis: dict[str, object],
         synthesis: str,
         model: str | None,
+        response_plan: ResponsePlanReferenceView,
     ) -> str:
         lines = [
             "# ShieldChain 安全运营报告",
@@ -492,6 +548,15 @@ class SecurityOperationsReportAgent:
                 "## 综合研判与建议",
                 "",
                 synthesis,
+                "",
+                "## 响应计划（建议，不是执行事实）",
+                "",
+                f"- 计划 ID：{response_plan.plan_id}",
+                f"- Revision：{response_plan.revision}",
+                f"- 计划状态：{response_plan.status}",
+                f"- 计划动作数：{response_plan.action_count}",
+                f"- 公开建议：{response_plan.public_summary}",
+                "- 执行事实：未执行任何响应计划动作；计划生成不代表接受、审批或执行。",
                 "",
                 "## 数据局限与复核要求",
                 "",

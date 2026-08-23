@@ -15,6 +15,7 @@ from shieldchain.tools.domain import ToolTargetType, TrustedToolRequest
 from shieldchain.tools.registry import (
     ToolNotRegistered,
     ToolParameterRejected,
+    ToolRegistration,
     TrustedToolRegistry,
     default_tool_registry,
 )
@@ -157,6 +158,9 @@ class ResponsePlanCompiler:
         candidate: ResponsePlanCandidate,
         context: ResponsePlanCompileContext,
     ) -> tuple[_CompiledAction, ...]:
+        registrations = {
+            action.client_action_id: self._registration(action.tool) for action in candidate.actions
+        }
         evidence_cache: dict[UUID, EvidenceRecordRow] = {}
         for assumption in candidate.assumptions:
             for evidence_id in assumption.evidence_ids:
@@ -168,27 +172,38 @@ class ResponsePlanCompiler:
         compiled = []
         for action in candidate.actions:
             compiled.append(
-                self._compile_action(session, action, action_ids, context, evidence_cache)
+                self._compile_action(
+                    session,
+                    action,
+                    registrations[action.client_action_id],
+                    action_ids,
+                    context,
+                    evidence_cache,
+                )
             )
         return tuple(compiled)
+
+    def _registration(self, tool_name: str) -> ToolRegistration:
+        registrations = tuple(
+            item for item in self._registry.registrations if item.definition.name == tool_name
+        )
+        if len(registrations) != 1:
+            raise _CompilationRejected("tool_not_registered")
+        registration = registrations[0]
+        if AgentRole.RESPONSE_PLANNING not in registration.definition.allowed_roles:
+            raise _CompilationRejected("tool_not_allowed_for_role")
+        return registration
 
     def _compile_action(
         self,
         session: Session,
         candidate: CandidateAction,
+        registration: ToolRegistration,
         action_ids: dict[str, UUID],
         context: ResponsePlanCompileContext,
         evidence_cache: dict[UUID, EvidenceRecordRow],
     ) -> _CompiledAction:
-        registrations = tuple(
-            item for item in self._registry.registrations if item.definition.name == candidate.tool
-        )
-        if len(registrations) != 1:
-            raise _CompilationRejected("tool_not_registered")
-        registration = registrations[0]
         definition = registration.definition
-        if AgentRole.RESPONSE_PLANNING not in definition.allowed_roles:
-            raise _CompilationRejected("tool_not_allowed_for_role")
         evidence = self._evidence(session, candidate.target_reference_id, context, evidence_cache)
         target_field, target_identifier = _target(definition.target_type, evidence.payload_json)
         if target_field in candidate.arguments:

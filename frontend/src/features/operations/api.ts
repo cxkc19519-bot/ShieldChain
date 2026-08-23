@@ -16,7 +16,19 @@ export type ReportStage = {
   detail: string
 }
 
-export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string }
+export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string; response_plan: ResponsePlanReference | null }
+
+export type ResponsePlanReference = {
+  plan_id: string
+  revision_id: string
+  revision: number
+  status: 'proposed' | 'needs_review' | 'completed_advisory'
+  public_summary: string
+  action_count: number
+  generation_status: 'model_compiled' | 'deterministic_fallback'
+  fallback_reason_code: string | null
+  execution_status: 'not_executed'
+}
 
 export type OperationsReport = {
   id: string
@@ -30,6 +42,7 @@ export type OperationsReport = {
   stages: ReportStage[]
   collaboration: AgentRoleRun[]
   tool_calls: ToolCall[]
+  response_plan: ResponsePlanReference | null
   markdown: string
   html: string
 }

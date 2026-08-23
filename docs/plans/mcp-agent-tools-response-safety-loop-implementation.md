@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～9 已完成，Task 10～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-23）。Task 0～10 已完成，Task 11～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -20,12 +20,12 @@
 | 当前模块 | 已有能力 | 后续处理 |
 | --- | --- | --- |
 | `operations/mcp_tools.py` | 事件、告警、漏洞线索、弱口令线索四类租户化、协议无关的只读 Agent Tool Provider | 保留旧 façade 名称兼容入口，标准 MCP 仅作为边界适配器 |
-| `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计 | 保持 Broker 边界；Task 10 再把响应规划角色接到现有严格 Schema |
+| `operations/react_collaboration.py` | 模型选择角色和只读工具、单角色最多四轮、结果缓存、安全降级和统一调用审计；响应规划角色已接入严格计划代理 | 保持 Broker 边界；报告级运行只允许零动作建议，案件级动作后续进入可信网关 |
 | `mcp_server.py` | 默认关闭的标准 MCP 2026-07-28 Server、四类只读工具发布、OAuth Resource Server 和 `/mcp` Streamable HTTP | 保持为入站协议适配边界；真实身份平台和 TLS 仍需部署验收 |
 | `mcp_remote/` | 管理员固定 YAML、外部 endpoint 网络策略、官方 Client、不可变快照，以及受预算/并发/速率/熔断约束的远程只读 Provider | 保持服务端参数构造、结果裁剪和运行快照绑定；不得接入外部变更工具 |
 | `agents/` | 角色、上下文、交接、预算、结构化领域合同 | 保留并接入通用运行模型；不恢复已经退役的旧调查页面 |
 | `tools/` | 工具注册、策略、审批、幂等、租约、执行、验证、恢复和控制 | 继续作为唯一可信变更执行边界；外部 MCP 不能绕过它 |
-| `response_planning/` | 严格候选 Schema、证据/目标重绑定、可信工具定义校验、服务端风险和审批计算、版本化计划四表 | Task 10 接入响应规划角色；Task 11 才把计划动作编译为可信工具调用 |
+| `response_planning/` | 严格候选 Schema、证据/目标重绑定、可信工具定义校验、服务端风险和审批计算、版本化计划四表 | 已接入运营响应规划；Task 11 才把案件级计划动作编译为可信工具调用 |
 | `react/` | 失败分类、预算、循环检测、确定性重新规划、轨迹和人工控制 | 接入当前运营链路的通用运行 ID、响应计划和真实工具回执 |
 | `/api/v1/tools/*`、`/api/v1/react/*` | 可信工具与 ReAct 公开轨迹、审批和人工控制 | 保持兼容，在新运行模型上扩展，不把 MCP 传输端点放入 REST 路由 |
 | `/operations-report`、`/agents`、`/response` | 运营报告、公开 ReAct 轨迹和处置中心页面 | 增加统一运行、响应计划、MCP 调用来源和闭环状态展示 |
@@ -34,7 +34,7 @@
 
 - 已有默认关闭的标准 MCP Server、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现、目录快照和受控只读 Provider；仍缺少外部身份平台/真实 peer 联调和真实平台验收；
 - 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
-- 严格响应计划 Schema、计划编译器、证据重绑定和版本化持久化已经完成，但当前响应规划角色仍输出自然语言摘要或 `proposed:` 字符串，尚未在运营运行中调用编译器；
+- 当前运营响应规划角色已调用严格计划编译器；但运营报告没有绑定单一 case 和案件级确认证据，因此只生成 `completed_advisory` 零动作计划，案件调查到可执行计划的接线仍待后续 Task；
 - 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
 - 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
 - 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
@@ -843,7 +843,7 @@ POST /api/v1/response-plans/{plan_id}/reject
 
 ### 15.4 当前 API 兼容
 
-- `/api/v1/operations/reports` 响应增加 `run_id` 和 `response_plan_summary`，前端先兼容字段可空；
+- `/api/v1/operations/reports` 响应增加 `run_id` 和可空 `response_plan` 公开引用，历史报告保持字段为空；
 - `/api/v1/tools/runs/{run_id}/calls` 继续返回可信变更工具轨迹；
 - `/api/v1/react/runs/{run_id}/trajectory` 继续返回闭环轨迹；
 - Agent Tool/MCP 调用使用新的 `/api/v1/mcp/runs/{run_id}/calls`，避免与可信工具混淆；
@@ -1346,6 +1346,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 10：响应规划智能体接线
 
+> 状态：已完成（2026-08-23）。运营报告响应规划角色现在真实生成并持久化严格计划；报告级运行不具备案件目标，因此只允许建议型零动作计划。
+
 目标：当前运营报告的响应规划角色真实产出严格计划。
 
 修改：
@@ -1360,6 +1362,17 @@ LIVE_MCP_CALL_LIMIT=0
 - 合法计划、无动作建议、无效 JSON、未知工具、跨案证据和模型不可用；
 - 不保存思维链或原始 Prompt；
 - 响应角色仍不持有 Adapter。
+
+实施与验证记录（2026-08-23）：
+
+- 新增 `operations/response_plan_agent.py`，只向模型提供最多四条公开交接摘要、裁剪后的工具观察摘要、严格候选 Schema 和 `allowed_actions=[]`；不提供 tenant、principal、原始工具载荷、私有 Prompt、审批信息或 Adapter；
+- 响应规划角色不再走通用自由文本 `finish` 输出，而是在 ReAct 选中该角色时调用严格计划代理；角色公开记录直接关联 plan ID、revision、状态和公开摘要；
+- 合法的零动作候选编译为 `completed_advisory`。无效 JSON、未知工具、跨运行证据或动作候选先保存稳定失败 revision，再追加确定性零动作建议 revision；原始模型输出和 Prompt 均不持久化；
+- 模型不可用时不伪造模型结果，直接生成一条确定性 `completed_advisory` revision，并公开 `model_unavailable`；
+- 运营报告 API、Markdown/HTML 和前端增加响应计划 ID、revision、动作数、生成方式和降级原因，并固定显示“未执行任何计划动作”；历史报告保持 `response_plan=null`；
+- 响应计划代理只依赖编译器和本地工具定义，不持有执行 Adapter，也不创建 `TrustedToolCall`；计划生成不代表接受、审批、执行或验证；
+- 合法候选、零动作建议、无效 JSON、未知工具、跨运行证据、模型不可用、最小上下文、报告关联和前端公开边界测试通过；Task 0～10 相关后端组合回归：`292 passed`，前端全量 `27 files / 97 passed`，TypeScript 与 ESLint 通过；
+- 生成可执行动作需要先有案件级 run/case、同运行已确认证据和可验证目标；计划接受、逐动作策略/审批/幂等关联属于 Task 11。
 
 建议提交：`feat: generate strict response plans from operations runs`
 

@@ -114,7 +114,13 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
         )
     )
 
-    assert len(report.stages) == 6
+    assert len(report.stages) == 7
+    assert report.response_plan is not None
+    assert report.response_plan.status == "completed_advisory"
+    assert report.response_plan.execution_status == "not_executed"
+    response_role = next(item for item in report.collaboration if item.role == "response_planning")
+    assert response_role.response_plan is not None
+    assert response_role.response_plan.plan_id == report.response_plan.plan_id
     assert {item.name for item in report.tool_calls} == {tool.name for tool in tools}
     assert all(tool.calls == 1 for tool in tools)
     assert "<script>" not in report.html
@@ -153,6 +159,7 @@ def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
     assert isinstance(report, OperationsReportView)
     assert report.run_id is None
     assert report.run_status == "legacy_without_run"
+    assert report.response_plan is None
 
 
 def test_react_superagent_controls_specialist_order() -> None:

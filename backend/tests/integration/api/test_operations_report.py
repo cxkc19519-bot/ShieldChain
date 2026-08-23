@@ -78,7 +78,14 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         calls = {item["name"]: item for item in body["tool_calls"]}
         assert calls["security.alerts.list"]["result_count"] == 1
         assert calls["security.vulnerabilities.list"]["items"][0].startswith("CVE-2026-1234")
-        assert len(body["stages"]) == 6
+        assert len(body["stages"]) == 7
+        assert body["response_plan"]["status"] == "completed_advisory"
+        assert body["response_plan"]["execution_status"] == "not_executed"
+        response_role = next(
+            item for item in body["collaboration"] if item["role"] == "response_planning"
+        )
+        assert response_role["response_plan"]["plan_id"] == body["response_plan"]["plan_id"]
+        assert "未执行任何响应计划动作" in body["markdown"]
         calls_response = client.get(f"/api/v1/mcp/runs/{body['run_id']}/calls")
         assert calls_response.status_code == 200
         audit_calls = calls_response.json()["items"]
@@ -105,8 +112,7 @@ def test_operations_report_exposes_sanitized_tool_failure(tmp_path: Path) -> Non
     app = create_app(database_engine=engine, settings=settings)
     agent = app.state.security_operations_report_agent
     agent._tools = tuple(
-        FailingAlertTool() if tool.name == "security.alerts.list" else tool
-        for tool in agent._tools
+        FailingAlertTool() if tool.name == "security.alerts.list" else tool for tool in agent._tools
     )
 
     async def fallback(*_args):
@@ -121,9 +127,7 @@ def test_operations_report_exposes_sanitized_tool_failure(tmp_path: Path) -> Non
 
     assert response.status_code == 201
     body = response.json()
-    failed = next(
-        item for item in body["tool_calls"] if item["name"] == "security.alerts.list"
-    )
+    failed = next(item for item in body["tool_calls"] if item["name"] == "security.alerts.list")
     assert failed["status"] == "failed"
     assert failed["reason_code"] == "tool_dependency_failed"
     assert failed["result_count"] == 0
@@ -153,9 +157,7 @@ def test_operations_report_failure_marks_generic_run_failed(tmp_path: Path) -> N
 
     assert response.status_code == 500
     with app.state.incident_session_factory() as session:
-        run = session.scalar(
-            select(AgentRunRow).where(AgentRunRow.run_kind == "operations_report")
-        )
+        run = session.scalar(select(AgentRunRow).where(AgentRunRow.run_kind == "operations_report"))
         assert run is not None
         assert run.status == "failed"
         assert run.completed_at is not None

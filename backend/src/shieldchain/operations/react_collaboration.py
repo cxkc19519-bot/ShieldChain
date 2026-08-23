@@ -22,6 +22,7 @@ from shieldchain.rag.schemas import RetrievalRequest
 
 from .audit import AgentToolAuditContext, AgentToolAuditStore
 from .mcp_tools import AgentToolExecutionResult, ReadOnlyAgentTool
+from .response_plan_agent import OperationsResponsePlanAgent
 from .schemas import AgentRoleRunView, McpToolCallView
 
 logger = structlog.get_logger(__name__)
@@ -361,11 +362,13 @@ class RealDataAgentTeam:
         *,
         tenant_id: UUID,
         principal_id: UUID,
+        response_plan_agent: OperationsResponsePlanAgent | None = None,
     ) -> None:
         self._settings = settings
         self._knowledge = knowledge
         self._tenant_id = tenant_id
         self._principal_id = principal_id
+        self._response_plan_agent = response_plan_agent
 
     async def run(
         self,
@@ -375,6 +378,8 @@ class RealDataAgentTeam:
         *,
         audit_store: AgentToolAuditStore | None = None,
         audit_context: AgentToolAuditContext | None = None,
+        run_id: UUID | None = None,
+        now: datetime | None = None,
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
         broker = AgentToolBroker(
             tools,
@@ -404,17 +409,37 @@ class RealDataAgentTeam:
         iteration = 2
         while remaining and iteration <= 8:
             definition = _SPECIALISTS[selected]
-            summary, role_model, tool_reason = await self._run_role(definition, broker, results)
+            response_plan = None
+            if definition.key == "response_planning" and self._response_plan_agent is not None:
+                if run_id is None or now is None:
+                    raise ValueError("run_id and now are required for response planning")
+                plan_result = await self._response_plan_agent.generate(
+                    run_id=run_id,
+                    public_handoffs=[
+                        {"role": item.role, "summary": item.summary} for item in results
+                    ],
+                    observation_summaries=broker.public_facts(),
+                    now=now,
+                )
+                summary = plan_result.reference.public_summary
+                role_model = plan_result.model
+                tool_reason = plan_result.decision_reason
+                response_plan = plan_result.reference
+                role_fallback = plan_result.used_fallback
+            else:
+                summary, role_model, tool_reason = await self._run_role(definition, broker, results)
+                role_fallback = role_model is None
             model = model or role_model
             remaining.remove(selected)
             current = AgentRoleRunView(
                 role=definition.key,
                 label=definition.label,
-                status="completed" if role_model else "fallback",
+                status="fallback" if role_fallback else "completed",
                 summary=summary,
                 handoff_to=None,
                 iteration=iteration,
                 decision_reason=tool_reason,
+                response_plan=response_plan,
             )
             results.append(current)
             next_role: str | None = None
