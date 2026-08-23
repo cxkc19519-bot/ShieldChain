@@ -29,10 +29,10 @@ ShieldChain 将 300 个正常场景按相关变体分组后固定划分为：
 - DNS 18 条；
 - SSH 18 条；
 - SMB 18 条；
-- Windows 管理 18 条（本地隔离 Hyper-V 网络，待导入服务器）；
-- 本地已采集合计 180 条 development PCAP。
+- Windows 管理 18 条（本地隔离 Hyper-V 网络采集，已导入服务器）；
+- 已采集、验签、导入并完成双引擎检查的 development PCAP 合计 180 条。
 
-服务器已正式保存并完成双引擎检查的仍是 162 条 Linux 协议 PCAP；Windows 18 条已在本地验签，但在 SSH 恢复、上传、服务器导入和 Suricata/Zeek 离线检查完成前，不计入服务器正式结果。
+服务器现已正式保存全部 180 条 development PCAP。Windows 18 条的首轮检查发现两类正常 WinRM 误报；修正规则与告警分级后再次检查，18/18 个样本的 Suricata 与 Zeek 均成功执行，安全告警样本数为 0。首轮与修复后结果均保留，便于审计规则调整过程。
 
 服务器数据根目录：
 
@@ -154,7 +154,26 @@ python3 scripts/nta/benign_lab/import_windows_captures.py \
 - 协议：18/18 个文件均含 TCP/5985 WinRM 流量，每文件 14–382 个 WinRM 数据包；
 - 清理：临时文件、远端 MSI、测试计划任务、测试注册表值、已安装 fixture 文件残留均为 0；
 - 本地目录：`D:\ShieldChainLab\captures\windows-development-20260823-b`；
-- 当前边界：尚未上传服务器，也尚未运行 Suricata/Zeek，因此本节只证明真实采集与本地完整性，不代表误报验收结果。
+- 服务器正式目录：`/home/user/jhk/nta-benign-corpus-v10/windows-development`；
+- 当前边界：只覆盖隔离实验室中的 WinRM HTTP（TCP/5985）管理操作，不覆盖 WinRM HTTPS、自定义端口、RDP、域环境横向管理或真实生产管理流量。
+
+### Windows 首轮误报、修正与回归
+
+首轮运行目录为 `/home/user/jhk/nta-benign-corpus-v10/windows-development-analysis/run-20260823-125455`。18/18 个样本的两台引擎均成功，但全部样本被判为含安全告警，共计 330 条安全告警：
+
+- 318 条 ET SID `2026850`（`WinRM User Agent Detected - Possible Lateral Movement`）；
+- 12 条自定义 SID `9000005`（异常大的 HTTP POST）。
+
+诊断确认两者均由合法 WinRM 管理造成。SID `2026850` 只能证明出现 WinRM 客户端特征，不能单独证明横向移动，因此流水线继续保留原始事件，但将它单列为“上下文观察”，不再直接升级为安全结论。SID `9000005` 的通用 HTTP 大请求规则会命中 WinRM SOAP/MSI 传输，现仅排除标准 WinRM 端口 5985/5986；其他端口上的大 HTTP POST 仍由该规则检测。
+
+修正后的规则文件 SHA-256 为 `e4ee9be7800b2a39d3bf227c63d783186c8f7b2be6100d0af709dd1dea181d2b`。第二轮运行目录为 `/home/user/jhk/nta-benign-corpus-v10/windows-development-analysis-v2/run-20260823-131029`，结果为：
+
+- Suricata 成功 18/18，Zeek 成功 18/18；
+- 安全告警样本 0/18，安全告警 0；
+- 原始 Suricata 事件 4,020 条，其中信息/解码事件 3,702 条，上下文观察 318 条；
+- 结果分类均为“网络行为待研判”，不会把合法 WinRM 自动判成攻击。
+
+为防止降低攻击检测能力，使用 development 攻击集中的 12 个代表性 PCAP 做规则回归（未使用 validation 或 final_blind 调参）。结果目录为 `/home/user/jhk/nta-dataset/results-winrm-rule-regression/run-20260823-131813`：12/12 个样本双引擎执行成功，12/12 仍被检测为“数据库攻击与数据提取”，累计产生 15 条安全告警。该回归只证明本次修正没有破坏这 12 个已选样本，不能替代冻结集验收。
 
 ## 离线误报评估
 
@@ -177,11 +196,11 @@ python3 scripts/nta/nta_offline_pipeline.py --all
 
 只有完成冻结 validation/final_blind 的一次性评估，并补充生产或近生产正常流量后，才可以讨论“准确率”。development 零告警仅说明当前场景未触发自定义规则，不等于生产环境零误报。
 
-## 2026-08-22 development 实测结果
+## 2026-08-22 至 2026-08-23 development 实测结果
 
-规则文件 SHA-256：`0c87908e60f5b3d1f082292d55c3a75586c5682b5facceee488716eb4f31ec03`。
+Linux 协议评测使用的规则文件 SHA-256：`0c87908e60f5b3d1f082292d55c3a75586c5682b5facceee488716eb4f31ec03`；Windows 修复回归使用的规则文件 SHA-256 见上文。
 
-| 协议 | 样本 | Suricata 成功 | Zeek 成功 | 安全告警样本 | 安全告警数 | 被排除的信息/解码事件 |
+| 协议 | 样本 | Suricata 成功 | Zeek 成功 | 安全告警样本 | 安全告警数 | 信息/解码/上下文观察 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | HTTP | 36 | 36 | 36 | 0 | 0 | 401 |
 | MariaDB | 36 | 36 | 36 | 0 | 0 | 835 |
@@ -189,9 +208,10 @@ python3 scripts/nta/nta_offline_pipeline.py --all
 | DNS | 18 | 18 | 18 | 0 | 0 | 60 |
 | SSH | 18 | 18 | 18 | 0 | 0 | 771 |
 | SMB | 18 | 18 | 18 | 0 | 0 | 744 |
-| 合计 | 162 | 162 | 162 | 0 | 0 | 3735 |
+| Windows 管理 | 18 | 18 | 18 | 0 | 0 | 4,020（含 318 条上下文观察） |
+| 合计 | 180 | 180 | 180 | 0 | 0 | 7,755 |
 
-观察误报率为 0/162。对“这批 development 场景中的安全告警样本比例”使用零事件的单侧 95% 精确上界约为 1.83%；它不是生产误报率，也不能外推到尚未采集的 Windows、数据库高并发、真实邮件附件、加密 DNS、RDP/WinRM 或校园网业务。
+观察到的安全告警样本比例为 0/180。对“这批 development 场景中的安全告警样本比例”使用零事件的单侧 95% 精确上界约为 1.65%；它不是生产误报率，也不能外推到数据库高并发、真实邮件附件、加密 DNS、RDP、WinRM HTTPS/自定义端口、域环境横向管理或校园网业务。
 
 第一次 SMB 评估把正常 NTLM 会话建立的 `ET INFO NTLM ...` 信息性签名错误升格为安全告警（18/18）。流水线现已将以下内容归入可审计但不升格的信息/解码事件：
 
@@ -206,7 +226,10 @@ python3 scripts/nta/nta_offline_pipeline.py --all
 
 - HTTP：`http-development-analysis/run-20260822-170456`；
 - MariaDB、SMTP、DNS、SSH：各协议 `development-analysis/run-20260822-195647`；
-- SMB 修复回归：`smb-development-analysis-v3/run-20260822-201106`。
+- SMB 修复回归：`smb-development-analysis-v3/run-20260822-201106`；
+- Windows 首轮：`windows-development-analysis/run-20260823-125455`；
+- Windows 修复回归：`windows-development-analysis-v2/run-20260823-131029`；
+- 攻击样本规则回归：`/home/user/jhk/nta-dataset/results-winrm-rule-regression/run-20260823-131813`。
 
 ## 测试
 

@@ -48,6 +48,7 @@ CUSTOM_RULES = Path(
         str(REPOSITORY_ROOT / "config" / "suricata" / "shieldchain-nta.rules"),
     )
 ).expanduser()
+CONTEXTUAL_SIGNATURE_IDS = {2026850}  # WinRM use alone is not lateral movement.
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -150,27 +151,47 @@ def json_lines(path: Path) -> list[dict[str, object]]:
     return rows
 
 
-def is_non_security_alert(row: dict[str, object]) -> bool:
+def alert_disposition(row: dict[str, object]) -> str:
     alert = row.get("alert") or {}
     signature = str(alert.get("signature") or "")
     category = str(alert.get("category") or "")
-    return (
+    try:
+        signature_id = int(alert.get("signature_id") or 0)
+    except (TypeError, ValueError):
+        signature_id = 0
+    if signature_id in CONTEXTUAL_SIGNATURE_IDS:
+        return "contextual"
+    if (
         signature.startswith(("SURICATA ", "ET INFO "))
         or category == "Generic Protocol Command Decode"
         or category == "Not Suspicious Traffic"
-    )
+    ):
+        return "informational"
+    return "security"
+
+
+def is_non_security_alert(row: dict[str, object]) -> bool:
+    return alert_disposition(row) != "security"
 
 
 def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str], list[str]]:
     suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
     raw_alerts = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    alerts = [row for row in raw_alerts if not is_non_security_alert(row)]
+    dispositions = [alert_disposition(row) for row in raw_alerts]
+    alerts = [
+        row
+        for row, disposition in zip(raw_alerts, dispositions)
+        if disposition == "security"
+    ]
     signatures = [str((row.get("alert") or {}).get("signature") or "") for row in alerts]
     searchable = " ".join(signatures).lower()
     findings: list[str] = []
-    informational_count = len(raw_alerts) - len(alerts)
+    informational_count = dispositions.count("informational")
+    contextual_count = dispositions.count("contextual")
     if informational_count:
         findings.append(f"Ignored {informational_count} Suricata informational/decoder event(s)")
+    if contextual_count:
+        findings.append(f"Retained {contextual_count} Suricata contextual observation(s)")
 
     if alerts:
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
@@ -295,7 +316,8 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
     zeek_http_rows = json_lines(result_dir / "zeek" / "http.log")
     zeek_dns_rows = json_lines(result_dir / "zeek" / "dns.log")
     raw_alert_rows = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    ignored_alert_count = sum(is_non_security_alert(row) for row in raw_alert_rows)
+    dispositions = [alert_disposition(row) for row in raw_alert_rows]
+    ignored_alert_count = sum(value != "security" for value in dispositions)
     alert_count = len(raw_alert_rows) - ignored_alert_count
     return {
         "external_id": f"nta-offline:{pcap_hash}",
@@ -315,7 +337,8 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
             "zeek_exit_code": zeek_code,
             "suricata_alert_count": alert_count,
             "suricata_raw_alert_count": len(raw_alert_rows),
-            "suricata_ignored_informational_event_count": ignored_alert_count,
+            "suricata_ignored_informational_event_count": dispositions.count("informational"),
+            "suricata_contextual_observation_count": dispositions.count("contextual"),
             "suricata_signatures": signatures[:50],
             "zeek_conn_record_count": len(zeek_conn_rows),
             "zeek_http_record_count": len(zeek_http_rows),

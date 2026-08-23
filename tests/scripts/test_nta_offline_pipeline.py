@@ -189,6 +189,33 @@ class ClassifyFindingsTests(unittest.TestCase):
             self.assertEqual(signatures, [])
             self.assertTrue(any("informational/decoder" in item for item in findings))
 
+    def test_winrm_user_agent_is_contextual_not_a_security_alert(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(
+                result / "suricata" / "eve.json",
+                [
+                    {
+                        "event_type": "alert",
+                        "alert": {
+                            "signature_id": 2026850,
+                            "signature": "ET USER_AGENTS WinRM User Agent Detected - Possible Lateral Movement",
+                            "category": "Potentially Bad Traffic",
+                        },
+                    }
+                ],
+            )
+            category, severity, mitre_ids, signatures, findings = nta.classify_findings(result)
+            self.assertEqual(category, "未检出有效网络行为")
+            self.assertEqual(severity, 3)
+            self.assertEqual(mitre_ids, [])
+            self.assertEqual(signatures, [])
+            self.assertTrue(any("contextual observation" in item for item in findings))
+
+            event = nta.build_event(Path("winrm.pcap"), "a" * 64, result, 0, 0)
+            self.assertEqual(event["evidence"]["suricata_alert_count"], 0)
+            self.assertEqual(event["evidence"]["suricata_contextual_observation_count"], 1)
+            self.assertEqual(event["evidence"]["suricata_ignored_informational_event_count"], 0)
 
 if __name__ == "__main__":
     unittest.main()

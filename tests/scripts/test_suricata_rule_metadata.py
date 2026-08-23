@@ -29,6 +29,12 @@ class SuricataRuleMetadataTests(unittest.TestCase):
         self.assertEqual(len(noalert_rules), 2)
         self.assertTrue(all("flowbits:set" in line for line in noalert_rules))
 
+    def test_large_post_rule_excludes_standard_winrm_ports(self) -> None:
+        rules = RULES_PATH.read_text(encoding="utf-8").splitlines()
+        rule = next(line for line in rules if "sid:9000005;" in line)
+
+        self.assertIn("-> any ![5985,5986]", rule)
+        self.assertIn("rev:4;", rule)
 
 if __name__ == "__main__":
     unittest.main()
