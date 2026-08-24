@@ -265,3 +265,9 @@ python3 -m unittest \
 - 事件 SHA-256：`36c4619af618e7fb752c84af3bf972c25d440e2a60d9ca5194ccb5eb6f5589c7`。
 
 该回归只约束当前隔离实验室场景，不能外推为生产误报率为零。v11 攻击 development 与正常 development 的联合结果见 `docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
+
+## v12 行为回归（2026-08-24）
+
+使用 v12 候选对全部 180 条正常 development 的冻结 v11 Zeek/Suricata 输出重新分类，180 条均保持“网络行为待研判”，安全分类仍为 0。由于引擎规则与镜像没有改变，复用冻结原始输出可以在不重复分析 PCAP 的情况下精确比较分类阶段。
+
+该结果只约束当前隔离实验室语料，不能表述为生产误报率。配套 CTU development 结果与冻结哈希记录在 [v12 行为检测 development 报告](../reports/xdr-probe-v12-behavior-development-20260824.md)。

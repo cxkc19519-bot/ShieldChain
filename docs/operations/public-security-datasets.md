@@ -134,3 +134,9 @@ CTU-13 的完整混合 PCAP 因隐私原因未公开；官方提供 Botnet PCAP 
 6. 最后补充 CIC-IDS2017 正常/Web/SQL 流量，以及隔离 Windows + Wazuh + Atomic Red Team 主机行为。
 
 历史 935 条比赛方 final-blind 已经消耗，不能用 CTU-13 调整规则后重新把它包装成未见测试集。
+
+## CTU-13 v12 行为检测候选（2026-08-24）
+
+v12 分类器只使用 CTU-13 development 和自建正常 development 开发，增加 IRC 序列聚合、异常连接扇出、周期信标与 UDP/P2P 行为。对冻结 Zeek/Suricata 输出重新分类后，CTU development 明确分类覆盖由 4/7 提升到 7/7，正常 development 安全分类保持 0/180。
+
+该结果不是准确率，不能证明生产流量可用，也不代表可以启封 validation 或把 v11 final-blind 重新当作盲集。证据和哈希见 [v12 行为检测 development 报告](../reports/xdr-probe-v12-behavior-development-20260824.md)。

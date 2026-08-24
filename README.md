@@ -547,6 +547,8 @@ curl "http://127.0.0.1:8080/api/v1/integrations/wazuh/cases?limit=20"
 
 新增公开数据集统一存放在服务器 `/home/user/jhk/security-datasets`，与代码仓库隔离。CTU-13 的来源登记、完整性校验、恶意载荷排除、白名单提取及后续流级评测步骤见 [公开安全数据集接入说明](docs/operations/public-security-datasets.md)。
 
+2026-08-24 的 v12 行为检测候选增加 IRC 会话聚合、异常连接扇出、周期信标、UDP/P2P 识别，并修正 WebShell 与 UDP 反弹连接误归。在冻结的 development 输出上，CTU-13 明确分类覆盖由 4/7 提升到 7/7，自建正常流量安全分类保持 0/180；该结果仍只是开发集覆盖，不是准确率。详见 [v12 行为检测 development 报告](docs/reports/xdr-probe-v12-behavior-development-20260824.md)。
+
 ### 当前不足与结论边界
 
 - 当前持久化知识库还是空的，尚未正式导入行业监管政策、ATT&CK、漏洞研究、内部制度等高质量材料。智能助手虽然可以自然对话和检索历史报告，但在知识库为空时不能提供项目文档引用，也无法验证完整的知识库 RAG 效果。比赛前需要完成文档筛选、上传、分块检查、索引构建和检索验收。

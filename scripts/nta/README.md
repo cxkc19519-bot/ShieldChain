@@ -119,3 +119,9 @@ python3 scripts/nta/benign_lab/run_service_lab.py smb /tmp/smb-smoke --limit 1
 这些入口执行真实协议事务并抓取专用 Docker bridge，不会根据文件名制造检测结果。Windows 管理场景必须等待 Windows VM/测试主机。
 
 Windows 管理采集链路已经提供：`windows_capture_plan.py` 生成受保护执行计划，隔离 Windows 控制机运行 `Collect-ShieldChainWindowsBaseline.ps1`，服务器再用 `import_windows_captures.py` 校验 SHA-256、数量和匿名文件名后导入。完整命令见正常流量基线文档；没有独立 Windows 靶机时不得伪造该部分样本。
+
+## v12 行为检测候选
+
+v12 在双引擎输出之后增加场景无关的 Zeek 行为聚合，不匹配文件名、家族名、场景编号或固定 IP。新增能力包括 IRC 命令序列聚合、高拒绝率目的地址扇出、周期信标、UDP/P2P 扇出、更严格的 WebShell 上下文，以及仅针对双向 TCP 的反弹连接证据。
+
+在冻结的 development 双引擎输出上，CTU-13 明确分类覆盖达到 7/7，自建正常 development 的安全分类保持 0/180。这是开发集覆盖结果，不是准确率或生产误报率。详见 [v12 行为检测 development 报告](../../docs/reports/xdr-probe-v12-behavior-development-20260824.md)。

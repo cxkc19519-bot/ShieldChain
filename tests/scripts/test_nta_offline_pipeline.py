@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 
-MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "nta" / "nta_offline_pipeline.py"
+MODULE_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "nta" / "nta_offline_pipeline.py"
+)
 SPEC = importlib.util.spec_from_file_location("nta_offline_pipeline", MODULE_PATH)
 assert SPEC and SPEC.loader
 nta = importlib.util.module_from_spec(SPEC)
@@ -182,7 +184,9 @@ class ClassifyFindingsTests(unittest.TestCase):
                     }
                 ],
             )
-            category, severity, mitre_ids, signatures, findings = nta.classify_findings(result)
+            category, severity, mitre_ids, signatures, findings = nta.classify_findings(
+                result
+            )
             self.assertEqual(category, "未检出有效网络行为")
             self.assertEqual(severity, 3)
             self.assertEqual(mitre_ids, [])
@@ -205,7 +209,9 @@ class ClassifyFindingsTests(unittest.TestCase):
                     }
                 ],
             )
-            category, severity, mitre_ids, signatures, findings = nta.classify_findings(result)
+            category, severity, mitre_ids, signatures, findings = nta.classify_findings(
+                result
+            )
             self.assertEqual(category, "未检出有效网络行为")
             self.assertEqual(severity, 3)
             self.assertEqual(mitre_ids, [])
@@ -214,8 +220,220 @@ class ClassifyFindingsTests(unittest.TestCase):
 
             event = nta.build_event(Path("winrm.pcap"), "a" * 64, result, 0, 0)
             self.assertEqual(event["evidence"]["suricata_alert_count"], 0)
-            self.assertEqual(event["evidence"]["suricata_contextual_observation_count"], 1)
-            self.assertEqual(event["evidence"]["suricata_ignored_informational_event_count"], 0)
+            self.assertEqual(
+                event["evidence"]["suricata_contextual_observation_count"], 1
+            )
+            self.assertEqual(
+                event["evidence"]["suricata_ignored_informational_event_count"], 0
+            )
+
+    def test_irc_command_sequence_is_aggregated_as_command_and_control(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            rows = []
+            for command in ("USER", "NICK", "JOIN", "PRIVMSG"):
+                rows.extend(
+                    {
+                        "event_type": "alert",
+                        "alert": {"signature": f"ET CHAT IRC {command} command"},
+                    }
+                    for _ in range(3)
+                )
+            write_json_lines(result / "suricata" / "eve.json", rows)
+
+            category, severity, mitre_ids, _, findings = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似 IRC 命令控制")
+            self.assertEqual(severity, 10)
+            self.assertIn("T1071", mitre_ids)
+            self.assertTrue(any("Aggregated IRC" in item for item in findings))
+
+    def test_single_irc_command_type_stays_generic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(
+                result / "suricata" / "eve.json",
+                [
+                    {
+                        "event_type": "alert",
+                        "alert": {"signature": "ET CHAT IRC PONG response"},
+                    }
+                    for _ in range(12)
+                ],
+            )
+
+            category, _, _, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "Suricata 安全规则告警")
+
+    def test_repeated_normal_webmail_posts_are_not_webshell(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(
+                result / "zeek" / "http.log",
+                [
+                    {
+                        "method": "POST",
+                        "uri": "/mail/SendMessageLight.aspx",
+                        "user_agent": "Mozilla/5.0",
+                        "request_body_len": 3487,
+                        "response_body_len": 107042,
+                    }
+                    for _ in range(15)
+                ],
+            )
+            write_json_lines(result / "zeek" / "conn.log", [])
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, _, mitre_ids, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "网络行为待研判")
+            self.assertNotIn("T1505.003", mitre_ids)
+
+    def test_udp_on_suspicious_port_is_not_reverse_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(
+                result / "zeek" / "http.log",
+                [{"method": "GET", "uri": "/"}],
+            )
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "proto": "udp",
+                        "id.resp_p": 5555,
+                        "duration": 10,
+                        "orig_bytes": 100,
+                        "resp_bytes": 100,
+                    }
+                ],
+            )
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, _, _, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "网络行为待研判")
+
+    def test_bidirectional_long_tcp_connection_on_shell_port_is_suspicious(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "proto": "tcp",
+                        "id.resp_p": 4444,
+                        "duration": 10,
+                        "orig_bytes": 120,
+                        "resp_bytes": 80,
+                    }
+                ],
+            )
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, _, _, _ = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似反弹连接")
+            self.assertEqual(severity, 9)
+
+    def test_high_rejection_destination_fanout_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "id.orig_h": "10.0.0.5",
+                        "id.resp_h": f"192.0.2.{index}",
+                        "id.resp_p": 445,
+                        "proto": "tcp",
+                        "conn_state": "S0",
+                    }
+                    for index in range(1, 201)
+                ],
+            )
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, mitre_ids, _, findings = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似扫描与僵尸网络传播")
+            self.assertEqual(severity, 9)
+            self.assertIn("T1046", mitre_ids)
+            self.assertTrue(any("high-rejection" in item for item in findings))
+
+    def test_periodic_high_rejection_fanout_is_detected_as_beaconing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(result / "zeek" / "http.log", [])
+            fanout = [
+                {
+                    "id.orig_h": "10.0.0.6",
+                    "id.resp_h": f"203.0.113.{index}",
+                    "id.resp_p": 25,
+                    "proto": "tcp",
+                    "conn_state": "S0",
+                    "ts": index,
+                }
+                for index in range(1, 201)
+            ]
+            beacon = [
+                {
+                    "id.orig_h": "10.0.0.6",
+                    "id.resp_h": "198.51.100.10",
+                    "id.resp_p": 25,
+                    "proto": "tcp",
+                    "conn_state": "S0",
+                    "ts": 1000 + index * 15,
+                }
+                for index in range(13)
+            ]
+            write_json_lines(result / "zeek" / "conn.log", fanout + beacon)
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, mitre_ids, _, findings = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似周期信标与僵尸网络活动")
+            self.assertEqual(severity, 10)
+            self.assertIn("T1071", mitre_ids)
+            self.assertTrue(any("periodic connection" in item for item in findings))
+
+    def test_high_fanout_udp_multiport_behavior_is_detected_as_p2p(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "id.orig_h": "10.0.0.8",
+                        "id.resp_h": f"198.51.100.{index % 100}",
+                        "id.resp_p": 10000 + index % 50,
+                        "proto": "udp",
+                        "conn_state": "SF",
+                    }
+                    for index in range(200)
+                ],
+            )
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, mitre_ids, _, findings = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似 P2P/UDP 僵尸网络")
+            self.assertEqual(severity, 9)
+            self.assertIn("T1071", mitre_ids)
+            self.assertTrue(any("UDP/P2P" in item for item in findings))
+
 
 if __name__ == "__main__":
     unittest.main()

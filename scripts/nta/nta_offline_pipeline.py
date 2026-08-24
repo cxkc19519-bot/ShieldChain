@@ -12,11 +12,9 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
-import sys
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,19 +87,45 @@ def finish_output_dir(destination: Path) -> None:
     destination.chmod(0o750)
 
 
-def analyse_with_suricata(pcap: Path, destination: Path, sequence: int) -> tuple[int, str]:
+def analyse_with_suricata(
+    pcap: Path, destination: Path, sequence: int
+) -> tuple[int, str]:
     prepare_output_dir(destination)
     name = f"nta-suricata-{sequence}-{sha256(pcap)[:12]}"
     command = [
-        "docker", "run", "--rm", "--name", name, "--network", "none", "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges:true", "--read-only", "--user", "998:998",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-        "-v", f"{pcap.resolve()}:/pcap/input.pcap:ro",
-        "-v", f"{destination.resolve()}:/logs",
-        "-v", f"{CUSTOM_RULES.resolve()}:/rules/shieldchain-nta.rules:ro",
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--read-only",
+        "--user",
+        "998:998",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "-v",
+        f"{pcap.resolve()}:/pcap/input.pcap:ro",
+        "-v",
+        f"{destination.resolve()}:/logs",
+        "-v",
+        f"{CUSTOM_RULES.resolve()}:/rules/shieldchain-nta.rules:ro",
         SURICATA_IMAGE,
-        "--runmode", "single", "-r", "/pcap/input.pcap", "-l", "/logs",
-        "-k", "none", "-s", "/rules/shieldchain-nta.rules",
+        "--runmode",
+        "single",
+        "-r",
+        "/pcap/input.pcap",
+        "-l",
+        "/logs",
+        "-k",
+        "none",
+        "-s",
+        "/rules/shieldchain-nta.rules",
     ]
     completed = run(command, check=False)
     (destination / "engine-output.txt").write_text(
@@ -118,13 +142,32 @@ def analyse_with_zeek(pcap: Path, destination: Path, sequence: int) -> tuple[int
     prepare_output_dir(destination)
     name = f"nta-zeek-{sequence}-{sha256(pcap)[:12]}"
     command = [
-        "docker", "run", "--rm", "--name", name, "--network", "none", "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges:true", "--read-only", "--workdir", "/logs",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-        "-v", f"{pcap.resolve()}:/pcap/input.pcap:ro",
-        "-v", f"{destination.resolve()}:/logs",
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--read-only",
+        "--workdir",
+        "/logs",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "-v",
+        f"{pcap.resolve()}:/pcap/input.pcap:ro",
+        "-v",
+        f"{destination.resolve()}:/logs",
         ZEEK_IMAGE,
-        "zeek", "-C", "-r", "/pcap/input.pcap", "LogAscii::use_json=T",
+        "zeek",
+        "-C",
+        "-r",
+        "/pcap/input.pcap",
+        "LogAscii::use_json=T",
     ]
     completed = run(command, check=False)
     (destination / "engine-output.txt").write_text(
@@ -174,7 +217,102 @@ def is_non_security_alert(row: dict[str, object]) -> bool:
     return alert_disposition(row) != "security"
 
 
-def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str], list[str]]:
+def _number(value: object, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _origin_profiles(conn_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    profiles: dict[str, dict[str, object]] = {}
+    for row in conn_rows:
+        origin = str(row.get("id.orig_h") or "")
+        if not origin:
+            continue
+        profile = profiles.setdefault(
+            origin,
+            {
+                "origin": origin,
+                "connections": 0,
+                "destinations": set(),
+                "destination_ports": set(),
+                "udp": 0,
+                "rejected": 0,
+            },
+        )
+        profile["connections"] = int(profile["connections"]) + 1
+        destination = str(row.get("id.resp_h") or "")
+        if destination:
+            profile["destinations"].add(destination)
+        port = int(_number(row.get("id.resp_p")))
+        if port:
+            profile["destination_ports"].add(port)
+        if str(row.get("proto") or "").lower() == "udp":
+            profile["udp"] = int(profile["udp"]) + 1
+        if str(row.get("conn_state") or "").upper() in {"REJ", "S0"}:
+            profile["rejected"] = int(profile["rejected"]) + 1
+    return list(profiles.values())
+
+
+def _periodic_connections(
+    conn_rows: list[dict[str, object]], active_origins: set[str]
+) -> list[dict[str, object]]:
+    timestamps: dict[tuple[str, str, int, str], list[float]] = defaultdict(list)
+    for row in conn_rows:
+        origin = str(row.get("id.orig_h") or "")
+        if origin not in active_origins:
+            continue
+        key = (
+            origin,
+            str(row.get("id.resp_h") or ""),
+            int(_number(row.get("id.resp_p"))),
+            str(row.get("proto") or "").lower(),
+        )
+        timestamp = _number(row.get("ts"), -1)
+        if timestamp >= 0:
+            timestamps[key].append(timestamp)
+
+    periodic: list[dict[str, object]] = []
+    for key, values in timestamps.items():
+        if len(values) < 12:
+            continue
+        ordered = sorted(values)
+        intervals = [right - left for left, right in zip(ordered, ordered[1:])]
+        usable = [value for value in intervals if value > 0]
+        if not usable:
+            continue
+        ordered_intervals = sorted(usable)
+        midpoint = len(ordered_intervals) // 2
+        median = (
+            ordered_intervals[midpoint]
+            if len(ordered_intervals) % 2
+            else (ordered_intervals[midpoint - 1] + ordered_intervals[midpoint]) / 2
+        )
+        mean = sum(usable) / len(usable)
+        variance = sum((value - mean) ** 2 for value in usable) / len(usable)
+        coefficient = variance**0.5 / mean if mean else float("inf")
+        span = ordered[-1] - ordered[0]
+        if 5 <= median <= 3600 and coefficient <= 0.10 and span >= 180:
+            periodic.append(
+                {
+                    "origin": key[0],
+                    "destination": key[1],
+                    "port": key[2],
+                    "protocol": key[3],
+                    "samples": len(values),
+                    "median_seconds": round(median, 3),
+                    "coefficient_of_variation": round(coefficient, 4),
+                }
+            )
+    return periodic
+
+
+def classify_findings(
+    result_dir: Path,
+) -> tuple[str, int, list[str], list[str], list[str]]:
     suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
     raw_alerts = [row for row in suricata_rows if row.get("event_type") == "alert"]
     dispositions = [alert_disposition(row) for row in raw_alerts]
@@ -183,15 +321,21 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         for row, disposition in zip(raw_alerts, dispositions)
         if disposition == "security"
     ]
-    signatures = [str((row.get("alert") or {}).get("signature") or "") for row in alerts]
+    signatures = [
+        str((row.get("alert") or {}).get("signature") or "") for row in alerts
+    ]
     searchable = " ".join(signatures).lower()
     findings: list[str] = []
     informational_count = dispositions.count("informational")
     contextual_count = dispositions.count("contextual")
     if informational_count:
-        findings.append(f"Ignored {informational_count} Suricata informational/decoder event(s)")
+        findings.append(
+            f"Ignored {informational_count} Suricata informational/decoder event(s)"
+        )
     if contextual_count:
-        findings.append(f"Retained {contextual_count} Suricata contextual observation(s)")
+        findings.append(
+            f"Retained {contextual_count} Suricata contextual observation(s)"
+        )
 
     if alerts:
         findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
@@ -209,22 +353,85 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
             word in searchable
             for word in ("reverse shell", "interactive shell", "powershell")
         ):
-            return "命令执行与反弹连接", 11, ["T1059.001", "T1071"], signatures, findings
-        if any(word in searchable for word in ("webshell", "web shell", "behinder", "godzilla", "antsword", "chopper")):
-            return "命令与 WebShell 行为", 12, ["T1059", "T1505.003"], signatures, findings
-        if any(word in searchable for word in ("exploit", "cve-", "remote code", "code execution", "jboss", "struts", "fastjson", "shiro", "weblogic")):
+            return (
+                "命令执行与反弹连接",
+                11,
+                ["T1059.001", "T1071"],
+                signatures,
+                findings,
+            )
+        if any(
+            word in searchable
+            for word in (
+                "webshell",
+                "web shell",
+                "behinder",
+                "godzilla",
+                "antsword",
+                "chopper",
+            )
+        ):
+            return (
+                "命令与 WebShell 行为",
+                12,
+                ["T1059", "T1505.003"],
+                signatures,
+                findings,
+            )
+        if any(
+            word in searchable
+            for word in (
+                "exploit",
+                "cve-",
+                "remote code",
+                "code execution",
+                "jboss",
+                "struts",
+                "fastjson",
+                "shiro",
+                "weblogic",
+            )
+        ):
             return "漏洞利用", 11, ["T1190"], signatures, findings
-        if any(word in searchable for word in ("malware", "trojan", "command and control", "c2", "coinminer")):
+        if any(
+            word in searchable
+            for word in ("malware", "trojan", "command and control", "c2", "coinminer")
+        ):
             return "恶意软件或命令控制", 11, ["T1071.001"], signatures, findings
-        if any(word in searchable for word in ("scan", "recon", "attempted information leak")):
+        if any(
+            word in searchable
+            for word in ("scan", "recon", "attempted information leak")
+        ):
             return "扫描与侦察", 8, ["T1595"], signatures, findings
+
+        irc_commands = {
+            command
+            for command in ("user", "nick", "join", "privmsg", "ping", "pong")
+            if any(f"irc {command}" in signature.lower() for signature in signatures)
+        }
+        irc_alert_count = sum(
+            1
+            for signature in signatures
+            if any(f"irc {command}" in signature.lower() for command in irc_commands)
+        )
+        if len(irc_commands) >= 3 and irc_alert_count >= 10:
+            findings.append(
+                "Aggregated IRC command sequence: "
+                f"commands={sorted(irc_commands)}, alerts={irc_alert_count}"
+            )
+            return "疑似 IRC 命令控制", 10, ["T1071"], signatures, findings
 
     http_rows = json_lines(result_dir / "zeek" / "http.log")
     conn_rows = json_lines(result_dir / "zeek" / "conn.log")
     dns_rows = json_lines(result_dir / "zeek" / "dns.log")
     exploit_tokens = (
-        "jbossmq-httpil", "/invoker/jmxinvokerservlet", "/web-console",
-        "../", "%2e%2e", "%00", "etc/passwd",
+        "jbossmq-httpil",
+        "/invoker/jmxinvokerservlet",
+        "/web-console",
+        "../",
+        "%2e%2e",
+        "%00",
+        "etc/passwd",
     )
     exploit_http = []
     shell_http = []
@@ -244,7 +451,6 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         if "wget" in agent or "curl" in agent or "/shell/" in uri:
             transfer_seen = True
         body_len = int(row.get("request_body_len") or 0)
-        response_len = int(row.get("response_body_len") or 0)
         script_path = uri.split("?", 1)[0].endswith(
             (".jsp", ".jspx", ".php", ".asp", ".aspx")
         )
@@ -268,10 +474,32 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
         repeated_medium_payload = len(posts) >= 3 and max_body >= 2048
         repeated_large_responses = len(posts) >= 3 and max_response >= 4096
         repeated_small_commands = len(posts) >= 8 and max_response >= 512
-        if script_endpoint and (
-            repeated_medium_payload
-            or repeated_large_responses
-            or repeated_small_commands
+        agents = [str(row.get("user_agent") or "").strip() for row in posts]
+        missing_agent = bool(posts) and not any(agents)
+        command_endpoint = any(
+            token in uri
+            for token in (
+                "cmd",
+                "command",
+                "shell",
+                "gateway",
+                "console",
+                "upload",
+                "eval",
+                "exec",
+                "manager",
+                "admin",
+            )
+        )
+        strong_context = missing_agent or command_endpoint or max_body >= 8192
+        if (
+            script_endpoint
+            and strong_context
+            and (
+                repeated_medium_payload
+                or repeated_large_responses
+                or repeated_small_commands
+            )
         ):
             repeated_large_posts.append(uri[:512])
     shell_http.extend(repeated_large_posts)
@@ -283,33 +511,98 @@ def classify_findings(result_dir: Path) -> tuple[str, int, list[str], list[str],
             duration = float(row.get("duration") or 0)
         except (TypeError, ValueError):
             continue
-        if port in {1337, 4444, 5555, 6666, 7777, 9001} and duration >= 5:
+        protocol = str(row.get("proto") or "").lower()
+        orig_bytes = _number(row.get("orig_bytes"))
+        resp_bytes = _number(row.get("resp_bytes"))
+        if (
+            protocol == "tcp"
+            and port in {1337, 4444, 5555, 6666, 7777, 9001}
+            and duration >= 5
+            and orig_bytes > 0
+            and resp_bytes > 0
+        ):
             suspicious_reverse_ports.add(port)
 
+    profiles = _origin_profiles(conn_rows)
+    p2p_profiles = [
+        profile
+        for profile in profiles
+        if int(profile["connections"]) >= 200
+        and len(profile["destinations"]) >= 100
+        and int(profile["udp"]) / int(profile["connections"]) >= 0.60
+        and len(profile["destination_ports"]) >= 50
+    ]
+    fanout_profiles = [
+        profile
+        for profile in profiles
+        if int(profile["connections"]) >= 200
+        and len(profile["destinations"]) >= 100
+        and int(profile["rejected"]) / int(profile["connections"]) >= 0.50
+    ]
+    active_origins = {
+        str(profile["origin"]) for profile in p2p_profiles + fanout_profiles
+    }
+    periodic = _periodic_connections(conn_rows, active_origins)
+
     if exploit_http:
-        findings.append(f"Zeek observed {len(exploit_http)} exploit-pattern HTTP request(s)")
+        findings.append(
+            f"Zeek observed {len(exploit_http)} exploit-pattern HTTP request(s)"
+        )
         mitre = ["T1190"]
         if transfer_seen:
             mitre.append("T1105")
         return "疑似 Web 漏洞利用", 10, mitre, signatures, findings
     if shell_http:
-        findings.append(f"Zeek observed {len(set(shell_http))} WebShell-like HTTP endpoint(s)")
+        findings.append(
+            f"Zeek observed {len(set(shell_http))} WebShell-like HTTP endpoint(s)"
+        )
         return "疑似 WebShell 交互", 11, ["T1505.003", "T1059"], signatures, findings
-    if suspicious_reverse_ports and http_rows:
+    if suspicious_reverse_ports:
         findings.append(
             "Zeek observed long-lived connection on suspicious post-exploitation "
             f"port(s): {sorted(suspicious_reverse_ports)}"
         )
         return "疑似反弹连接", 9, ["T1059", "T1071"], signatures, findings
+    if p2p_profiles:
+        profile = max(p2p_profiles, key=lambda value: int(value["connections"]))
+        findings.append(
+            "Zeek observed high-fanout UDP/P2P behavior: "
+            f"connections={profile['connections']}, "
+            f"destinations={len(profile['destinations'])}, "
+            f"ports={len(profile['destination_ports'])}"
+        )
+        if periodic:
+            findings.append(
+                f"Zeek observed {len(periodic)} stable periodic connection group(s)"
+            )
+        return "疑似 P2P/UDP 僵尸网络", 9, ["T1071"], signatures, findings
+    if fanout_profiles:
+        profile = max(fanout_profiles, key=lambda value: int(value["connections"]))
+        findings.append(
+            "Zeek observed high-rejection destination fanout: "
+            f"connections={profile['connections']}, "
+            f"destinations={len(profile['destinations'])}, "
+            f"rejected={profile['rejected']}"
+        )
+        if periodic:
+            findings.append(
+                f"Zeek observed {len(periodic)} stable periodic connection group(s)"
+            )
+            return "疑似周期信标与僵尸网络活动", 10, ["T1071"], signatures, findings
+        return "疑似扫描与僵尸网络传播", 9, ["T1046"], signatures, findings
     if alerts:
         return "Suricata 安全规则告警", 9, [], signatures, findings
     if http_rows or conn_rows or dns_rows:
-        findings.append(f"Zeek parsed conn={len(conn_rows)}, http={len(http_rows)}, dns={len(dns_rows)}")
+        findings.append(
+            f"Zeek parsed conn={len(conn_rows)}, http={len(http_rows)}, dns={len(dns_rows)}"
+        )
         return "网络行为待研判", 5, [], signatures, findings
     return "未检出有效网络行为", 3, [], signatures, findings
 
 
-def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int, zeek_code: int) -> dict[str, object]:
+def build_event(
+    pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int, zeek_code: int
+) -> dict[str, object]:
     category, severity, mitre_ids, signatures, findings = classify_findings(result_dir)
     suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
     zeek_conn_rows = json_lines(result_dir / "zeek" / "conn.log")
@@ -337,7 +630,9 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
             "zeek_exit_code": zeek_code,
             "suricata_alert_count": alert_count,
             "suricata_raw_alert_count": len(raw_alert_rows),
-            "suricata_ignored_informational_event_count": dispositions.count("informational"),
+            "suricata_ignored_informational_event_count": dispositions.count(
+                "informational"
+            ),
             "suricata_contextual_observation_count": dispositions.count("contextual"),
             "suricata_signatures": signatures[:50],
             "zeek_conn_record_count": len(zeek_conn_rows),
@@ -350,9 +645,20 @@ def build_event(pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Offline NTA PCAP baseline analyser")
-    parser.add_argument("--limit", type=int, default=12, help="number of representative samples to process")
-    parser.add_argument("--all", action="store_true", help="process all PCAP files; may take a long time")
-    parser.add_argument("--extract", action="store_true", help="extract archive before analysis")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=12,
+        help="number of representative samples to process",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="process all PCAP files; may take a long time",
+    )
+    parser.add_argument(
+        "--extract", action="store_true", help="extract archive before analysis"
+    )
     parser.add_argument(
         "--sample-list",
         type=Path,
@@ -407,7 +713,8 @@ def main() -> int:
         )
 
     (run_dir / "events.jsonl").write_text(
-        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events), encoding="utf-8"
+        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+        encoding="utf-8",
     )
     (run_dir / "manifest.json").write_text(
         json.dumps(
