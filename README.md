@@ -545,6 +545,8 @@ curl "http://127.0.0.1:8080/api/v1/integrations/wazuh/cases?limit=20"
 
 检测只接收匿名 PCAP 文件名，依据 Suricata 规则输出和 Zeek 元数据分类；机器输出先锁定并计算哈希，之后才读取原始文件名映射。映射没有官方攻击类别字段，因此 80.64% 是“得到明确分类的覆盖率”，不是准确率。完整协议、指纹、分类分布和薄弱项见 [v11 最终盲测报告](docs/reports/xdr-probe-final-blind-v11-20260823.md) 与 [数据集划分及验收说明](docs/operations/nta-dataset-split-and-evaluation.md)。
 
+新增公开数据集统一存放在服务器 `/home/user/jhk/security-datasets`，与代码仓库隔离。CTU-13 的来源登记、完整性校验、恶意载荷排除、白名单提取及后续流级评测步骤见 [公开安全数据集接入说明](docs/operations/public-security-datasets.md)。
+
 ### 当前不足与结论边界
 
 - 当前持久化知识库还是空的，尚未正式导入行业监管政策、ATT&CK、漏洞研究、内部制度等高质量材料。智能助手虽然可以自然对话和检索历史报告，但在知识库为空时不能提供项目文档引用，也无法验证完整的知识库 RAG 效果。比赛前需要完成文档筛选、上传、分块检查、索引构建和检索验收。

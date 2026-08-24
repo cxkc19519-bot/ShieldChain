@@ -7,15 +7,18 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 ## 文件
 
 - `nta_offline_pipeline.py`：离线运行 Suricata/Zeek 并生成 `events.jsonl`。
+- `prepare_ctu13.py`：检查 CTU-13 归档并只提取 PCAP、流标签和说明文件，排除恶意载荷。
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
-当前 v11 候选规则集包含 95 条 ShieldChain 自定义 Suricata 规则定义（其中 2 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。规则覆盖 WebShell、隧道、命令执行、框架利用、数据库提取、弱凭据、原始 TCP 反弹 Shell与 POP3 钓鱼。v11 仅使用 development 调参：701 条攻击 development 分类覆盖为 620/701（88.45%），180 条正常 development 安全告警为 0；它尚不是独立验证或生产指标。详细结果与锁定哈希见 [v11 规则评估报告](../../docs/reports/xdr-probe-rule-evaluation-v11-20260823.md)。
+当前 v11 规则集包含 95 条 ShieldChain 自定义 Suricata 规则定义（其中 2 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。935 条 final-blind 已一次性完成：754 条得到明确分类、737 条产生安全告警、181 条待研判、双引擎失败 0。这是检测覆盖率，不是准确率。详细结果见 [v11 最终盲测报告](../../docs/reports/xdr-probe-final-blind-v11-20260823.md)。
 
 ## 数据集划分与验收
 
 比赛方提供的是一个整体 PCAP 语料，仓库所述 development（701）、validation（701）和 final-blind（935）是 ShieldChain 为避免规则过拟合而创建的工程划分，不是比赛方官方划分，也不是在训练模型。完整说明、服务器路径、冻结规则哈希和同门复现流程见 [NTA 数据集划分与独立验收](../../docs/operations/nta-dataset-split-and-evaluation.md)。
+
+外部公开数据集的服务器目录、来源登记、恶意载荷排除和 CTU-13 操作流程见 [公开安全数据集接入说明](../../docs/operations/public-security-datasets.md)。
 
 ## 前置条件
 
