@@ -48,6 +48,7 @@ from shieldchain.tools.persistence import (
     ToolApprovalRow,
     ToolAutomationControlRow,
     ToolExecutionAttemptRow,
+    ToolExecutionLeaseRow,
     TrustedToolCallRow,
 )
 from shieldchain.tools.plan_service import (
@@ -404,6 +405,34 @@ class FixedAdapterProvider:
         return self.adapter
 
 
+class SimulatedProcessCrash(BaseException):
+    pass
+
+
+class CrashAfterDurableDispatchAdapter:
+    def __init__(self, factory) -> None:
+        self._factory = factory
+        self.visible_status: str | None = None
+        self.visible_active_leases: int | None = None
+
+    def execute(self, request):
+        with self._factory() as independent:
+            row = independent.get(TrustedToolCallRow, str(request.request.id))
+            self.visible_status = row.status if row is not None else None
+            self.visible_active_leases = independent.scalar(
+                select(func.count())
+                .select_from(ToolExecutionLeaseRow)
+                .where(
+                    ToolExecutionLeaseRow.tool_call_id == str(request.request.id),
+                    ToolExecutionLeaseRow.released_at.is_(None),
+                )
+            )
+        raise SimulatedProcessCrash
+
+    def verify(self, request, execution, *, now):
+        raise AssertionError("verification must not run after a simulated process crash")
+
+
 def test_plan_accept_creates_linked_calls_without_approving_high_risk_action(
     plan_context,
 ) -> None:
@@ -433,6 +462,37 @@ def test_plan_accept_creates_linked_calls_without_approving_high_risk_action(
         )
         assert len(events) == 1
         assert events[0].actor_subject_id == str(ACTOR)
+
+
+def test_dispatch_state_is_durable_before_adapter_side_effect(plan_context) -> None:
+    service, factory = plan_context
+    accepted = _accept(service)
+    adapter = CrashAfterDurableDispatchAdapter(factory)
+
+    with pytest.raises(SimulatedProcessCrash):
+        ResponseSafetyLoopService(factory).advance_plan(
+            tenant_id=TENANT,
+            plan_id=PLAN,
+            now=NOW,
+            adapter=adapter,
+        )
+
+    assert adapter.visible_status == "executing"
+    assert adapter.visible_active_leases == 1
+    with factory() as session:
+        row = session.get(TrustedToolCallRow, str(accepted.calls[0].call_id))
+        assert row is not None and row.status == "executing"
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ToolExecutionLeaseRow)
+                .where(
+                    ToolExecutionLeaseRow.tool_call_id == row.id,
+                    ToolExecutionLeaseRow.released_at.is_(None),
+                )
+            )
+            == 1
+        )
 
 
 def test_plan_decision_rejects_a_stale_public_revision(plan_context) -> None:

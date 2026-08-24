@@ -48,6 +48,8 @@ class TrustedToolAdapter(Protocol):
 class GatewayStore(Protocol):
     def atomic(self) -> AbstractContextManager[None]: ...
 
+    def commit(self) -> None: ...
+
     def create_or_get(
         self, *, tenant_id: UUID, bound: BoundToolRequest, request_id: str
     ) -> tuple[TrustedToolCall, bool]: ...
@@ -336,6 +338,7 @@ class TrustedToolGateway:
                 now=context.now,
                 request_id=request_id,
             )
+        store.commit()
         while True:
             execution = _invoke_adapter(adapter, bound)
             attempt = ToolExecutionAttempt(
@@ -395,6 +398,7 @@ class TrustedToolGateway:
                             now=context.now,
                             request_id=request_id,
                         )
+            store.commit()
             if not retry:
                 break
         if execution.outcome in {ExecutionOutcome.UNKNOWN, ExecutionOutcome.FAILED}:
@@ -436,6 +440,7 @@ class TrustedToolGateway:
                 request_id=request_id,
                 reason=reason,
             )
+        store.commit()
         return call
 
     @staticmethod

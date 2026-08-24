@@ -90,12 +90,16 @@ class Store:
         self.attempts = []
         self.verifications = []
         self.atomic_sections = 0
+        self.commits = 0
         self.released_leases = []
 
     @contextmanager
     def atomic(self):
         self.atomic_sections += 1
         yield
+
+    def commit(self):
+        self.commits += 1
 
     def create_or_get(self, *, tenant_id, bound, request_id):
         if self.call is not None:
@@ -209,6 +213,7 @@ def test_fixed_pipeline_auto_approves_executes_and_verifies() -> None:
     assert adapter.executed == [bound()]
     assert len(store.attempts) == len(store.verifications) == 1
     assert store.atomic_sections == 4
+    assert store.commits == 3
 
 
 def test_denied_and_approval_required_calls_do_not_reach_adapter() -> None:

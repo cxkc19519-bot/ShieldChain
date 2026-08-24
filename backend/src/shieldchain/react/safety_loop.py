@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import RLock
@@ -194,7 +196,7 @@ class ResponseSafetyLoopService:
         adapter: TrustedToolAdapter | None = None,
     ) -> SafetyLoopResult:
         _require_utc(now)
-        with self._sessions.begin() as session:
+        with self._sessions() as session, _commit_on_success(session):
             plan, revision, actions = self._plan(session, tenant_id, plan_id)
             loop = self._ensure_loop(session, tenant_id, plan, now)
             if plan.status == "completed":
@@ -1295,6 +1297,17 @@ def _utc(value: datetime) -> datetime:
 def _require_utc(value: datetime) -> None:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError("safety loop time must be aware UTC")
+
+
+@contextmanager
+def _commit_on_success(session: Session) -> Iterator[None]:
+    try:
+        yield
+    except BaseException:
+        session.rollback()
+        raise
+    else:
+        session.commit()
 
 
 def _budget_allows_dispatch(loop: ReactLoop, now: datetime) -> bool:
