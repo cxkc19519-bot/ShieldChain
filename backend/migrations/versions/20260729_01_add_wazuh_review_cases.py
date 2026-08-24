@@ -35,9 +35,18 @@ def upgrade() -> None:
         sa.CheckConstraint("severity BETWEEN 0 AND 15", name="ck_wazuh_review_case_severity"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("tenant_id", "alert_id", name="uq_wazuh_review_case_tenant_alert"),
-        sa.UniqueConstraint("tenant_id", "tracking_year", "tracking_sequence", name="uq_wazuh_review_case_tenant_tracking"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "tracking_year",
+            "tracking_sequence",
+            name="uq_wazuh_review_case_tenant_tracking",
+        ),
     )
-    op.create_index("ix_wazuh_review_case_tenant_updated", "wazuh_review_cases", ["tenant_id", "updated_at", "id"])
+    op.create_index(
+        "ix_wazuh_review_case_tenant_updated",
+        "wazuh_review_cases",
+        ["tenant_id", "updated_at", "id"],
+    )
 
 
 def downgrade() -> None:
