@@ -1126,7 +1126,9 @@ def test_stale_mutating_execution_recovers_with_query_and_never_replays(plan_con
         )
 
 
-def test_stale_verifying_call_resumes_verification_without_reexecution(plan_context) -> None:
+def test_process_restart_rebuilds_state_and_resumes_verification_without_reexecution(
+    plan_context,
+) -> None:
     plan_service, factory = plan_context
     accepted = _accept(plan_service)
     adapter = CountingAdapter()
@@ -1214,7 +1216,7 @@ def test_stale_verifying_call_resumes_verification_without_reexecution(plan_cont
         )
     adapter.calls = 0
 
-    recovered = safety.recover_stale(
+    recovered = ResponseSafetyLoopService(factory).recover_stale(
         tenant_id=TENANT,
         now=NOW + timedelta(seconds=40),
         stale_after=timedelta(seconds=30),

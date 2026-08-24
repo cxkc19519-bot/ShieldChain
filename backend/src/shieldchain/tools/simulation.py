@@ -89,6 +89,15 @@ class OfflineSimulationAdapter:
                 return self._disable_account(request)
         raise ValueError("tool is not supported by the offline simulation adapter")
 
+    def restore_successful_mutation(self, request: BoundToolRequest) -> None:
+        """Rebuild process-local state from a durable successful attempt."""
+
+        if not request.registration.definition.mutates_state:
+            raise ValueError("only state-changing calls can restore simulation state")
+        execution = self.execute(request)
+        if execution.outcome is not ExecutionOutcome.SUCCEEDED:
+            raise RuntimeError("durable simulation mutation could not be restored")
+
     def verify(
         self,
         request: BoundToolRequest,

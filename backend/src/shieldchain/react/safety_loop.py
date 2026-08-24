@@ -108,9 +108,10 @@ class SafetyLoopResult:
 class SimulationAdapterPool:
     """Process-local adapter pool restricted to existing simulation investigations."""
 
-    def __init__(self) -> None:
+    def __init__(self, registry: TrustedToolRegistry | None = None) -> None:
         self._lock = RLock()
         self._items: dict[UUID, OfflineSimulationAdapter] = {}
+        self._registry = registry or default_tool_registry()
 
     def for_run(
         self,
@@ -145,7 +146,7 @@ class SimulationAdapterPool:
                     select(TrustedToolCallRow).where(
                         TrustedToolCallRow.tenant_id == str(tenant_id),
                         TrustedToolCallRow.run_id == str(run_id),
-                    )
+                    ).order_by(TrustedToolCallRow.created_at, TrustedToolCallRow.id)
                 )
             )
             firewall = {
@@ -169,6 +170,26 @@ class SimulationAdapterPool:
                 endpoint_targets=frozenset(endpoints | {incident.endpoint}),
                 account_targets=frozenset(accounts | {incident.username}),
             )
+            call_ids = [row.id for row in calls]
+            successful = (
+                set(
+                    session.scalars(
+                        select(ToolExecutionAttemptRow.tool_call_id).where(
+                            ToolExecutionAttemptRow.tenant_id == str(tenant_id),
+                            ToolExecutionAttemptRow.tool_call_id.in_(call_ids),
+                            ToolExecutionAttemptRow.outcome == ExecutionOutcome.SUCCEEDED.value,
+                        )
+                    )
+                )
+                if call_ids
+                else set()
+            )
+            for row in calls:
+                if row.id not in successful:
+                    continue
+                bound = self._registry.bind(_call(row).request)
+                if bound.registration.definition.mutates_state:
+                    adapter.restore_successful_mutation(bound)
             self._items[run_id] = adapter
             return adapter
 
@@ -183,7 +204,7 @@ class ResponseSafetyLoopService:
     ) -> None:
         self._sessions = sessions
         self._registry = registry or default_tool_registry()
-        self._adapters = adapters or SimulationAdapterPool()
+        self._adapters = adapters or SimulationAdapterPool(self._registry)
         self._gateway = TrustedToolGateway()
         self._react = ControlledReactService()
 
