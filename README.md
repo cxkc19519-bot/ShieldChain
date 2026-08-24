@@ -549,6 +549,7 @@ curl "http://127.0.0.1:8080/api/v1/integrations/wazuh/cases?limit=20"
 
 2026-08-24 的 v12 行为检测候选增加 IRC 会话聚合、异常连接扇出、周期信标、UDP/P2P 识别，并修正 WebShell 与 UDP 反弹连接误归。在冻结的 development 输出上，CTU-13 明确分类覆盖由 4/7 提升到 7/7，自建正常流量安全分类保持 0/180；该结果仍只是开发集覆盖，不是准确率。详见 [v12 行为检测 development 报告](docs/reports/xdr-probe-v12-behavior-development-20260824.md)。
 2026-08-25 完成冻结 v12 的 CTU-13 validation 首次运行：3/3 双引擎成功，机器输出在启封标签前锁定。validation 暴露出通用大 POST 被过度归为 WebShell，v12.1 将其调整为“疑似 HTTP 命令控制或数据外传”；正常 development 仍为 0/180 安全分类，CTU development 保持 7/7 明确分类。v12.1 已使用 validation 调整，不能把 3/3 表述为独立准确率。详见 [v12 validation 验收报告](docs/reports/xdr-probe-v12-validation-20260825.md)。
+2026-08-25 又完成 v12.1.1 的 CTU-13 final-blind 一次性验收。v12.1.1 只把日志解析改为流式实现，先在正常 development 180 条、CTU development 7 条和 validation 3 条上证明 190/190 输出等价，再运行场景 9、10、11。三条 PCAP 的双引擎均成功，机器输出和 56 个引擎文件哈希先锁定，之后才启封标签。3/3 场景均产生明确安全分类：场景 9 为“疑似 HTTP 命令控制或数据外传”，场景 10、11 为“疑似 IRC 命令控制”。Rbot 两个场景的 IRC C2 与公开说明一致，但 UDP/ICMP Flood 动作未进入事件主分类；Neris 场景的 HTTP 细分类仍需更多真值确认。这是场景级覆盖，不是逐流准确率、召回率或生产误报率。70.7 GB 文件是服务器下载并保存的 CTU-13 场景 10 原始公开 PCAP，不是项目运行时生成的数据。本轮 108.09 GB 引擎结果也只保留在服务器。详见 [v12.1.1 final-blind 验收报告](docs/reports/xdr-probe-v1211-final-blind-20260825.md)。
 
 ### 当前不足与结论边界
 

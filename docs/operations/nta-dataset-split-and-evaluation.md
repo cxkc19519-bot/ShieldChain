@@ -238,4 +238,14 @@ final-blind 已消耗。后续新增检测规则必须升级为 v12，并使用 
 
 v12 候选冻结后只运行 CTU-13 validation 场景 2、4、13。运行前确认三个划分零重叠，PCAP 大小与 SHA-256 匹配；运行中不读取 BinetFlow 标签；3/3 双引擎成功后先锁定机器输出和完整引擎哈希，再生成 validation 标签报告。
 
-首次输出把 Fast-flux-2 归为 WebShell。validation 诊断后形成 v12.1，将通用大脚本 POST 改为 HTTP 命令控制/数据外传候选。由于 v12.1 已使用 validation 调整，其 validation 结果不是独立成绩。CTU final-blind 场景 9、10、11 仍未运行、未启封标签。详见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
+首次输出把 Fast-flux-2 归为 WebShell。validation 诊断后形成 v12.1，将通用大脚本 POST 改为 HTTP 命令控制/数据外传候选。由于 v12.1 已使用 validation 调整，其 validation 结果不是独立成绩。详见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
+
+## 11. CTU-13 v12.1.1 final-blind（2026-08-25）
+
+v12.1.1 只把超大 Suricata/Zeek 日志改为流式解析。候选先在 190 个冻结样本上证明与 v12.1 分类、严重度、ATT&CK、告警数和发现说明完全一致，再启用 final-blind 场景 9、10、11。运行前确认三个划分零重叠、输入 PCAP 大小与 SHA-256 匹配、final-blind 标签文件不存在。
+
+第一次执行在场景 10 双引擎原始输出完成后暴露旧分类器一次性载入约 75 GB eve.json 的内存风险，任务在生成机器事件前安全终止。场景 9、10 的原始引擎输出被保留；冻结 v12.1.1 后只补跑场景 11，并复用前两场景原始输出进行流式分类。该中断没有读取标签，也没有改变检测规则。
+
+最终 3/3 双引擎成功并生成三条唯一事件。事件、清单、运行日志、候选哈希和 56 个原始引擎文件哈希先复制到只读锁定目录，确认锁定完成且标签仍不存在后，才生成 final-blind 标签汇总。三场景均确认含 Botnet，机器结果也均为明确安全分类，但公开 PCAP 与混合 BinetFlow 不能逐流对齐，因此 3/3 只能称为场景级覆盖。
+
+final-blind 已消耗，不能再用于 v12.1.1 调参或重新宣称未见盲测。后续应新建 v13 development 语料补充 UDP/ICMP Flood 动作分类，并使用新的外部保留集验收。详见 [v12.1.1 final-blind 验收报告](../reports/xdr-probe-v1211-final-blind-20260825.md)。

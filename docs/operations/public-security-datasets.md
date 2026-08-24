@@ -93,17 +93,17 @@ python3 scripts/nta/prepare_ctu13.py \
 | 子集 | 场景 | 用途 |
 | --- | --- | --- |
 | development | 1、3、5、6、7、8、12 | 可读取标签，用于外部基线分析和后续 v12 开发 |
-| validation | 2、4、13 | 当前不读取标签，冻结 v12 后独立验证 |
-| final-blind | 9、10、11 | 当前不读取标签，只在方案冻结后一次性验收 |
+| validation | 2、4、13 | v12 已完成首次独立验证，机器输出锁定后已生成标签 |
+| final-blind | 9、10、11 | v12.1.1 已完成一次性验收，禁止再作为独立盲集调参 |
 
 服务器产物：
 
 - 清单：`/home/user/jhk/security-datasets/splits/ctu-13-v1`；
 - 受限标签：`/home/user/jhk/security-datasets/labels/ctu-13-v1`；
 - 每个子集同时生成 JSON 场景清单和可直接传给 `nta_offline_pipeline.py --sample-list` 的 PCAP 文本清单；
-- validation 与 final-blind 的标签报告尚未生成。
+- validation 与 final-blind 标签报告均已在对应机器输出只读锁定后生成。
 
-development 已适配 11,617,803 条 BinetFlow：Background 11,294,557、Normal 241,574、Botnet 81,672。适配器保留原始标签，同时归一为 `background`、`normal`、`botnet`、`unknown` 四类；支持十进制、十六进制和 Argus 命名端口，并拒绝未知表头或畸形行。
+development 已适配 11,617,803 条 BinetFlow：Background 11,294,557、Normal 241,574、Botnet 81,672。validation 已适配 4,854,347 条，final-blind 已适配 3,504,550 条；二者均在机器输出锁定后才启封。适配器保留原始标签，同时归一为 `background`、`normal`、`botnet`、`unknown` 四类；支持十进制、十六进制和 Argus 命名端口，并拒绝未知表头或畸形行。
 
 CTU-13 是公开数据，场景和标签可从公开资料获取，因此这里的 `final-blind` 仅表示 ShieldChain 工程流程中的标签隔离保留集，不是未知私有测试集，也不能据此宣称竞赛级盲测成绩。
 
@@ -145,4 +145,12 @@ v12 分类器只使用 CTU-13 development 和自建正常 development 开发，�
 
 冻结 v12 首次运行 validation 场景 2、4、13，3/3 双引擎成功，机器输出在标签启封前锁定。Fast-flux-2 的通用大 HTTP POST 被归为 WebShell，说明类别过于具体。v12.1 将非命令型脚本端点上的强异常 POST 改为“疑似 HTTP 命令控制或数据外传”，并在正常 development、CTU development 和 validation 上重新回归。
 
-v12.1 使用过 validation 做类别修正，因此 validation 的 3/3 明确分类覆盖不能再作为独立泛化结果。CTU final-blind 仍未运行、未生成标签。完整纪律、证据和哈希见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
+v12.1 使用过 validation 做类别修正，因此 validation 的 3/3 明确分类覆盖不能再作为独立泛化结果。完整纪律、证据和哈希见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
+
+## CTU-13 v12.1.1 final-blind（2026-08-25）
+
+v12.1.1 是 v12.1 的纯性能修订：Suricata JSONL 和 Zeek conn.log 改为流式读取，以处理场景 10 的 70.7 GB PCAP 所产生的超大日志。它在正常 development 180 条、CTU development 7 条和 validation 3 条冻结输出上完成 190/190 语义等价验证，检测规则未改变。
+
+场景 9、10、11 只运行一次，3/3 双引擎成功；事件、清单、日志以及 56 个原始引擎文件哈希在标签启封前锁定。三场景均给出明确安全分类，公开 BinetFlow 标签也均含 Botnet 流。Rbot 场景的 IRC C2 分类与公开说明一致，但 UDP/ICMP Flood 动作没有进入主分类；Neris 的 HTTP 细分类只能视为候选结论。
+
+公开 PCAP 是 Botnet-only，BinetFlow 是包含 Background、Normal、Botnet 的完整混合流量，二者无法逐流直接对齐。因此本轮只能报告 3/3 场景级恶意活动覆盖，不能报告逐流准确率或召回率。所有 PCAP 和约 108.09 GB 引擎结果均保存在服务器 /home/user/jhk/security-datasets，未下载到本机。详见 [v12.1.1 final-blind 验收报告](../reports/xdr-probe-v1211-final-blind-20260825.md)。
