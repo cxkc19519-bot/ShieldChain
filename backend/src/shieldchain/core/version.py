@@ -2,7 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-EXPECTED_SCHEMA_REVISION = "20260824_07"
+EXPECTED_SCHEMA_REVISION = "20260824_08"
 
 try:
     SERVICE_VERSION = version("shieldchain")

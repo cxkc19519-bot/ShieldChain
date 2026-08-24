@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from queue import Empty, Queue
+from threading import Thread
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -452,7 +455,10 @@ class TrustedToolGateway:
         adapter: TrustedToolAdapter,
     ) -> ToolVerification:
         try:
-            verification = adapter.verify(bound, execution, now=context.now)
+            verification = _call_with_deadline(
+                lambda: adapter.verify(bound, execution, now=context.now),
+                timeout_seconds=bound.registration.definition.timeout_seconds,
+            )
             if not isinstance(verification, ToolVerification):
                 raise TypeError("adapter returned an invalid verification result")
             if verification.request_id != call.request.id:
@@ -485,7 +491,10 @@ def _sanitize_execution(value: AdapterExecution) -> AdapterExecution:
 
 def _invoke_adapter(adapter: TrustedToolAdapter, bound: BoundToolRequest) -> AdapterExecution:
     try:
-        raw_execution = adapter.execute(bound)
+        raw_execution = _call_with_deadline(
+            lambda: adapter.execute(bound),
+            timeout_seconds=bound.registration.definition.timeout_seconds,
+        )
         if not isinstance(raw_execution, AdapterExecution):
             raise TypeError("adapter returned an invalid execution result")
         return _sanitize_execution(raw_execution)
@@ -501,6 +510,32 @@ def _invoke_adapter(adapter: TrustedToolAdapter, bound: BoundToolRequest) -> Ada
             "Adapter failed without a trusted result.",
             "adapter_failure",
         )
+
+
+def _call_with_deadline(
+    callback: Callable[[], object],
+    *,
+    timeout_seconds: float,
+) -> object:
+    completed: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+    def invoke() -> None:
+        try:
+            completed.put((True, callback()))
+        except BaseException as error:
+            completed.put((False, error))
+
+    worker = Thread(target=invoke, name="trusted-tool-adapter", daemon=True)
+    worker.start()
+    try:
+        succeeded, value = completed.get(timeout=timeout_seconds)
+    except Empty:
+        raise TimeoutError("trusted adapter exceeded its deadline") from None
+    if succeeded:
+        return value
+    if isinstance(value, BaseException):
+        raise value
+    raise RuntimeError("trusted adapter returned an invalid worker result")
 
 
 def _safe_summary(value: object) -> str:

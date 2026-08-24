@@ -33,6 +33,7 @@ from shieldchain.response_planning.persistence import (
     ResponsePlanRow,
 )
 from shieldchain.tools.api_service import TrustedToolApiService
+from shieldchain.tools.approvals import ApprovalExpired
 from shieldchain.tools.domain import (
     ApprovalOutcome,
     ExecutionOutcome,
@@ -1003,6 +1004,46 @@ def test_committed_approval_in_waiting_loop_is_consumed_by_recovery(plan_context
     assert recovered[0].plan_status == "completed"
     assert recovered[0].loop_status is ReactLoopStatus.COMPLETED
     assert adapter.calls == 2
+
+
+def test_expired_approval_moves_call_and_plan_to_manual_review(plan_context) -> None:
+    service, factory = plan_context
+    accepted = _accept(service)
+    adapter = CountingAdapter()
+    safety = ResponseSafetyLoopService(factory, adapters=FixedAdapterProvider(adapter))
+    safety.advance_plan(
+        tenant_id=TENANT,
+        plan_id=PLAN,
+        now=NOW,
+        adapter=adapter,
+    )
+
+    with pytest.raises(ApprovalExpired):
+        TrustedToolApiService(factory, safety_loop=safety).decide(
+            tenant_id=TENANT,
+            actor_id=ACTOR,
+            call_id=accepted.calls[1].call_id,
+            outcome=ApprovalOutcome.APPROVED,
+            reason="Approval arrived after the fixed policy lifetime.",
+            now=NOW + timedelta(minutes=6),
+        )
+
+    with factory() as session:
+        call = session.get(TrustedToolCallRow, str(accepted.calls[1].call_id))
+        plan = session.get(ResponsePlanRow, str(PLAN))
+        loop = session.scalar(select(ReactLoopRow))
+        latest = session.scalar(
+            select(ResponsePlanRevisionRow)
+            .where(ResponsePlanRevisionRow.plan_id == str(PLAN))
+            .order_by(ResponsePlanRevisionRow.revision.desc())
+            .limit(1)
+        )
+        assert call is not None and call.status == "needs_review"
+        assert call.reason == "approval_expired"
+        assert plan is not None and plan.status == "needs_review"
+        assert loop is not None and loop.status == "awaiting_human"
+        assert latest is not None and latest.reason_code == "approval_expired"
+        assert session.scalar(select(func.count()).select_from(ToolApprovalRow)) == 0
 
 
 def test_stale_mutating_execution_recovers_with_query_and_never_replays(plan_context) -> None:

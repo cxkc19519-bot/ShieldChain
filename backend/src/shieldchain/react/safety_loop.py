@@ -1309,6 +1309,8 @@ def _failure_category(
             return FailureCategory.VERIFICATION_INCONCLUSIVE
     if call.reason is PolicyReason.APPROVAL_REJECTED:
         return FailureCategory.APPROVAL_REJECTED
+    if call.reason is PolicyReason.APPROVAL_EXPIRED:
+        return FailureCategory.APPROVAL_EXPIRED
     if call.reason is PolicyReason.EXECUTION_OUTCOME_UNKNOWN:
         return FailureCategory.EXECUTION_OUTCOME_UNKNOWN
     if call.reason is PolicyReason.EXECUTION_FAILED:

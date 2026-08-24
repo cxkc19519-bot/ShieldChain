@@ -51,6 +51,7 @@ class FailureCategory(StrEnum):
     EXECUTION_FAILED = "execution_failed"
     EXECUTION_OUTCOME_UNKNOWN = "execution_outcome_unknown"
     APPROVAL_REJECTED = "approval_rejected"
+    APPROVAL_EXPIRED = "approval_expired"
     EMERGENCY_STOPPED = "emergency_stopped"
     AUTOMATION_DISABLED = "automation_disabled"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"

@@ -105,6 +105,7 @@ _ALLOWED_DECISIONS: dict[FailureCategory, frozenset[ReactDecision]] = {
         category: frozenset({ReactDecision.MANUAL_REVIEW})
         for category in (
             FailureCategory.APPROVAL_REJECTED,
+            FailureCategory.APPROVAL_EXPIRED,
             FailureCategory.EMERGENCY_STOPPED,
             FailureCategory.AUTOMATION_DISABLED,
             FailureCategory.EVIDENCE_CONFLICT,
@@ -178,6 +179,8 @@ class DeterministicFailureClassifier:
             if value.attempt.outcome is ExecutionOutcome.FAILED:
                 return FailureCategory.EXECUTION_FAILED
         if value.call is not None:
+            if value.call.reason is PolicyReason.APPROVAL_EXPIRED:
+                return FailureCategory.APPROVAL_EXPIRED
             if (
                 value.call.status is TrustedToolCallStatus.REJECTED
                 and value.call.reason is PolicyReason.APPROVAL_REJECTED

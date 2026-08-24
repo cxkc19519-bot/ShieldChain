@@ -13,6 +13,7 @@ RUN = "00000000-0000-4000-8000-000000000401"
 LOOP = "00000000-0000-4000-8000-000000000402"
 OBSERVATION = "00000000-0000-4000-8000-000000000403"
 ASSESSMENT = "00000000-0000-4000-8000-000000000404"
+PLAN_REVISION = "00000000-0000-4000-8000-000000000406"
 
 
 def _configuration(root: Path, database: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
@@ -118,9 +119,94 @@ def test_react_completion_migration_round_trips_and_protects_new_categories(
             ),
         )
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260824_07",
+            "20260824_08",
         )
 
     with pytest.raises(RuntimeError, match="extended ReAct records exist"):
         command.downgrade(configuration, "20260823_06")
+    get_settings.cache_clear()
+
+
+def test_approval_expired_category_blocks_unsafe_downgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(__file__).resolve().parents[4]
+    database = tmp_path / "react-approval-expired-migration.db"
+    configuration = _configuration(root, database, monkeypatch)
+    command.upgrade(configuration, "head")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_runs "
+            "(id,tenant_id,principal_id,run_kind,status,goal,catalog_revision,revision,"
+            "created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                RUN,
+                TENANT,
+                "00000000-0000-4000-8000-000000000002",
+                "operations_report",
+                "needs_review",
+                "approval expiry migration guard",
+                "catalog-v1",
+                0,
+                "2026-08-24 00:00:00",
+                "2026-08-24 00:00:00",
+                None,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO react_loops "
+            "(id,tenant_id,case_id,run_id,status,revision,budget_json,"
+            "observation_fingerprints_json,started_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                LOOP,
+                TENANT,
+                "00000000-0000-4000-8000-000000000405",
+                RUN,
+                "awaiting_human",
+                1,
+                json.dumps(
+                    {
+                        "step_limit": 2,
+                        "steps_used": 1,
+                        "loop_limit": 2,
+                        "loops_used": 1,
+                        "time_limit_seconds": 60,
+                        "time_used_seconds": 1,
+                        "token_limit": 100,
+                        "tokens_used": 0,
+                        "cost_limit_usd": 1,
+                        "cost_used_usd": 0,
+                        "tool_call_limit": 2,
+                        "tool_calls_used": 1,
+                    }
+                ),
+                "[]",
+                "2026-08-24 00:00:00",
+                "2026-08-24 00:00:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO react_plan_revisions "
+            "(id,loop_id,tenant_id,case_id,run_id,revision,parent_revision,"
+            "retained_action_ids_json,removed_action_ids_json,added_actions_json,reason,"
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                PLAN_REVISION,
+                LOOP,
+                TENANT,
+                "00000000-0000-4000-8000-000000000405",
+                RUN,
+                1,
+                0,
+                "[]",
+                "[]",
+                "[]",
+                "approval_expired",
+                "2026-08-24 00:00:00",
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="approval-expired ReAct records exist"):
+        command.downgrade(configuration, "20260824_07")
     get_settings.cache_clear()

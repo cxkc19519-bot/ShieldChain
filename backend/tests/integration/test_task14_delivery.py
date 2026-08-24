@@ -20,7 +20,7 @@ def test_runtime_readiness_revision_matches_the_single_migration_head() -> None:
     config.set_main_option("script_location", str(ROOT / "backend" / "migrations"))
     heads = ScriptDirectory.from_config(config).get_heads()
     assert heads == [EXPECTED_SCHEMA_REVISION]
-    assert EXPECTED_SCHEMA_REVISION == "20260824_07"
+    assert EXPECTED_SCHEMA_REVISION == "20260824_08"
 
 
 def test_task14_offline_smoke_and_mcp_conformance_are_bounded() -> None:

@@ -17,7 +17,11 @@ from shieldchain.response_planning.persistence import (
     ResponsePlanRow,
 )
 from shieldchain.tools.approval_store import SqlAlchemyApprovalStore
-from shieldchain.tools.approvals import ApprovalAuthority, TrustedToolApprovalService
+from shieldchain.tools.approvals import (
+    ApprovalAuthority,
+    ApprovalExpired,
+    TrustedToolApprovalService,
+)
 from shieldchain.tools.control import TrustedToolControlService
 from shieldchain.tools.control_store import SqlAlchemyToolControlStore
 from shieldchain.tools.domain import (
@@ -154,6 +158,7 @@ class TrustedToolApiService:
         now: datetime,
     ) -> ToolMutationView:
         plan_id = None
+        approval_expired = False
         with self._sessions.begin() as session:
             repo = SqlAlchemyTrustedToolRepository()
             call = repo.get(session, tenant_id=tenant_id, tool_call_id=call_id)
@@ -162,30 +167,44 @@ class TrustedToolApiService:
                 raise ToolApiNotFound("trusted tool call not found")
             row = session.get(TrustedToolCallRow, str(call_id))
             plan_id = UUID(row.plan_id) if row is not None and row.plan_action_id else None
-            TrustedToolApprovalService().decide(
-                call=call,
-                policy=policy,
-                authority=ApprovalAuthority(
-                    tenant_id,
-                    actor_id,
-                    frozenset({"trusted_tools.approve", "trusted_tools.approve_critical"}),
-                    now,
-                ),
-                requester_subject_id=REQUESTER_SERVICE_SUBJECT,
-                outcome=outcome,
-                reason_summary=reason,
-                store=SqlAlchemyApprovalStore(session, repo),
-            )
-            if outcome is ApprovalOutcome.REJECTED:
+            if policy.expires_at <= now:
                 call = repo.transition(
                     session,
                     tenant_id=tenant_id,
                     current=call,
-                    target=TrustedToolCallStatus.REJECTED,
+                    target=TrustedToolCallStatus.NEEDS_REVIEW,
                     now=now,
-                    request_id=f"api-approval:{call_id}",
-                    reason=PolicyReason.APPROVAL_REJECTED,
+                    request_id=f"api-approval-expired:{call_id}",
+                    reason=PolicyReason.APPROVAL_EXPIRED,
                 )
+                approval_expired = True
+            else:
+                TrustedToolApprovalService().decide(
+                    call=call,
+                    policy=policy,
+                    authority=ApprovalAuthority(
+                        tenant_id,
+                        actor_id,
+                        frozenset(
+                            {"trusted_tools.approve", "trusted_tools.approve_critical"}
+                        ),
+                        now,
+                    ),
+                    requester_subject_id=REQUESTER_SERVICE_SUBJECT,
+                    outcome=outcome,
+                    reason_summary=reason,
+                    store=SqlAlchemyApprovalStore(session, repo),
+                )
+                if outcome is ApprovalOutcome.REJECTED:
+                    call = repo.transition(
+                        session,
+                        tenant_id=tenant_id,
+                        current=call,
+                        target=TrustedToolCallStatus.REJECTED,
+                        now=now,
+                        request_id=f"api-approval:{call_id}",
+                        reason=PolicyReason.APPROVAL_REJECTED,
+                    )
             result = ToolMutationView(
                 call_id=call_id, status=call.status.value, revision=call.revision
             )
@@ -207,6 +226,8 @@ class TrustedToolApiService:
                         status=latest.status.value,
                         revision=latest.revision,
                     )
+        if approval_expired:
+            raise ApprovalExpired("trusted tool approval policy expired")
         return result
 
     def recover_safety_loops(
