@@ -24,6 +24,47 @@ def write_json_lines(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
+class StreamingSummaryTests(unittest.TestCase):
+    def test_suricata_summary_counts_dispositions_and_repeated_signatures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            eve_path = Path(temp) / "eve.json"
+            rows = [
+                {"event_type": "flow"},
+                {
+                    "event_type": "alert",
+                    "alert": {
+                        "signature": "ET INFO benign protocol detail",
+                        "category": "Not Suspicious Traffic",
+                    },
+                },
+                {
+                    "event_type": "alert",
+                    "alert": {
+                        "signature_id": 2026850,
+                        "signature": "ET USER_AGENTS WinRM User Agent Detected",
+                    },
+                },
+                {
+                    "event_type": "alert",
+                    "alert": {"signature": "ShieldChain suspicious behavior"},
+                },
+                {
+                    "event_type": "alert",
+                    "alert": {"signature": "ShieldChain suspicious behavior"},
+                },
+            ]
+            write_json_lines(eve_path, rows)
+
+            summary = nta.summarize_suricata_alerts(eve_path)
+
+            self.assertEqual(summary["raw_count"], 4)
+            self.assertEqual(summary["informational_count"], 1)
+            self.assertEqual(summary["contextual_count"], 1)
+            self.assertEqual(summary["security_count"], 2)
+            self.assertEqual(
+                summary["signature_counts"]["ShieldChain suspicious behavior"], 2
+            )
+
 class ClassifyFindingsTests(unittest.TestCase):
     def test_sql_injection_alert_gets_database_category(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

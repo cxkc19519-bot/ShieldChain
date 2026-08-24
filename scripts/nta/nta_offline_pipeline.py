@@ -15,6 +15,7 @@ import os
 import subprocess
 import zipfile
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -180,18 +181,28 @@ def analyse_with_zeek(pcap: Path, destination: Path, sequence: int) -> tuple[int
     return code, (completed.stderr + completed.stdout)[-2000:]
 
 
-def json_lines(path: Path) -> list[dict[str, object]]:
+def iter_json_lines(path: Path) -> Iterator[dict[str, object]]:
     if not path.exists():
-        return []
-    rows: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            rows.append(value)
-    return rows
+        return
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                yield value
+
+
+def json_lines(path: Path) -> list[dict[str, object]]:
+    return list(iter_json_lines(path))
+
+
+def count_json_records(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open("rb") as stream:
+        return sum(1 for line in stream if line.strip())
 
 
 def alert_disposition(row: dict[str, object]) -> str:
@@ -217,6 +228,46 @@ def is_non_security_alert(row: dict[str, object]) -> bool:
     return alert_disposition(row) != "security"
 
 
+def summarize_suricata_alerts(path: Path) -> dict[str, object]:
+    raw_count = 0
+    informational_count = 0
+    contextual_count = 0
+    security_count = 0
+    signature_counts: Counter[str] = Counter()
+    signature_samples: list[str] = []
+    if path.exists():
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if '"event_type":"alert"' not in line and '"event_type": "alert"' not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict) or row.get("event_type") != "alert":
+                    continue
+                raw_count += 1
+                disposition = alert_disposition(row)
+                if disposition == "informational":
+                    informational_count += 1
+                elif disposition == "contextual":
+                    contextual_count += 1
+                else:
+                    security_count += 1
+                    signature = str((row.get("alert") or {}).get("signature") or "")
+                    signature_counts[signature] += 1
+                    if len(signature_samples) < 50:
+                        signature_samples.append(signature)
+    return {
+        "raw_count": raw_count,
+        "informational_count": informational_count,
+        "contextual_count": contextual_count,
+        "security_count": security_count,
+        "signature_counts": signature_counts,
+        "signature_samples": signature_samples,
+    }
+
+
 def _number(value: object, default: float = 0.0) -> float:
     if value is None or value == "":
         return default
@@ -226,7 +277,7 @@ def _number(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _origin_profiles(conn_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+def _origin_profiles(conn_rows: Iterable[dict[str, object]]) -> list[dict[str, object]]:
     profiles: dict[str, dict[str, object]] = {}
     for row in conn_rows:
         origin = str(row.get("id.orig_h") or "")
@@ -258,7 +309,7 @@ def _origin_profiles(conn_rows: list[dict[str, object]]) -> list[dict[str, objec
 
 
 def _periodic_connections(
-    conn_rows: list[dict[str, object]], active_origins: set[str]
+    conn_rows: Iterable[dict[str, object]], active_origins: set[str]
 ) -> list[dict[str, object]]:
     timestamps: dict[tuple[str, str, int, str], list[float]] = defaultdict(list)
     for row in conn_rows:
@@ -312,22 +363,19 @@ def _periodic_connections(
 
 def classify_findings(
     result_dir: Path,
+    alert_summary: dict[str, object] | None = None,
 ) -> tuple[str, int, list[str], list[str], list[str]]:
-    suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
-    raw_alerts = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    dispositions = [alert_disposition(row) for row in raw_alerts]
-    alerts = [
-        row
-        for row, disposition in zip(raw_alerts, dispositions)
-        if disposition == "security"
-    ]
-    signatures = [
-        str((row.get("alert") or {}).get("signature") or "") for row in alerts
-    ]
-    searchable = " ".join(signatures).lower()
+    summary = alert_summary or summarize_suricata_alerts(
+        result_dir / "suricata" / "eve.json"
+    )
+    signature_counts = summary["signature_counts"]
+    assert isinstance(signature_counts, Counter)
+    signatures = list(summary["signature_samples"])
+    searchable = " ".join(signature_counts).lower()
+    security_alert_count = int(summary["security_count"])
     findings: list[str] = []
-    informational_count = dispositions.count("informational")
-    contextual_count = dispositions.count("contextual")
+    informational_count = int(summary["informational_count"])
+    contextual_count = int(summary["contextual_count"])
     if informational_count:
         findings.append(
             f"Ignored {informational_count} Suricata informational/decoder event(s)"
@@ -337,8 +385,10 @@ def classify_findings(
             f"Retained {contextual_count} Suricata contextual observation(s)"
         )
 
-    if alerts:
-        findings.append(f"Suricata matched {len(alerts)} security rule alert(s)")
+    if security_alert_count:
+        findings.append(
+            f"Suricata matched {security_alert_count} security rule alert(s)"
+        )
         if any(word in searchable for word in ("sql injection", "sql extraction")):
             return "数据库攻击与数据提取", 10, ["T1190", "T1213"], signatures, findings
         if "phishing" in searchable:
@@ -407,11 +457,14 @@ def classify_findings(
         irc_commands = {
             command
             for command in ("user", "nick", "join", "privmsg", "ping", "pong")
-            if any(f"irc {command}" in signature.lower() for signature in signatures)
+            if any(
+                f"irc {command}" in signature.lower()
+                for signature in signature_counts
+            )
         }
         irc_alert_count = sum(
-            1
-            for signature in signatures
+            count
+            for signature, count in signature_counts.items()
             if any(f"irc {command}" in signature.lower() for command in irc_commands)
         )
         if len(irc_commands) >= 3 and irc_alert_count >= 10:
@@ -422,7 +475,7 @@ def classify_findings(
             return "疑似 IRC 命令控制", 10, ["T1071"], signatures, findings
 
     http_rows = json_lines(result_dir / "zeek" / "http.log")
-    conn_rows = json_lines(result_dir / "zeek" / "conn.log")
+    conn_path = result_dir / "zeek" / "conn.log"
     dns_rows = json_lines(result_dir / "zeek" / "dns.log")
     exploit_tokens = (
         "jbossmq-httpil",
@@ -510,7 +563,7 @@ def classify_findings(
     shell_http.extend(repeated_large_posts)
 
     suspicious_reverse_ports = set()
-    for row in conn_rows:
+    for row in iter_json_lines(conn_path):
         try:
             port = int(row.get("id.resp_p") or 0)
             duration = float(row.get("duration") or 0)
@@ -528,7 +581,8 @@ def classify_findings(
         ):
             suspicious_reverse_ports.add(port)
 
-    profiles = _origin_profiles(conn_rows)
+    profiles = _origin_profiles(iter_json_lines(conn_path))
+    conn_count = sum(int(profile["connections"]) for profile in profiles)
     p2p_profiles = [
         profile
         for profile in profiles
@@ -547,7 +601,7 @@ def classify_findings(
     active_origins = {
         str(profile["origin"]) for profile in p2p_profiles + fanout_profiles
     }
-    periodic = _periodic_connections(conn_rows, active_origins)
+    periodic = _periodic_connections(iter_json_lines(conn_path), active_origins)
 
     if exploit_http:
         findings.append(
@@ -607,11 +661,11 @@ def classify_findings(
             )
             return "疑似周期信标与僵尸网络活动", 10, ["T1071"], signatures, findings
         return "疑似扫描与僵尸网络传播", 9, ["T1046"], signatures, findings
-    if alerts:
+    if security_alert_count:
         return "Suricata 安全规则告警", 9, [], signatures, findings
-    if http_rows or conn_rows or dns_rows:
+    if http_rows or conn_count or dns_rows:
         findings.append(
-            f"Zeek parsed conn={len(conn_rows)}, http={len(http_rows)}, dns={len(dns_rows)}"
+            f"Zeek parsed conn={conn_count}, http={len(http_rows)}, dns={len(dns_rows)}"
         )
         return "网络行为待研判", 5, [], signatures, findings
     return "未检出有效网络行为", 3, [], signatures, findings
@@ -620,15 +674,10 @@ def classify_findings(
 def build_event(
     pcap: Path, pcap_hash: str, result_dir: Path, suricata_code: int, zeek_code: int
 ) -> dict[str, object]:
-    category, severity, mitre_ids, signatures, findings = classify_findings(result_dir)
-    suricata_rows = json_lines(result_dir / "suricata" / "eve.json")
-    zeek_conn_rows = json_lines(result_dir / "zeek" / "conn.log")
-    zeek_http_rows = json_lines(result_dir / "zeek" / "http.log")
-    zeek_dns_rows = json_lines(result_dir / "zeek" / "dns.log")
-    raw_alert_rows = [row for row in suricata_rows if row.get("event_type") == "alert"]
-    dispositions = [alert_disposition(row) for row in raw_alert_rows]
-    ignored_alert_count = sum(value != "security" for value in dispositions)
-    alert_count = len(raw_alert_rows) - ignored_alert_count
+    alert_summary = summarize_suricata_alerts(result_dir / "suricata" / "eve.json")
+    category, severity, mitre_ids, signatures, findings = classify_findings(
+        result_dir, alert_summary
+    )
     return {
         "external_id": f"nta-offline:{pcap_hash}",
         "occurred_at": datetime.now(timezone.utc).isoformat(),
@@ -645,16 +694,24 @@ def build_event(
             "pcap_sha256": pcap_hash,
             "suricata_exit_code": suricata_code,
             "zeek_exit_code": zeek_code,
-            "suricata_alert_count": alert_count,
-            "suricata_raw_alert_count": len(raw_alert_rows),
-            "suricata_ignored_informational_event_count": dispositions.count(
-                "informational"
+            "suricata_alert_count": int(alert_summary["security_count"]),
+            "suricata_raw_alert_count": int(alert_summary["raw_count"]),
+            "suricata_ignored_informational_event_count": int(
+                alert_summary["informational_count"]
             ),
-            "suricata_contextual_observation_count": dispositions.count("contextual"),
+            "suricata_contextual_observation_count": int(
+                alert_summary["contextual_count"]
+            ),
             "suricata_signatures": signatures[:50],
-            "zeek_conn_record_count": len(zeek_conn_rows),
-            "zeek_http_record_count": len(zeek_http_rows),
-            "zeek_dns_record_count": len(zeek_dns_rows),
+            "zeek_conn_record_count": count_json_records(
+                result_dir / "zeek" / "conn.log"
+            ),
+            "zeek_http_record_count": count_json_records(
+                result_dir / "zeek" / "http.log"
+            ),
+            "zeek_dns_record_count": count_json_records(
+                result_dir / "zeek" / "dns.log"
+            ),
             "content_findings": findings,
         },
     }
