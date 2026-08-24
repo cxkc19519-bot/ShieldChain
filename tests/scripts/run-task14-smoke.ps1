@@ -65,9 +65,16 @@ try {
         src/features/about/StatusPage.test.tsx
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-        (Join-Path $PSScriptRoot "run-phase8-container-smoke.ps1") `
-        -ProjectRoot $ProjectRoot -StaticOnly
+    $containerArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $PSScriptRoot "run-phase8-container-smoke.ps1"),
+        "-ProjectRoot", $ProjectRoot
+    )
+    if ($StaticOnly) {
+        $containerArguments += "-StaticOnly"
+    }
+    & powershell.exe @containerArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host "TASK14_SMOKE_TESTED=True"
@@ -76,10 +83,6 @@ try {
     Write-Host "REAL_IDENTITY_PLATFORM_TESTED=False"
     Write-Host "REAL_EXTERNAL_MCP_PEER_TESTED=False"
     Write-Host "REAL_DEVICE_PATHS_TESTED=False"
-    if ($StaticOnly) {
-        Write-Host "DOCKER_RUNTIME_TESTED=False"
-        Write-Host "DOCKER_RUNTIME_REASON=static_only"
-    }
 }
 finally {
     foreach ($name in $saved.Keys) {
