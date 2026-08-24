@@ -1518,6 +1518,26 @@ LIVE_MCP_CALL_LIMIT=0
 
 建议提交：`test: gate mcp response planning and safety loop delivery`
 
+### Task 15：安全闭环审查加固
+
+> 状态：已完成（2026-08-24）。本 Task 来自对 Task 0～14 的崩溃窗口和契约复核；不改变真实身份、外部 MCP 或真实设备尚未验收的边界。
+
+目标：让已有租约、审批、超时和恢复语义在真实事务提交点上成立，并消除测试全绿但进程崩溃后无法恢复的路径。
+
+实施与验证记录：
+
+- 安全循环不再用一个数据库事务包住整个 Adapter 调用；网关先耐久提交执行租约和 `executing`，再调用 Adapter，成功后先提交 attempt 和 `verifying`，最后保存验证。跨连接崩溃测试确认副作用前可见 `executing + active lease`；
+- 恢复扫描覆盖没有 loop、`awaiting_execution` 和 `running` 的陈旧计划；应用生命周期每 5 秒重复扫描，保留 30 秒陈旧窗口，单个仍持有有效租约或损坏的计划不阻塞其他候选；
+- 超过 5 分钟策略有效期的工具审批不再永久卡住：调用以 `approval_expired` 进入 `needs_review`，计划生成失败 revision，ReAct 转人工；Alembic `20260824_08` 为该类别增加约束和拒绝丢数据的降级保护；
+- 工具定义的 deadline 现在由网关实际执行。执行超时记录 `unknown` 且不重放，验证超时记录 `inconclusive`；未来真实 Adapter 仍必须同时配置传输层 timeout；
+- 全新离线仿真 Adapter 只按已持久化的成功执行尝试重建变更状态；未知、失败或只有 lease 的调用不参与重建。真实进程重启测试不再复用原 Adapter 实例；
+- 运营报告前端 API 不再用 TypeScript 类型断言接收未知 JSON，改为逐字段公开投影校验；非法数组、枚举、数字和失败结果形状在渲染前拒绝，额外私有字段被丢弃；
+- `run-task14-smoke.ps1` 只在调用者明确传入 `-StaticOnly` 时跳过 Docker；普通模式会尝试容器 runtime 并输出真实 marker；
+- 后端 Ruff 和全量测试通过：`1190 passed, 27 skipped`；前端 30 个测试文件、`107 passed`，类型检查、ESLint、生产构建和 `npm audit` 通过；临时 SQLite `upgrade head → downgrade -1 → upgrade head` 最终为 `20260824_08`；
+- 本 Task 没有补造 Wazuh 到案件级可执行计划的目标/证据映射。该入口仍需基于真实告警字段和权限边界单独设计，不能把运营报告零动作建议或测试预置行宣传为产品端到端处置。
+
+建议提交：`fix: harden trusted tool crash recovery`
+
 ## 21. Git 项目管理规则
 
 ### 21.1 分支

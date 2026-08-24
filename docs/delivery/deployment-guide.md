@@ -10,7 +10,7 @@ docker compose up -d --build
 
 前端绑定 `127.0.0.1:8080`，后端仅在 Compose 内部网络提供服务。数据库、知识库和助手数据位于持久化卷；`docker compose down` 默认保留数据。
 
-当前 Compose 的 migrate、backend 和 frontend 均使用只读根文件系统与非 root 用户；backend/migrate 的 PID 上限为 256，frontend 为 128。后端 readiness 必须匹配 migration head `20260824_07`，前端 `/healthz` 也有独立健康检查。Nginx 提供 CSP、COOP、CORP、禁止 framing 和精确 `/mcp` 代理边界。
+当前 Compose 的 migrate、backend 和 frontend 均使用只读根文件系统与非 root 用户；backend/migrate 的 PID 上限为 256，frontend 为 128。后端 readiness 必须匹配 migration head `20260824_08`，前端 `/healthz` 也有独立健康检查。Nginx 提供 CSP、COOP、CORP、禁止 framing 和精确 `/mcp` 代理边界。
 
 普通停止或应用回滚只使用 `docker compose down`。`docker compose down -v` 会删除项目数据卷，不属于常规回滚；只有在确认目标是一次性测试项目、已经验证 Compose project name 且明确接受数据不可恢复时才允许使用。
 
@@ -65,6 +65,8 @@ REAL_IDENTITY_PLATFORM_TESTED=False
 REAL_EXTERNAL_MCP_PEER_TESTED=False
 REAL_DEVICE_PATHS_TESTED=False
 ```
+
+离线门禁可显式执行 `tests/scripts/run-task14-smoke.ps1 -StaticOnly`。不带 `-StaticOnly` 时脚本会尝试 Docker runtime smoke，并由容器脚本明确输出 `DOCKER_RUNTIME_TESTED=True` 或不可用原因；不能只凭 `TASK14_SMOKE_TESTED=True` 推断容器已经运行。
 
 - 可通过 HTTPS 访问的外部 OAuth/OIDC issuer 和 JWKS；
 - 对外稳定的 MCP resource URI，必须精确到 `/mcp`；
@@ -235,7 +237,17 @@ docker compose run --rm backend alembic downgrade 20260823_05
 
 存在 accepted/rejected 操作员事件时，`20260823_06` 拒绝降级，避免丢失操作主体。此时应保留当前数据库版本，或先按审计留存要求导出计划事件及关联调用；不得直接清空 `actor_subject_id` 绕过保护。
 
-`20260824_07` 扩展 ReAct 分类约束，使已接受计划和验证完成拥有明确类别。部署升级后，应用启动会扫描超过 30 秒仍为 `running` 的闭环：过期状态变更租约只查询状态，`verifying` 调用只恢复验证。启动恢复不会重放变更动作。
+`20260824_07` 扩展 ReAct 分类约束，使已接受计划和验证完成拥有明确类别。`20260824_08` 增加 `approval_expired`，让超过策略有效期的审批稳定进入人工复核，而不是永久停留在等待审批。
+
+网关会在调用 Adapter 前提交租约与 `executing`，并在验证前提交成功尝试与 `verifying`。应用启动后每 5 秒扫描超过 30 秒仍未推进、尚无 loop、`awaiting_execution` 或 `running` 的计划；过期状态变更租约只查询状态，`verifying` 调用只恢复验证。离线仿真只按成功执行尝试重建状态，任何 `unknown` 结果都不会重放。
+
+没有 `approval_expired` ReAct 记录时可单独回退到 `20260824_07`：
+
+```bash
+docker compose run --rm backend alembic downgrade 20260824_07
+```
+
+存在该类别时 `20260824_08` 会拒绝降级。应先完整导出关联 observation、assessment、decision、plan revision 和工具调用，不能通过删除记录制造可回退状态。
 
 尚未产生 `plan_accepted` 或 `completed` ReAct 记录时，可回退到 `20260823_06`：
 

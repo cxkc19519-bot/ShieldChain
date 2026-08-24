@@ -14,11 +14,11 @@
 - 安全闭环专项覆盖成功、审批等待、执行失败、未知结果不重放、验证失败/不可判断、状态查询、失败 revision、急停、预算、恢复执行和恢复验证；
 - 运营响应规划接线覆盖合法零动作候选、无效 JSON、未知工具、跨运行证据、模型不可用、公开计划关联及零可信工具调用；
 - Wazuh、运营报告、ReAct/RAG 新增关键后端测试：9 个通过；
-- 前端全量：29 个测试文件、104 个测试通过；覆盖加载、错误、空、部分数据、取消、legacy 报告、超时状态、运行时契约和私有字段不渲染；
+- 前端全量：30 个测试文件、107 个测试通过；覆盖加载、错误、空、部分数据、取消、legacy 报告、超时状态、运行时契约和私有字段不渲染；
 - TypeScript 类型检查、ESLint 和生产构建通过；
 - Task 14 官方 SDK MCP conformance 通过：协议 `2026-07-28`、固定四工具只读目录、结构化调用和入站审计均符合合同；
-- Alembic 临时 SQLite `upgrade head → downgrade -1 → upgrade head` 实际通过，最终 head 为 `20260824_07`；
-- 后端 Ruff 全量通过；后端历史全量 `1182 passed, 27 skipped`；
+- Alembic 临时 SQLite `upgrade head → downgrade -1 → upgrade head` 实际通过，最终 head 为 `20260824_08`；
+- 后端 Ruff 全量通过；后端历史全量 `1190 passed, 27 skipped`；
 - 前端安全补丁升级后 `npm audit --audit-level=moderate` 报告 0 漏洞；
 - `compose.yaml + compose.server.yaml` 配置检查通过；
 - `compose.yaml + compose.local-llm.yaml` 配置检查通过；
@@ -27,13 +27,13 @@
 
 ## 当前全量套件说明
 
-2026-08-24 最终后端历史全量得到 `1182 passed, 27 skipped`，没有失败或错误。跳过项均为显式边界：
+2026-08-24 安全加固后端全量得到 `1190 passed, 27 skipped`，没有失败或错误。新增回归覆盖 Adapter 前的跨连接租约可见性、接受/审批提交断点、周期恢复、审批过期、执行/验证 deadline、全新进程内 Adapter 状态重建和迁移降级保护。跳过项均为显式边界：
 
 - 已删除产品路由对应的固定钓鱼仿真 API 合同保留为归档 skip；不会为了表面全绿恢复旧功能；
 - 本地模型服务轮廓需要可选 `local-rag`/`torch`，常规锁定测试环境未安装时显式跳过；
 - 当前 Windows Python 测试进程找不到 `git` 时，fresh-checkout 跟踪文件检查跳过；迁移与 readiness 仍由其他当前合同覆盖。
 
-前端最终全量为 `29` 个文件、`104 passed`，类型、Lint、构建均通过。依赖补丁升级修复 React Router、PostCSS、NanoID、JS-YAML 和 brace-expansion 公告，最终审计为 0 漏洞。
+前端最终全量为 `30` 个文件、`107 passed`，类型、Lint、构建均通过。运营报告响应现在逐字段执行运行时校验，不再以 TypeScript 断言接收未知 JSON；依赖审计为 0 漏洞。
 
 PowerShell 四个门禁脚本通过 AST 语法解析。当前 Windows PowerShell 环境缺少 `npm.cmd`，因此没有把一次单命令 `verify.ps1` 运行标记为通过；同样的 Python、前端、迁移和安全门禁已分别实际执行。当前主机没有 Docker CLI，容器只完成静态 Compose/Nginx/供应链合同。
 
