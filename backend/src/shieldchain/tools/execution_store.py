@@ -274,6 +274,61 @@ class SqlAlchemyExecutionStore:
         ).scalars()
         return tuple(_lease(row) for row in rows)
 
+    def expire_active_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        now: datetime,
+        request_id: str,
+    ) -> ToolExecutionLease:
+        row = self._session.execute(
+            select(ToolExecutionLeaseRow).where(
+                ToolExecutionLeaseRow.tool_call_id == str(call.request.id),
+                ToolExecutionLeaseRow.tenant_id == str(tenant_id),
+                ToolExecutionLeaseRow.released_at.is_(None),
+                ToolExecutionLeaseRow.expires_at <= now,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise ExecutionLeaseNotFound("expired execution lease not found")
+        result = self._session.execute(
+            update(ToolExecutionLeaseRow)
+            .where(
+                ToolExecutionLeaseRow.id == row.id,
+                ToolExecutionLeaseRow.released_at.is_(None),
+                ToolExecutionLeaseRow.expires_at <= now,
+            )
+            .values(released_at=now, release_reason="recovery_expired")
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ExecutionLeaseNotFound("expired execution lease is stale")
+        append_incident_audit(
+            self._session,
+            incident_id=call.request.case_id,
+            run_id=call.request.run_id,
+            event_type="trusted_tool_execution_lease_released",
+            request_id=request_id,
+            occurred_at=now,
+            payload={
+                "tool_call_id": str(call.request.id),
+                "lease_id": row.id,
+                "reason": "recovery_expired",
+            },
+        )
+        return ToolExecutionLease(
+            UUID(row.id),
+            UUID(row.tool_call_id),
+            UUID(row.holder_id),
+            row.attempt_number,
+            row.token_digest,
+            _utc(row.acquired_at),
+            _utc(row.expires_at),
+            now,
+            "recovery_expired",
+        )
+
     def require_call(self, *, tenant_id: UUID, request_id: UUID) -> TrustedToolCallRow:
         row = self._session.execute(
             select(TrustedToolCallRow).where(

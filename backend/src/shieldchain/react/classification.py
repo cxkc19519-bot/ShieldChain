@@ -81,6 +81,8 @@ class TrustedFailureInput:
 
 
 _ALLOWED_DECISIONS: dict[FailureCategory, frozenset[ReactDecision]] = {
+    FailureCategory.PLAN_ACCEPTED: frozenset({ReactDecision.MANUAL_REVIEW}),
+    FailureCategory.COMPLETED: frozenset({ReactDecision.COMPLETE}),
     FailureCategory.VERIFICATION_FAILED: frozenset(
         {ReactDecision.REPLAN, ReactDecision.MANUAL_REVIEW}
     ),
@@ -164,6 +166,8 @@ class DeterministicFailureClassifier:
         if value.evidence_conflict:
             return FailureCategory.EVIDENCE_CONFLICT
         if value.verification is not None:
+            if value.verification.outcome is VerificationOutcome.VERIFIED:
+                return FailureCategory.COMPLETED
             if value.verification.outcome is VerificationOutcome.FAILED:
                 return FailureCategory.VERIFICATION_FAILED
             if value.verification.outcome is VerificationOutcome.INCONCLUSIVE:

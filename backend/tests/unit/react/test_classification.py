@@ -112,6 +112,7 @@ def test_supervisor_conditions_have_fail_closed_precedence(values, expected) -> 
 @pytest.mark.parametrize(
     ("outcome", "expected"),
     [
+        (VerificationOutcome.VERIFIED, FailureCategory.COMPLETED),
         (VerificationOutcome.FAILED, FailureCategory.VERIFICATION_FAILED),
         (VerificationOutcome.INCONCLUSIVE, FailureCategory.VERIFICATION_INCONCLUSIVE),
     ],

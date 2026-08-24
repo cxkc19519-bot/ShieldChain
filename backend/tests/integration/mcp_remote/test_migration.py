@@ -50,7 +50,7 @@ def test_mcp_snapshot_migration_round_trips(
     _migrate(root, database, "head", monkeypatch)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260823_06",
+            "20260824_07",
         )
 
 

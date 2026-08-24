@@ -101,10 +101,17 @@ def create_app(
         else None
     )
     mcp_http_app = create_mcp_http_app(mcp_server, settings) if mcp_server is not None else None
+    trusted_tools = trusted_tool_api_service or TrustedToolApiService(session_factory)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
+        recover_safety = getattr(trusted_tools, "recover_safety_loops", None)
+        if callable(recover_safety):
+            recover_safety(
+                tenant_id=settings.rag_demo_tenant_id,
+                now=datetime.now(UTC),
+            )
         if mcp_remote_discovery is not None and mcp_remote_config is not None:
             _app.state.mcp_remote_discovery_outcomes = await mcp_remote_discovery.refresh_enabled(
                 mcp_remote_config
@@ -149,9 +156,7 @@ def create_app(
         principal_id=settings.rag_demo_principal_id,
         store=LocalConversationStore(settings.assistant_data_root),
     )
-    app.state.trusted_tool_api_service = trusted_tool_api_service or TrustedToolApiService(
-        session_factory
-    )
+    app.state.trusted_tool_api_service = trusted_tools
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
     app.state.wazuh_alert_service = WazuhAlertService()

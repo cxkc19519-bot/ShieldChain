@@ -21,7 +21,8 @@ from shieldchain.db.base import Base
 _LOOP_STATUSES = "'running','awaiting_execution','awaiting_human','completed','terminated'"
 _SOURCES = "'role','tool_call','tool_verification','control','evidence'"
 _CATEGORIES = (
-    "'verification_failed','verification_inconclusive','execution_failed',"
+    "'plan_accepted','completed','verification_failed','verification_inconclusive',"
+    "'execution_failed',"
     "'execution_outcome_unknown','approval_rejected','emergency_stopped','automation_disabled',"
     "'dependency_unavailable','evidence_insufficient','evidence_conflict','budget_exhausted','loop_detected','unclassified_failure'"
 )

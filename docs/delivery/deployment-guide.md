@@ -200,6 +200,16 @@ docker compose run --rm backend alembic downgrade 20260823_05
 
 存在 accepted/rejected 操作员事件时，`20260823_06` 拒绝降级，避免丢失操作主体。此时应保留当前数据库版本，或先按审计留存要求导出计划事件及关联调用；不得直接清空 `actor_subject_id` 绕过保护。
 
+`20260824_07` 扩展 ReAct 分类约束，使已接受计划和验证完成拥有明确类别。部署升级后，应用启动会扫描超过 30 秒仍为 `running` 的闭环：过期状态变更租约只查询状态，`verifying` 调用只恢复验证。启动恢复不会重放变更动作。
+
+尚未产生 `plan_accepted` 或 `completed` ReAct 记录时，可回退到 `20260823_06`：
+
+```bash
+docker compose run --rm backend alembic downgrade 20260823_06
+```
+
+存在上述新类别记录时迁移会拒绝降级。应保留数据库版本，或先完整导出 React observation、assessment、decision、plan revision 和关联工具回执；不得删除分类记录来制造表面可回退状态。
+
 ## 本地模型覆盖
 
 ```bash

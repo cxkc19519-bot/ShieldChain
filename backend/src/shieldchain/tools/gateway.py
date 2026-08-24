@@ -243,6 +243,70 @@ class TrustedToolGateway:
             request_id=request_id,
         )
 
+    def execute_prepared(
+        self,
+        *,
+        bound: BoundToolRequest,
+        call: TrustedToolCall,
+        policy: PolicyDecision,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        adapter: TrustedToolAdapter,
+        request_id: str,
+    ) -> GatewayResult:
+        if (
+            call.status is not TrustedToolCallStatus.APPROVED
+            or bound.request.id != call.request.id
+            or bound.request_digest != call.request.request_digest
+            or context.case_id != call.request.case_id
+            or context.run_id != call.request.run_id
+            or policy.request_id != call.request.id
+            or policy.outcome is not PolicyOutcome.ALLOW
+            or policy.expires_at <= context.now
+        ):
+            raise ValueError("prepared trusted tool call is invalid or expired")
+        return self._execute(
+            bound=bound,
+            call=call,
+            created=False,
+            policy=policy,
+            approval=None,
+            context=context,
+            store=store,
+            adapter=adapter,
+            request_id=request_id,
+        )
+
+    def verify_after_recovery(
+        self,
+        *,
+        bound: BoundToolRequest,
+        call: TrustedToolCall,
+        execution: AdapterExecution,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        adapter: TrustedToolAdapter,
+        request_id: str,
+    ) -> GatewayResult:
+        if (
+            call.status is not TrustedToolCallStatus.VERIFYING
+            or bound.request.id != call.request.id
+            or bound.request_digest != call.request.request_digest
+            or context.case_id != call.request.case_id
+            or context.run_id != call.request.run_id
+            or execution.outcome is not ExecutionOutcome.SUCCEEDED
+        ):
+            raise ValueError("recovering verification is not bound to the trusted call")
+        verification = self._verify(bound, call, execution, context, adapter)
+        call = self._finalize_verification(
+            call=call,
+            verification=verification,
+            context=context,
+            store=store,
+            request_id=request_id,
+        )
+        return GatewayResult(call, False, verification=verification)
+
     def _execute(
         self,
         *,
@@ -336,6 +400,24 @@ class TrustedToolGateway:
         if execution.outcome in {ExecutionOutcome.UNKNOWN, ExecutionOutcome.FAILED}:
             return GatewayResult(call, created, policy, approval, attempt)
         verification = self._verify(bound, call, execution, context, adapter)
+        call = self._finalize_verification(
+            call=call,
+            verification=verification,
+            context=context,
+            store=store,
+            request_id=request_id,
+        )
+        return GatewayResult(call, created, policy, approval, attempt, verification)
+
+    @staticmethod
+    def _finalize_verification(
+        *,
+        call: TrustedToolCall,
+        verification: ToolVerification,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        request_id: str,
+    ) -> TrustedToolCall:
         target = {
             VerificationOutcome.VERIFIED: TrustedToolCallStatus.SUCCEEDED,
             VerificationOutcome.FAILED: TrustedToolCallStatus.FAILED,
@@ -354,7 +436,7 @@ class TrustedToolGateway:
                 request_id=request_id,
                 reason=reason,
             )
-        return GatewayResult(call, created, policy, approval, attempt, verification)
+        return call
 
     @staticmethod
     def _verify(

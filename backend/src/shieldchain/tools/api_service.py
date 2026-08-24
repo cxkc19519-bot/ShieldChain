@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.react.safety_loop import ResponseSafetyLoopService, SafetyLoopConflict
 from shieldchain.tools.approval_store import SqlAlchemyApprovalStore
 from shieldchain.tools.approvals import ApprovalAuthority, TrustedToolApprovalService
 from shieldchain.tools.control import TrustedToolControlService
@@ -48,9 +49,15 @@ def _utc(value: datetime) -> datetime:
 
 
 class TrustedToolApiService:
-    def __init__(self, sessions: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        *,
+        safety_loop: ResponseSafetyLoopService | None = None,
+    ) -> None:
         self._sessions = sessions
         self._plans = ResponsePlanToolService(sessions)
+        self._safety = safety_loop or ResponseSafetyLoopService(sessions)
 
     def decide_plan(
         self,
@@ -62,7 +69,7 @@ class TrustedToolApiService:
         reason: str,
         now: datetime,
     ) -> ResponsePlanMutationView:
-        return self._plans.decide(
+        result = self._plans.decide(
             tenant_id=tenant_id,
             actor_id=actor_id,
             plan_id=plan_id,
@@ -70,6 +77,13 @@ class TrustedToolApiService:
             reason=reason,
             now=now,
         )
+        if outcome == "accepted":
+            self._safety.advance_plan(
+                tenant_id=tenant_id,
+                plan_id=plan_id,
+                now=now,
+            )
+        return result
 
     def trace(self, *, tenant_id: UUID, run_id: UUID) -> ToolTraceView:
         with self._sessions() as session:
@@ -96,12 +110,15 @@ class TrustedToolApiService:
         reason: str,
         now: datetime,
     ) -> ToolMutationView:
+        plan_id = None
         with self._sessions.begin() as session:
             repo = SqlAlchemyTrustedToolRepository()
             call = repo.get(session, tenant_id=tenant_id, tool_call_id=call_id)
             policy = self._latest_policy(session, tenant_id, call_id)
             if call is None or policy is None:
                 raise ToolApiNotFound("trusted tool call not found")
+            row = session.get(TrustedToolCallRow, str(call_id))
+            plan_id = UUID(row.plan_id) if row is not None and row.plan_action_id else None
             TrustedToolApprovalService().decide(
                 call=call,
                 policy=policy,
@@ -126,9 +143,43 @@ class TrustedToolApiService:
                     request_id=f"api-approval:{call_id}",
                     reason=PolicyReason.APPROVAL_REJECTED,
                 )
-            return ToolMutationView(
+            result = ToolMutationView(
                 call_id=call_id, status=call.status.value, revision=call.revision
             )
+        if plan_id is not None:
+            self._safety.advance_plan(
+                tenant_id=tenant_id,
+                plan_id=plan_id,
+                now=now,
+            )
+            with self._sessions() as session:
+                latest = SqlAlchemyTrustedToolRepository().get(
+                    session,
+                    tenant_id=tenant_id,
+                    tool_call_id=call_id,
+                )
+                if latest is not None:
+                    result = ToolMutationView(
+                        call_id=call_id,
+                        status=latest.status.value,
+                        revision=latest.revision,
+                    )
+        return result
+
+    def recover_safety_loops(
+        self,
+        *,
+        tenant_id: UUID,
+        now: datetime,
+    ) -> int:
+        with self._sessions() as session:
+            schema = inspect(session.get_bind())
+            if not schema.has_table("response_plans") or not schema.has_table("react_loops"):
+                return 0
+        try:
+            return len(self._safety.recover_stale(tenant_id=tenant_id, now=now))
+        except SafetyLoopConflict:
+            return 0
 
     def control_call(
         self,

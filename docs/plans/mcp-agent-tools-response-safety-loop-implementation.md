@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-23）。Task 0～11 已完成，Task 12～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-24）。Task 0～12 已完成，Task 13～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -1415,6 +1415,8 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### Task 12：真实安全闭环编排
 
+> 状态：已完成（2026-08-24）。本 Task 已形成策略、审批、离线仿真 Adapter、执行回执、验证、ReAct 决策、恢复和人工接管的软件闭环；没有接入或验收真实安全设备。
+
 目标：把工具回执、新观察、验证和重规划接入当前运营 run。
 
 修改：
@@ -1431,6 +1433,20 @@ LIVE_MCP_CALL_LIMIT=0
 - 结果未知不重放；
 - 验证失败生成新 plan revision；
 - 预算/循环/紧急停止生效。
+
+实施与验证记录（2026-08-24）：
+
+- 新增 `react/safety_loop.py`，计划接受后为案件运行创建或恢复唯一 `ReactLoop`；按 action sequence 调度已准备调用，未通过独立审批的高风险动作保持等待；
+- `TrustedToolGateway` 新增已策略允许调用的受控调度入口和崩溃后仅恢复验证的入口；两者继续复用现有摘要绑定、租约、Adapter、attempt 和 verification 记录，不允许绕过策略或审批；
+- 当前自动 Adapter 仅为进程内、无网络/命令能力的 `OfflineSimulationAdapter`，按既有 simulation investigation 和计划目标建立进程内 allowlist；真实设备 Adapter 未接入；
+- 每个可信调用终态转换为绑定 call/verification/evidence 的 `ReactObservation`，再由现有确定性分类器、预算监督器和 replanner 生成 complete、continue、query status、retry read-only、replan 或 manual review 决策；
+- 只有所有必需动作均为 `succeeded` 且存在 `verified` 回执，plan、React loop、AgentRun、InvestigationRun 和 CaseContext 才进入完成/关闭；报告角色摘要和共享 context 同步写入闭环事实，明确区分完成与需复核；
+- 变更执行结果未知时，原变更调用转 `needs_review`，只调用注册的配对只读状态查询，不重放原动作；只读恢复允许创建新的幂等查询调用；
+- 验证失败、验证不可判断、执行失败、审批拒绝、紧急停止、自动化关闭、预算耗尽、Adapter 不可用和其他不可恢复状态均转人工；执行/验证失败会追加新的实际 `response_plan` revision，保留原 revision 和调用历史；
+- 服务启动扫描陈旧 `running` 循环：`executing` 的过期变更租约释放后查询状态，`verifying` 只恢复验证；没有业务表的协议级测试数据库先做只读 schema 检查后跳过扫描；
+- 新增 Alembic `20260824_07`，为 ReAct 增加 `plan_accepted` 和 `completed` 类别；已有新类别记录时拒绝降级，避免丢失完成语义；
+- 成功闭环、审批等待、执行失败、未知结果不重放、验证失败/不可判断、新 plan revision、紧急停止、预算、唯一租约、恢复查询、恢复验证、API 自动推进、报告事实、迁移和旧 MCP 启动兼容测试通过；Task 0～12 相关后端组合回归：`503 passed`；
+- 真实防火墙/EDR/IAM Adapter、真实遥测回流、跨进程 Adapter 状态和生产恢复仍未验收；Task 13 只增加公开投影和工作台，不能改变这一事实。
 
 建议提交：`feat: close the response verification and replanning loop`
 
