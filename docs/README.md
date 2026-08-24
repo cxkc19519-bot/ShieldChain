@@ -21,6 +21,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 - 智能助手基于知识库与历史报告回答问题并持久化对话记忆；
 - 可通过外部 DeepSeek API 或本地 vLLM `Qwen3-30B-A3B-Instruct-2507-FP8` 提供模型能力；
 - 模型只负责分析、规划和建议，真实处置仍受策略、审批、可信工具网关与执行后验证约束。
+- Task 0～14 统一实施已完成：官方 SDK MCP conformance、真实 migration head/往返、后端 `1182 passed, 27 skipped`、前端 `104 passed`、静态容器安全合同和前端零漏洞依赖审计均已记录；Docker runtime、真实身份/peer/设备仍未验收。
 
 ## 阅读顺序
 

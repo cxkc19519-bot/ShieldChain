@@ -27,7 +27,7 @@ try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
     & $npm.Source test --prefix (Join-Path $repositoryRoot "frontend") -- --run src/test/phase7-smoke.test.tsx
     if ($LASTEXITCODE -ne 0) { throw "Phase 7 cross-page frontend smoke failed." }
-    Write-Host "Phase 7 smoke passed: all six workspaces rendered with offline simulation and failure-closed boundaries."
+    Write-Host "Phase 7 smoke passed: all seven workspaces rendered with offline API mocks and failure-closed boundaries."
     Write-Host "NETWORK_ACCESS_TESTED=False"
     Write-Host "REAL_MODEL_PLANNING_TESTED=False"
     Write-Host "REAL_DEVICE_PATHS_TESTED=False"

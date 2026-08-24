@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-24）。Task 0～13 已完成，Task 14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：已实施（2026-08-24）。Task 0～14 已完成。本文是后续维护、评审、测试、迁移和 Git 提交的执行基线；真实身份平台、外部 peer 和真实设备仍需在授权环境单独验收。实施后如果改变协议版本、安全边界或数据模型，必须先更新本文并记录迁移影响。
 
 ## 1. 文档目的
 
@@ -1123,7 +1123,7 @@ LIVE_MCP_CALL_LIMIT=0
 - MCP、配置、HTTP 安全、Broker 和运营报告聚焦回归：`37 passed`；
 - 本 Task 修改的 Python 文件 Ruff check、format check 和 `git diff --check` 通过；
 - 当前临时 Python 环境未安装可选 `torch`，全量测试首次在本地模型测试收集阶段停止；
-- 排除该可选测试后，仓库既有全量基线为 `1035 passed, 1 skipped, 20 failed, 17 errors`；失败主要来自已退役调查 API 测试仍传入 `investigation_runner`，以及 Windows 临时运行时的 Alembic 子进程和多进程模块路径，均未通过本 Task 顺带修改或隐藏；
+- 排除该可选测试后，当时仓库既有全量基线为 `1035 passed, 1 skipped, 20 failed, 17 errors`；失败主要来自已退役调查 API 测试仍传入 `investigation_runner`，以及 Windows 临时运行时的 Alembic 子进程和多进程模块路径；这是阶段记录，Task 14 已将现行合同修复、旧合同显式归档并形成最终绿色基线；
 - 仓库全量 Ruff 仍有 37 个既有错误；本 Task 涉及文件为零错误。以上既有基线必须在后续专门任务中处理，不能把本记录解释为全仓门禁已通过。
 
 建议提交：`feat: expose read only security tools over mcp`
@@ -1476,8 +1476,8 @@ LIVE_MCP_CALL_LIMIT=0
 - 智能体/ReAct 工作台展示 MCP provider、catalog/schema revision、裁剪回执、工具/验证引用、失败分类、重规划差异和人工控制；运营报告改为生成时快照并链接实时处置与 ReAct 页面，不再静态宣称动作未执行；
 - MCP 状态页由静态健康文案改为运行时校验的真实公开投影；所有新增前端 API 都对对象、数组、数字和枚举做运行时验证，额外私有字段不会进入渲染模型；
 - Task 13 后端相关组合 `409 passed`；新增/变更 API 与计划/闭环聚焦 `28 passed`；前端全量 `29` 个文件、`104 passed`，TypeScript、ESLint 和生产构建通过；
-- 后端历史全量在常规锁定环境得到 `1167 passed, 1 skipped`，另有 `16 failed, 17 errors`，来自旧 `investigation_runner` 合同、Windows 子进程 `git`、历史文档编码/断言等既有基线；可选本地模型测试另因未安装 `torch` 无法收集。Task 14 必须处理或正式归档这些门禁缺口；
-- `npm install` 审计报告 1 个 moderate、5 个 high 上游依赖漏洞；本 Task 未执行可能扩大版本变化的自动修复，Task 14 需评估、升级并复测；
+- 后端历史全量在该时点得到 `1167 passed, 1 skipped`，另有 `16 failed, 17 errors`；这是 Task 13 的真实阶段记录，Task 14 已修复现行合同、归档退役合同并得到 `1182 passed, 27 skipped`；
+- `npm install` 在该时点报告 1 个 moderate、5 个 high 上游依赖漏洞；Task 14 已完成非强制补丁升级、全量复测并将审计降为 0；
 - 真实身份平台、真实外部 MCP peer、TLS/Nginx、真实设备 Adapter 和真实遥测闭环仍未验收，公开工作台不会改变这些边界。
 
 建议提交：`feat: show mcp plans and safety loop projections`
@@ -1502,6 +1502,19 @@ LIVE_MCP_CALL_LIMIT=0
 - 本地和服务器部署演练；
 - 回滚演练；
 - 未测试真实设备仍明确标记未实现。
+
+实施与验证记录（2026-08-24）：
+
+- 新增 `tests/scripts/mcp_conformance.py`，使用官方 SDK 在系统临时目录完成 `2026-07-28` 协商、固定四工具目录、只读 annotation、结构化调用和入站公开审计验证；脚本不访问网络；
+- 新增 `run-task14-smoke.ps1` 和当前交付安全合同；`verify.ps1` 支持根目录或 `backend/.venv`、PATH Python，加入 `npm audit`、临时数据库 `upgrade → downgrade -1 → upgrade` 和 Task 14 smoke；
+- 运行时 readiness migration revision 从历史值修正为唯一真实 head `20260824_07`，并由 Alembic ScriptDirectory 合同锁定；临时 SQLite 迁移往返实际通过；
+- 前端依赖以非强制补丁升级修复 React Router、PostCSS、NanoID、JS-YAML 和 brace-expansion 公告；`npm audit --audit-level=moderate` 为 0；
+- Compose 增加后端/迁移和前端 PID 上限，前端增加自身健康检查；Nginx 增加 COOP/CORP 响应头，继续保持只读根文件系统、非 root、cap drop、no-new-privileges、精确 `/mcp` 和请求大小边界；
+- 已退役固定钓鱼仿真 API 合同保留为显式归档 skip，不恢复删除的产品路由；现行健康、知识库、迁移、Phase smoke、仓库就绪和交付合同更新到当前事实；
+- 后端历史全量：`1182 passed, 27 skipped`；Ruff 全量通过。跳过项均有显式原因：已退役固定仿真 API、可选 `torch` 本地模型轮廓，以及当前 Windows Python 进程缺少 `git`；
+- 前端全量：`29` 个文件、`104 passed`；TypeScript、ESLint、生产构建和依赖审计通过；
+- MCP conformance、PowerShell AST 语法解析、静态 Compose/Nginx/供应链合同和迁移往返通过；当前主机没有 Docker CLI，Windows PowerShell 没有 `npm.cmd`，所以 Docker runtime 和单命令 Windows 综合 verify 未宣称通过；
+- `NETWORK_ACCESS_TESTED=False`、`REAL_MODEL_PLANNING_TESTED=False`、`REAL_IDENTITY_PLATFORM_TESTED=False`、`REAL_EXTERNAL_MCP_PEER_TESTED=False`、`REAL_DEVICE_PATHS_TESTED=False`；这些外部边界仍需单独授权验收。
 
 建议提交：`test: gate mcp response planning and safety loop delivery`
 

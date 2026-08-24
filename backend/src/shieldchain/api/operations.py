@@ -27,7 +27,9 @@ async def create_report(payload: OperationsReportRequest, request: Request) -> O
 
 
 @router.get("", response_model=OperationsReportListResponse)
-def list_reports(request: Request, limit: int = Query(default=30, ge=1, le=100)) -> OperationsReportListResponse:
+def list_reports(
+    request: Request, limit: int = Query(default=30, ge=1, le=100)
+) -> OperationsReportListResponse:
     return OperationsReportListResponse(items=_agent(request).list(limit))
 
 

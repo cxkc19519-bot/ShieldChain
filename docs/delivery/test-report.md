@@ -16,6 +16,10 @@
 - Wazuh、运营报告、ReAct/RAG 新增关键后端测试：9 个通过；
 - 前端全量：29 个测试文件、104 个测试通过；覆盖加载、错误、空、部分数据、取消、legacy 报告、超时状态、运行时契约和私有字段不渲染；
 - TypeScript 类型检查、ESLint 和生产构建通过；
+- Task 14 官方 SDK MCP conformance 通过：协议 `2026-07-28`、固定四工具只读目录、结构化调用和入站审计均符合合同；
+- Alembic 临时 SQLite `upgrade head → downgrade -1 → upgrade head` 实际通过，最终 head 为 `20260824_07`；
+- 后端 Ruff 全量通过；后端历史全量 `1182 passed, 27 skipped`；
+- 前端安全补丁升级后 `npm audit --audit-level=moderate` 报告 0 漏洞；
 - `compose.yaml + compose.server.yaml` 配置检查通过；
 - `compose.yaml + compose.local-llm.yaml` 配置检查通过；
 - 交付清单支持区分 `available` 与 `planned`，并检查未完成的 PPT、视频、ZIP 和校验和不会提前出现在仓库；
@@ -23,16 +27,15 @@
 
 ## 当前全量套件说明
 
-2026-08-24 在常规锁定测试依赖下运行后端历史全量（排除需要可选 `torch` 的本地模型服务测试）得到 `1167 passed, 1 skipped, 16 failed, 17 errors`。失败/错误集中在：
+2026-08-24 最终后端历史全量得到 `1182 passed, 27 skipped`，没有失败或错误。跳过项均为显式边界：
 
-- 旧 API 测试仍向已经演进的 `create_app` 传入 `investigation_runner`；
-- Windows Python 子进程环境找不到 `git`，影响仓库/迁移脚本检查；
-- 历史 Phase 8 文档断言存在编码或旧固定文本不一致；
-- 少量旧调查、知识库和 Phase 7 smoke 合同与当前产品边界不同。
+- 已删除产品路由对应的固定钓鱼仿真 API 合同保留为归档 skip；不会为了表面全绿恢复旧功能；
+- 本地模型服务轮廓需要可选 `local-rag`/`torch`，常规锁定测试环境未安装时显式跳过；
+- 当前 Windows Python 测试进程找不到 `git` 时，fresh-checkout 跟踪文件检查跳过；迁移与 readiness 仍由其他当前合同覆盖。
 
-不排除本地模型测试时，测试收集因锁定常规依赖不含 `torch` 而提前停止。上述均不由 Task 13 改动引入，但在 Task 14 处理或正式归档前，不能宣称“后端历史全量门禁通过”。
+前端最终全量为 `29` 个文件、`104 passed`，类型、Lint、构建均通过。依赖补丁升级修复 React Router、PostCSS、NanoID、JS-YAML 和 brace-expansion 公告，最终审计为 0 漏洞。
 
-前端执行 `npm install` 时审计报告 `1 moderate, 5 high`。本阶段没有执行可能自动升级主版本或扩大差异的 `npm audit fix`；Task 14 必须确认受影响依赖链、可利用性、升级方案和回归结果。
+PowerShell 四个门禁脚本通过 AST 语法解析。当前 Windows PowerShell 环境缺少 `npm.cmd`，因此没有把一次单命令 `verify.ps1` 运行标记为通过；同样的 Python、前端、迁移和安全门禁已分别实际执行。当前主机没有 Docker CLI，容器只完成静态 Compose/Nginx/供应链合同。
 
 ## 实时链路状态
 
@@ -41,6 +44,26 @@
 - Qwen3-30B-A3B 权重下载和推理服务启动尚受共享 GPU 可用性约束；
 - 2026-07-28 的 DeepSeek 与真实 RAG 验收见历史快照报告；
 - 真实处置设备链路仍未进行授权执行验收。
+
+## 最终门禁边界标记
+
+以下键由 Task 14 离线门禁和部署记录使用。`False` 表示本次没有获得对应外部环境的真实验收证据，不代表自动化测试失败：
+
+```text
+MCP_CONFORMANCE_TESTED=True
+MIGRATION_ROUNDTRIP_TESTED=True
+POWERSHELL_PARSE_TESTED=True
+STATIC_CONTAINER_CONTRACT_TESTED=True
+DOCKER_RUNTIME_TESTED=False
+WINDOWS_COMBINED_VERIFY_TESTED=False
+NETWORK_ACCESS_TESTED=False
+REAL_MODEL_PLANNING_TESTED=False
+REAL_IDENTITY_PLATFORM_TESTED=False
+REAL_EXTERNAL_MCP_PEER_TESTED=False
+REAL_DEVICE_PATHS_TESTED=False
+```
+
+离线官方 SDK conformance、静态容器合同、迁移往返和前后端测试可以在这些外部边界保持 `False` 时通过。只有保存真实授权环境、时间、操作者和结果证据后才能将对应值改为 `True`。
 
 ## 安全结论
 

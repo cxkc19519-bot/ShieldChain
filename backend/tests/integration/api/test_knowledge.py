@@ -330,14 +330,14 @@ def test_cross_tenant_style_resource_is_not_disclosed(knowledge_client) -> None:
     }
 
 
-def test_default_service_reports_unconfigured_cloud_chain(tmp_path: Path) -> None:
+def test_default_local_service_starts_with_an_empty_catalog(tmp_path: Path) -> None:
     engine = create_engine_from_url(f"sqlite:///{tmp_path / 'unconfigured.db'}")
     Base.metadata.create_all(engine)
     app = create_app(database_engine=engine, settings=Settings(_env_file=None))
     with TestClient(app) as client:
         response = client.get("/api/v1/knowledge-bases")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "knowledge_service_unconfigured"
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
     engine.dispose()
 
 

@@ -27,9 +27,24 @@ if ($ContractTest) {
     $smokeArguments = @()
 }
 else {
-    $pythonCommand = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    $pythonCandidates = @(
+        (Join-Path $ProjectRoot "backend\.venv\Scripts\python.exe"),
+        (Join-Path $ProjectRoot ".venv\Scripts\python.exe")
+    )
+    $pythonCommand = $pythonCandidates | Where-Object {
+        Test-Path -LiteralPath $_
+    } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($pythonCommand)) {
+        $python = Get-Command python.exe -ErrorAction SilentlyContinue
+        if ($null -eq $python) {
+            $python = Get-Command python -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $python) {
+            $pythonCommand = $python.Source
+        }
+    }
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if (-not (Test-Path -LiteralPath $pythonCommand) -or $null -eq $npm) {
+    if ([string]::IsNullOrWhiteSpace($pythonCommand) -or $null -eq $npm) {
         Write-Error "Install backend and frontend dependencies before running verification."
         exit 1
     }
@@ -43,7 +58,7 @@ else {
     $smokeCommand = $powerShellCommand
     $smokeArguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        (Join-Path $ProjectRoot "tests\scripts\run-phase8-smoke.ps1")
+        (Join-Path $ProjectRoot "tests\scripts\run-task14-smoke.ps1")
     )
 }
 
@@ -88,7 +103,7 @@ foreach ($name in $liveTestFlags) {
     [Environment]::SetEnvironmentVariable($name, $null, "Process")
 }
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
-    "shieldchain-phase7-verify-" + [guid]::NewGuid()
+    "shieldchain-task14-verify-" + [guid]::NewGuid()
 )
 $systemTemporaryRoot = [System.IO.Path]::GetFullPath(
     [System.IO.Path]::GetTempPath()
@@ -109,8 +124,9 @@ try {
         @{ File = $npmCommand; Arguments = @("run", "typecheck", "--prefix", (Join-Path $ProjectRoot "frontend")) },
         @{ File = $npmCommand; Arguments = @("test", "--prefix", (Join-Path $ProjectRoot "frontend"), "--", "--run") },
         @{ File = $npmCommand; Arguments = @("run", "build", "--prefix", (Join-Path $ProjectRoot "frontend")) },
+        @{ File = $npmCommand; Arguments = @("audit", "--prefix", (Join-Path $ProjectRoot "frontend"), "--audit-level=moderate") },
         @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "upgrade", "head") },
-        @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "downgrade", "base") },
+        @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "downgrade", "-1") },
         @{ File = $pythonCommand; Arguments = @("-m", "alembic", "-c", $alembicConfig, "upgrade", "head") },
         @{ File = $pythonCommand; Arguments = @("-m", "pytest", $evaluationTest, "-q") },
         @{ File = $contractCommand; Arguments = $contractArguments },
@@ -141,7 +157,7 @@ finally {
         $temporaryName = [System.IO.Path]::GetFileName($resolvedTemporaryRoot)
         if (
             $temporaryParent -eq $systemTemporaryRoot -and
-            $temporaryName -match '^shieldchain-phase7-verify-[0-9a-fA-F-]{36}$'
+            $temporaryName -match '^shieldchain-task14-verify-[0-9a-fA-F-]{36}$'
         ) {
             Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
         }

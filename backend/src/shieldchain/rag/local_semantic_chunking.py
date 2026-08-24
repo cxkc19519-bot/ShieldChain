@@ -99,7 +99,10 @@ class DeepSeekSemanticChunker:
             try:
                 response = self._transport(
                     self._url,
-                    {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                    {
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
                     payload,
                 )
                 try:

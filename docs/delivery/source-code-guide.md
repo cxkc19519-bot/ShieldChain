@@ -1,6 +1,6 @@
 # 源代码说明
 
-> 文档状态：当前参考（更新于 2026-08-08）。
+> 文档状态：当前参考（更新于 2026-08-24）。
 
 ## 后端
 
@@ -11,7 +11,8 @@
 - `backend/src/shieldchain/rag/`：文档、分块、检索、Milvus 和评测；
 - `backend/src/shieldchain/assistant/`：会话、摘要记忆、RAG 回答和本地存储；
 - `backend/src/shieldchain/tools/`：可信工具注册、策略、仓储和执行边界；
-- `backend/migrations/`：数据库迁移。
+- `backend/migrations/`：数据库迁移；
+- `tests/scripts/`：离线 smoke、MCP conformance、容器静态合同和最终门禁脚本；
 
 ## 前端
 

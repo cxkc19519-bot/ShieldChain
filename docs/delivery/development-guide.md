@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-后端默认 `127.0.0.1:8000`，前端默认 `127.0.0.1:5173`。`verify.ps1` 按 Ruff、完整后端、前端 lint/type/test/build、Alembic 升降升、RAG 评测、脚本合同和 Phase 7 smoke 顺序失败即停。
+后端默认 `127.0.0.1:8000`，前端默认 `127.0.0.1:5173`。`verify.ps1` 按 Ruff、完整后端、前端 lint/type/test/build、前端依赖审计、Alembic `upgrade → downgrade -1 → upgrade`、RAG 评测、脚本合同和 Task 14 smoke 顺序失败即停。Python 可来自根目录 `.venv`、`backend/.venv` 或 CI PATH。
 
 ## 数据库修改
 

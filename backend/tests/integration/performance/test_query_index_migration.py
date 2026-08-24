@@ -1,10 +1,11 @@
 import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+PYTHON = Path(sys.executable)
 NEW_INDEXES = {
     "ix_investigation_run_incident_created",
     "ix_investigation_run_simulation_created",

@@ -10,6 +10,10 @@ docker compose up -d --build
 
 前端绑定 `127.0.0.1:8080`，后端仅在 Compose 内部网络提供服务。数据库、知识库和助手数据位于持久化卷；`docker compose down` 默认保留数据。
 
+当前 Compose 的 migrate、backend 和 frontend 均使用只读根文件系统与非 root 用户；backend/migrate 的 PID 上限为 256，frontend 为 128。后端 readiness 必须匹配 migration head `20260824_07`，前端 `/healthz` 也有独立健康检查。Nginx 提供 CSP、COOP、CORP、禁止 framing 和精确 `/mcp` 代理边界。
+
+普通停止或应用回滚只使用 `docker compose down`。`docker compose down -v` 会删除项目数据卷，不属于常规回滚；只有在确认目标是一次性测试项目、已经验证 Compose project name 且明确接受数据不可恢复时才允许使用。
+
 ## 服务器覆盖
 
 ```bash
@@ -45,6 +49,22 @@ GET /api/v1/react/runs/{run_id}/trajectory
 ```
 
 当前版本尚未接入真实管理员 RBAC，因此 `ENVIRONMENT=production` 时计划接受/拒绝、工具审批/控制/急停和 ReAct 人工控制全部返回 403。不得通过改成 development 来绕过生产边界；应先实现真实认证主体、角色权限和审计，再经安全评审开放。
+
+当前交付边界必须保持如下记录，不能用本地协议测试替代真实平台验收：
+
+```text
+MCP_CONFORMANCE_TESTED=True
+MIGRATION_ROUNDTRIP_TESTED=True
+POWERSHELL_PARSE_TESTED=True
+STATIC_CONTAINER_CONTRACT_TESTED=True
+DOCKER_RUNTIME_TESTED=False
+WINDOWS_COMBINED_VERIFY_TESTED=False
+NETWORK_ACCESS_TESTED=False
+REAL_MODEL_PLANNING_TESTED=False
+REAL_IDENTITY_PLATFORM_TESTED=False
+REAL_EXTERNAL_MCP_PEER_TESTED=False
+REAL_DEVICE_PATHS_TESTED=False
+```
 
 - 可通过 HTTPS 访问的外部 OAuth/OIDC issuer 和 JWKS；
 - 对外稳定的 MCP resource URI，必须精确到 `/mcp`；
