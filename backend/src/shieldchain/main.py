@@ -1,6 +1,8 @@
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.engine import Engine
@@ -52,6 +54,34 @@ from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
 from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.wazuh.service import WazuhAlertService
+
+logger = structlog.get_logger(__name__)
+_SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
+
+
+async def _periodic_safety_recovery(
+    service,
+    *,
+    tenant_id,
+    stop: asyncio.Event,
+    interval_seconds: float = _SAFETY_RECOVERY_INTERVAL_SECONDS,
+) -> None:
+    if interval_seconds <= 0:
+        raise ValueError("safety recovery interval must be positive")
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await asyncio.to_thread(
+                service.recover_safety_loops,
+                tenant_id=tenant_id,
+                now=datetime.now(UTC),
+            )
+        except Exception as error:
+            logger.warning("safety_loop_periodic_recovery_failed", error_type=type(error).__name__)
 
 
 def create_app(
@@ -107,17 +137,26 @@ def create_app(
     async def lifespan(_app: FastAPI):
         agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
         recover_safety = getattr(trusted_tools, "recover_safety_loops", None)
+        recovery_stop = asyncio.Event()
+        recovery_task = None
         if callable(recover_safety):
             recover_safety(
                 tenant_id=settings.rag_demo_tenant_id,
                 now=datetime.now(UTC),
             )
-        if mcp_remote_discovery is not None and mcp_remote_config is not None:
-            _app.state.mcp_remote_discovery_outcomes = await mcp_remote_discovery.refresh_enabled(
-                mcp_remote_config
+            recovery_task = asyncio.create_task(
+                _periodic_safety_recovery(
+                    trusted_tools,
+                    tenant_id=settings.rag_demo_tenant_id,
+                    stop=recovery_stop,
+                )
             )
-        _app.state.accepting_requests = True
         try:
+            if mcp_remote_discovery is not None and mcp_remote_config is not None:
+                _app.state.mcp_remote_discovery_outcomes = (
+                    await mcp_remote_discovery.refresh_enabled(mcp_remote_config)
+                )
+            _app.state.accepting_requests = True
             if mcp_server is None:
                 yield
             else:
@@ -125,6 +164,9 @@ def create_app(
                     yield
         finally:
             _app.state.accepting_requests = False
+            recovery_stop.set()
+            if recovery_task is not None:
+                await recovery_task
             if owns_engine:
                 engine.dispose()
 

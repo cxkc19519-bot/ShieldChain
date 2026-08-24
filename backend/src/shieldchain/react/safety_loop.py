@@ -10,7 +10,7 @@ from threading import RLock
 from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.agents.domain import AgentRole, BudgetSnapshot
@@ -445,24 +445,50 @@ class ResponseSafetyLoopService:
         stale_after: timedelta = timedelta(seconds=30),
     ) -> tuple[SafetyLoopResult, ...]:
         _require_utc(now)
+        if stale_after < timedelta(0):
+            raise ValueError("stale_after must not be negative")
+        cutoff = now - stale_after
         with self._sessions() as session:
             plan_ids = [
                 UUID(value)
                 for value in session.scalars(
                     select(ResponsePlanRow.id)
-                    .join(ReactLoopRow, ReactLoopRow.run_id == ResponsePlanRow.run_id)
+                    .outerjoin(
+                        ReactLoopRow,
+                        and_(
+                            ReactLoopRow.run_id == ResponsePlanRow.run_id,
+                            ReactLoopRow.tenant_id == ResponsePlanRow.tenant_id,
+                        ),
+                    )
                     .where(
                         ResponsePlanRow.tenant_id == str(tenant_id),
                         ResponsePlanRow.status.in_({"awaiting_execution", "executing"}),
-                        ReactLoopRow.tenant_id == str(tenant_id),
-                        ReactLoopRow.status == ReactLoopStatus.RUNNING.value,
-                        ReactLoopRow.updated_at <= now - stale_after,
+                        or_(
+                            and_(
+                                ReactLoopRow.id.is_(None),
+                                ResponsePlanRow.updated_at <= cutoff,
+                            ),
+                            and_(
+                                ReactLoopRow.status.in_(
+                                    {
+                                        ReactLoopStatus.RUNNING.value,
+                                        ReactLoopStatus.AWAITING_EXECUTION.value,
+                                    }
+                                ),
+                                ReactLoopRow.updated_at <= cutoff,
+                            ),
+                        ),
                     )
+                    .order_by(ResponsePlanRow.updated_at, ResponsePlanRow.id)
+                    .limit(100)
                 )
             ]
         results = []
         for plan_id in plan_ids:
-            results.append(self.advance_plan(tenant_id=tenant_id, plan_id=plan_id, now=now))
+            try:
+                results.append(self.advance_plan(tenant_id=tenant_id, plan_id=plan_id, now=now))
+            except SafetyLoopConflict:
+                continue
         return tuple(results)
 
     def _execute_prepared(

@@ -961,6 +961,50 @@ def test_tool_api_advances_plan_after_acceptance_and_approval(plan_context) -> N
         assert session.scalar(select(ReactLoopRow.status)) == "completed"
 
 
+def test_stale_accepted_plan_without_loop_is_started_by_recovery(plan_context) -> None:
+    service, factory = plan_context
+    accepted = _accept(service)
+
+    recovered = ResponseSafetyLoopService(factory).recover_stale(
+        tenant_id=TENANT,
+        now=NOW + timedelta(seconds=40),
+        stale_after=timedelta(seconds=30),
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0].reason_code == "tool_approval_required"
+    assert recovered[0].loop_status is ReactLoopStatus.AWAITING_EXECUTION
+    with factory() as session:
+        query = session.get(TrustedToolCallRow, str(accepted.calls[0].call_id))
+        assert query is not None and query.status == "succeeded"
+
+
+def test_committed_approval_in_waiting_loop_is_consumed_by_recovery(plan_context) -> None:
+    service, factory = plan_context
+    accepted = _accept(service)
+    adapter = CountingAdapter()
+    safety = ResponseSafetyLoopService(factory, adapters=FixedAdapterProvider(adapter))
+    waiting = safety.advance_plan(
+        tenant_id=TENANT,
+        plan_id=PLAN,
+        now=NOW,
+        adapter=adapter,
+    )
+    assert waiting.loop_status is ReactLoopStatus.AWAITING_EXECUTION
+    _approve_block(factory, accepted)
+
+    recovered = safety.recover_stale(
+        tenant_id=TENANT,
+        now=NOW + timedelta(seconds=40),
+        stale_after=timedelta(seconds=30),
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0].plan_status == "completed"
+    assert recovered[0].loop_status is ReactLoopStatus.COMPLETED
+    assert adapter.calls == 2
+
+
 def test_stale_mutating_execution_recovers_with_query_and_never_replays(plan_context) -> None:
     plan_service, factory = plan_context
     accepted = _accept(plan_service)
