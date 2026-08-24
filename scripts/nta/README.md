@@ -8,6 +8,7 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 
 - `nta_offline_pipeline.py`：离线运行 Suricata/Zeek 并生成 `events.jsonl`。
 - `prepare_ctu13.py`：检查 CTU-13 归档并只提取 PCAP、流标签和说明文件，排除恶意载荷。
+- `prepare_ctu13_splits.py`：适配 BinetFlow 标签，按完整场景生成 development/validation/final-blind 清单，默认只读取 development 标签。
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
@@ -19,6 +20,8 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 比赛方提供的是一个整体 PCAP 语料，仓库所述 development（701）、validation（701）和 final-blind（935）是 ShieldChain 为避免规则过拟合而创建的工程划分，不是比赛方官方划分，也不是在训练模型。完整说明、服务器路径、冻结规则哈希和同门复现流程见 [NTA 数据集划分与独立验收](../../docs/operations/nta-dataset-split-and-evaluation.md)。
 
 外部公开数据集的服务器目录、来源登记、恶意载荷排除和 CTU-13 操作流程见 [公开安全数据集接入说明](../../docs/operations/public-security-datasets.md)。
+
+冻结 v11 在 CTU-13 development 上的首次外部基线、结果边界和 v12 改进方向见 [CTU-13 v11 外部 development 基线报告](../../docs/reports/ctu13-v11-external-development-baseline-20260824.md)。
 
 ## 前置条件
 

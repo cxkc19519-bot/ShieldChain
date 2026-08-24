@@ -86,7 +86,30 @@ python3 scripts/nta/prepare_ctu13.py \
 
 不要使用 `tar -xjf` 绕过这些检查。
 
-## 5. 划分与评测原则
+## 5. 场景划分与标签适配
+
+`scripts/nta/prepare_ctu13_splits.py` 会核对 13 个场景的 PCAP、BinetFlow、README 和提取清单哈希，并以完整场景为最小单元生成 v1 清单：
+
+| 子集 | 场景 | 用途 |
+| --- | --- | --- |
+| development | 1、3、5、6、7、8、12 | 可读取标签，用于外部基线分析和后续 v12 开发 |
+| validation | 2、4、13 | 当前不读取标签，冻结 v12 后独立验证 |
+| final-blind | 9、10、11 | 当前不读取标签，只在方案冻结后一次性验收 |
+
+服务器产物：
+
+- 清单：`/home/user/jhk/security-datasets/splits/ctu-13-v1`；
+- 受限标签：`/home/user/jhk/security-datasets/labels/ctu-13-v1`；
+- 每个子集同时生成 JSON 场景清单和可直接传给 `nta_offline_pipeline.py --sample-list` 的 PCAP 文本清单；
+- validation 与 final-blind 的标签报告尚未生成。
+
+development 已适配 11,617,803 条 BinetFlow：Background 11,294,557、Normal 241,574、Botnet 81,672。适配器保留原始标签，同时归一为 `background`、`normal`、`botnet`、`unknown` 四类；支持十进制、十六进制和 Argus 命名端口，并拒绝未知表头或畸形行。
+
+CTU-13 是公开数据，场景和标签可从公开资料获取，因此这里的 `final-blind` 仅表示 ShieldChain 工程流程中的标签隔离保留集，不是未知私有测试集，也不能据此宣称竞赛级盲测成绩。
+
+冻结 v11 已完成 7 个 development Botnet-only PCAP 外部基线：双引擎成功 7/7，明确产生某类发现 4/7，Suricata 安全告警样本 2/7，待研判 3/7。结果暴露出 IRC 告警重复、Fast-flux 被误归为 WebShell、单端口启发式过强以及 Neris/Donbot/Qvod 缺少安全告警等问题。完整证据、哈希和 v12 方向见 [CTU-13 v11 外部 development 基线报告](../reports/ctu13-v11-external-development-baseline-20260824.md)。
+
+## 6. 划分与评测原则
 
 CTU-13 不能随机按数据包或同一场景中的流拆分到不同集合，否则相同感染主机、地址和行为模式会泄漏到验证集。应按完整场景划分：
 
@@ -101,7 +124,7 @@ CTU-13 的完整混合 PCAP 因隐私原因未公开；官方提供 Botnet PCAP 
 - 引擎失败、解析失败和未关联标签数量；
 - 不能从 Botnet-only PCAP 单独推导生产误报率。
 
-## 6. 后续顺序
+## 7. 后续顺序
 
 1. 完成 CTU-13 归档检查和白名单提取；
 2. 编写 CTU-13 BinetFlow 标签适配器；
