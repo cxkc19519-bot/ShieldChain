@@ -33,6 +33,14 @@
 
 当前自动闭环只使用仓库内无网络能力的离线仿真 Adapter。真实安全平台仍需要单独实现固定 Adapter、凭据隔离、目标 allowlist、回执语义和生产恢复验收。
 
+## 公开投影与控制边界
+
+- `/api/v1/mcp/status`、`/tools`、`/peers` 只显示协议、公共目录和脱敏 peer 健康，不返回 endpoint、凭据引用、Schema 原文或异常；
+- `/api/v1/mcp/runs/{run_id}/calls` 显示 Agent Tool/MCP 只读调用，`/api/v1/tools/runs/{run_id}/calls` 显示可信变更调用，两者不得混为同一执行事实；
+- `/api/v1/response-plans/runs/{run_id}` 与 `/api/v1/response-plans/{plan_id}` 显示公共 revision、动作绑定、风险、审批要求、证据引用、调用和验证状态；不返回原始参数、模型输出或 Adapter 载荷；
+- `accept/reject` 必须携带当前 revision；计划接受不等于高风险工具审批，客户端不能提交工具、参数、风险、审批或策略字段；
+- 当前尚无真实管理员 RBAC，`production` 环境拒绝计划、工具、急停和 ReAct 的全部 REST 写控制。只有接入并测试真实认证、角色授权和审计主体后才能重新开放。
+
 ## 禁止事项
 
 - 模型不得生成或执行任意 Shell、PowerShell、SQL 或远程代码；

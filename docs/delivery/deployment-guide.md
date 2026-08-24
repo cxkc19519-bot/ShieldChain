@@ -1,6 +1,6 @@
 # 部署手册
 
-> 文档状态：当前参考（更新于 2026-08-23）。Docker 与 Wazuh 已在学校服务器环境实际使用；本地 30B 模型仍受权重下载和共享 GPU 可用性约束。MCP OAuth/JWKS 已通过本地协议与配置测试，真实身份平台、TLS 和 Nginx 容器链路尚待授权环境验收。
+> 文档状态：当前参考（更新于 2026-08-24）。Docker 与 Wazuh 已在学校服务器环境实际使用；本地 30B 模型仍受权重下载和共享 GPU 可用性约束。MCP OAuth/JWKS 已通过本地协议与配置测试，真实身份平台、TLS 和 Nginx 容器链路尚待授权环境验收。
 
 ## 基础 Compose
 
@@ -30,6 +30,21 @@ ssh -i C:\Users\a\.ssh\shieldchain_lab_ed25519 -p 1100 `
 ## MCP 生产入口
 
 MCP 默认关闭。ShieldChain 只作为 OAuth Resource Server，不提供登录页、授权服务器、动态客户端注册或 Token 签发。启用前必须准备：
+
+REST 管理状态与 MCP 传输是两条不同路径。以下 REST 投影始终不接收 endpoint、Token 或动态 Schema：
+
+```text
+GET /api/v1/mcp/status
+GET /api/v1/mcp/tools
+GET /api/v1/mcp/peers
+GET /api/v1/mcp/runs/{run_id}/calls
+GET /api/v1/response-plans/runs/{run_id}
+GET /api/v1/response-plans/{plan_id}
+GET /api/v1/tools/runs/{run_id}/calls
+GET /api/v1/react/runs/{run_id}/trajectory
+```
+
+当前版本尚未接入真实管理员 RBAC，因此 `ENVIRONMENT=production` 时计划接受/拒绝、工具审批/控制/急停和 ReAct 人工控制全部返回 403。不得通过改成 development 来绕过生产边界；应先实现真实认证主体、角色权限和审计，再经安全评审开放。
 
 - 可通过 HTTPS 访问的外部 OAuth/OIDC issuer 和 JWKS；
 - 对外稳定的 MCP resource URI，必须精确到 `/mcp`；

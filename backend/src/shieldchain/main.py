@@ -131,6 +131,8 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
     app.state.mcp_server = mcp_server
+    app.state.mcp_remote_config = mcp_remote_config
+    app.state.mcp_snapshot_store = mcp_snapshot_store
     app.state.mcp_remote_discovery = mcp_remote_discovery
     app.state.mcp_remote_runtime = mcp_remote_runtime
     app.state.mcp_remote_discovery_outcomes = ()

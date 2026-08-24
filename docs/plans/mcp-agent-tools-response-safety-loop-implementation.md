@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：实施中（2026-08-24）。Task 0～12 已完成，Task 13～14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
+> 文档状态：实施中（2026-08-24）。Task 0～13 已完成，Task 14 尚待实施。本文是后续开发、评审、测试、迁移和 Git 提交的执行基线。实施过程中如果改变协议版本、安全边界、数据模型或任务顺序，必须先更新本文并在当日开发日志中记录原因、替代方案和迁移影响。
 
 ## 1. 文档目的
 
@@ -33,11 +33,9 @@
 ### 2.2 必须补齐的缺口
 
 - 已有默认关闭的标准 MCP Server、OAuth/JWT Resource Server、调用审计，以及管理员固定的外部 MCP 发现、目录快照和受控只读 Provider；仍缺少外部身份平台/真实 peer 联调和真实平台验收；
-- 当前运营报告正文仍以本地 JSON 文件保存，但新报告已经拥有数据库通用 `run_id`，内置 Agent Tool 调用也已持久化关联；响应计划、审批、执行和验证的关联仍待后续 Task 完成；
-- 当前运营响应规划角色已调用严格计划编译器；但运营报告没有绑定单一 case 和案件级确认证据，因此只生成 `completed_advisory` 零动作计划，案件调查到可执行计划的接线仍待后续 Task；
-- 当前 `operations` 工具目录、角色白名单和执行器写在同一个模块中，不能同时安全服务内部调用、MCP 发布和外部 MCP 导入；
-- 阶段 4～6 数据模型已改为依赖通用 `agent_runs`；对应仓储和编排仍以旧调查路径为主，尚未把当前运营运行接入完整闭环；
-- 尚未形成“动作回执 → 新遥测 → 验证 → 重新规划/人工接管”的生产闭环；
+- 当前运营报告正文仍以本地 JSON 文件保存，但新报告已拥有数据库通用 `run_id`；实时计划、Agent Tool/MCP、可信调用与 ReAct 状态通过独立公开投影核验，历史报告不伪造实时事实；
+- 运营报告没有绑定单一 case 和案件级确认证据，因此仍只生成 `completed_advisory` 零动作计划；案件级计划已可进入离线仿真可信闭环，但未接真实设备；
+- 已形成“离线仿真回执 → 验证 → ReAct 观察 → 重新规划停止/人工接管”闭环；真实设备回执、真实新遥测与生产恢复仍未验收；
 - 入站 MCP 已具备 JWT/JWKS 鉴权、固定 subject 映射、scope、Host、Origin、请求大小和 Nginx 速率边界；外部 MCP 已具备固定配置、SSRF/DNS/redirect/TLS、Schema 快照、结果限制、调用预算、速率、并发、熔断和 bearer_env 凭据隔离；OAuth Client Credentials 和真实 peer 兼容性仍待部署验证；
 - 已有官方 Python SDK 的内存与 ASGI 兼容性基线；尚无完整 conformance、安全门禁和外部平台兼容性验收证据。
 
@@ -1467,6 +1465,21 @@ LIVE_MCP_CALL_LIMIT=0
 - 不渲染 Token、Prompt、endpoint 私有路径、原始载荷或堆栈；
 - 页面明确“建议/批准/执行/验证”差别。
 
+实施与验证记录（2026-08-24）：
+
+- 新增 `GET /api/v1/mcp/status`、`/tools`、`/peers`，只返回启用状态、协议、公共目录、peer 公共 ID、目录 revision、健康和原因码；不返回 endpoint、Token 环境变量、Schema 原文、内部地址或异常；
+- 保留 `GET /api/v1/mcp/runs/{run_id}/calls` 作为 Agent Tool/MCP 只读调用投影；与 `/api/v1/tools/runs/{run_id}/calls` 的可信变更调用明确分离；
+- 新增按 run/plan 查询响应计划的公开 API，展示 revision、公共摘要、动作依赖、证据 ID、服务端风险、审批要求、调用状态和验证结果，不返回 arguments、expected state 原始结构、模型输出或 Adapter 回执；
+- 新增 revision 绑定的 `accept/reject` 路由；revision 过期返回 409，HTTP 客户端不能提交 tenant、principal、tool、arguments、risk、approval 或 policy 字段；计划接受后仍由已有服务进入逐动作策略；
+- 在没有真实管理员 RBAC 的当前版本，所有计划、工具、急停和 ReAct REST 写控制在 `production` 返回 403；开发/测试演示环境继续使用固定演示身份，只读投影保持可用；
+- 处置中心合并计划、Agent Tool/MCP 调用和可信变更调用，逐动作展示“建议 → 计划接受 → 独立工具审批 → 执行 → 验证”，并支持部分数据与空状态；
+- 智能体/ReAct 工作台展示 MCP provider、catalog/schema revision、裁剪回执、工具/验证引用、失败分类、重规划差异和人工控制；运营报告改为生成时快照并链接实时处置与 ReAct 页面，不再静态宣称动作未执行；
+- MCP 状态页由静态健康文案改为运行时校验的真实公开投影；所有新增前端 API 都对对象、数组、数字和枚举做运行时验证，额外私有字段不会进入渲染模型；
+- Task 13 后端相关组合 `409 passed`；新增/变更 API 与计划/闭环聚焦 `28 passed`；前端全量 `29` 个文件、`104 passed`，TypeScript、ESLint 和生产构建通过；
+- 后端历史全量在常规锁定环境得到 `1167 passed, 1 skipped`，另有 `16 failed, 17 errors`，来自旧 `investigation_runner` 合同、Windows 子进程 `git`、历史文档编码/断言等既有基线；可选本地模型测试另因未安装 `torch` 无法收集。Task 14 必须处理或正式归档这些门禁缺口；
+- `npm install` 审计报告 1 个 moderate、5 个 high 上游依赖漏洞；本 Task 未执行可能扩大版本变化的自动修复，Task 14 需评估、升级并复测；
+- 真实身份平台、真实外部 MCP peer、TLS/Nginx、真实设备 Adapter 和真实遥测闭环仍未验收，公开工作台不会改变这些边界。
+
 建议提交：`feat: show mcp plans and safety loop projections`
 
 ### Task 14：一致性、安全门禁和交付
@@ -1496,10 +1509,10 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### 21.1 分支
 
-实际功能开发从本文档评审完成的提交创建。本文档当前使用的独立分支为 `codex/mcp-agent-tools-execution-doc`：
+实际功能开发从本文档评审完成的提交创建。当前连续实施分支为 `codex/mcp-agent-safety-loop`：
 
 ```bash
-git switch codex/mcp-agent-tools-execution-doc
+git switch codex/mcp-agent-safety-loop
 git status --short --branch
 git switch -c codex/mcp-agent-safety-loop
 ```

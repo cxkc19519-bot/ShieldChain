@@ -26,7 +26,7 @@ from .transport_security import (
 )
 
 logger = structlog.get_logger()
-_SUPPORTED_PROTOCOLS = {"2026-07-28", "2025-11-25"}
+SUPPORTED_PROTOCOL_VERSIONS = frozenset({"2026-07-28", "2025-11-25"})
 
 
 class DiscoveryClient(Protocol):
@@ -150,7 +150,7 @@ class McpDiscoveryService:
         seen_cursors: set[str] = set()
         async with self._client_factory(peer, token, before) as client:
             protocol_version = client.protocol_version
-            if protocol_version not in _SUPPORTED_PROTOCOLS:
+            if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
                 raise DiscoveryRejected("mcp_protocol_unsupported")
             for _page in range(self._settings.mcp_remote_max_discovery_pages):
                 result = await client.list_tools(cursor=cursor)

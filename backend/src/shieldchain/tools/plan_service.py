@@ -66,6 +66,7 @@ class ResponsePlanToolService:
         outcome: str,
         reason: str,
         now: datetime,
+        expected_revision: int | None = None,
     ) -> ResponsePlanMutationView:
         if outcome not in {"accepted", "rejected"}:
             raise ValueError("response plan outcome is invalid")
@@ -83,6 +84,8 @@ class ResponsePlanToolService:
             ).scalar_one_or_none()
             if plan is None:
                 raise ResponsePlanDecisionNotFound("response plan not found in tenant")
+            if expected_revision is not None and plan.current_revision != expected_revision:
+                raise ResponsePlanDecisionConflict("response plan decision is stale")
             if outcome == "rejected":
                 return self._reject(session, plan, actor_id, reason, now)
             return self._accept(session, plan, actor_id, reason, now)

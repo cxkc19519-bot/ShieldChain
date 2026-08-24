@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { OperationsReportPage } from './OperationsReportPage'
@@ -40,7 +41,7 @@ describe('OperationsReportPage', () => {
       html: '<p>report</p>',
     }])
 
-    render(<OperationsReportPage />)
+    render(<MemoryRouter><OperationsReportPage /></MemoryRouter>)
 
     expect(await screen.findByText('tool_dependency_failed')).toBeVisible()
     expect(screen.getByText('调用失败 · 未取得可信结果')).toBeVisible()
@@ -77,11 +78,12 @@ describe('OperationsReportPage', () => {
       html: '<p>report</p>',
     }])
 
-    render(<OperationsReportPage />)
+    render(<MemoryRouter><OperationsReportPage /></MemoryRouter>)
 
     expect(await screen.findByText('响应计划')).toBeVisible()
-    expect(screen.getByText('未执行任何计划动作')).toBeVisible()
-    expect(screen.getByText('计划生成不代表接受、审批、执行或验证成功。')).toBeVisible()
+    expect(screen.getByText('请进入处置中心核验')).toBeVisible()
+    expect(screen.getByText(/计划生成不代表接受、审批、执行或验证成功/)).toBeVisible()
     expect(screen.getByText('建议人工复核当前报告线索。')).toBeVisible()
+    expect(screen.getByRole('link', { name: '进入处置中心' })).toHaveAttribute('href', '/response?run_id=00000000-0000-4000-8000-000000000201')
   })
 })

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 
+from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
 from shieldchain.tools.api_service import ToolApiNotFound, TrustedToolApiService
 from shieldchain.tools.approvals import ApprovalError
@@ -16,8 +17,10 @@ from shieldchain.tools.plan_service import (
     ResponsePlanDecisionNotFound,
 )
 from shieldchain.tools.schemas import (
+    ResponsePlanControlInput,
     ResponsePlanDecisionInput,
     ResponsePlanMutationView,
+    ResponsePlanView,
     ToolControlInput,
     ToolDecisionInput,
     ToolEmergencyInput,
@@ -39,6 +42,16 @@ def _authority(request: Request) -> tuple[UUID, UUID]:
     )
 
 
+def _require_operator_control(request: Request) -> None:
+    settings = cast(Settings, request.app.state.settings)
+    if settings.environment == "production":
+        raise ApiError(
+            "operator_auth_required",
+            "Operator controls require an authenticated administrator boundary",
+            403,
+        )
+
+
 @router.get("/tools/runs/{run_id}/calls", response_model=ToolTraceView)
 def trace(run_id: UUID, request: Request) -> ToolTraceView:
     tenant_id, _ = _authority(request)
@@ -50,12 +63,65 @@ def trace(run_id: UUID, request: Request) -> ToolTraceView:
         ) from None
 
 
+@router.get("/response-plans/runs/{run_id}", response_model=ResponsePlanView)
+def response_plan_for_run(run_id: UUID, request: Request) -> ResponsePlanView:
+    tenant_id, _ = _authority(request)
+    try:
+        return _service(request).plan_by_run(tenant_id=tenant_id, run_id=run_id)
+    except ToolApiNotFound:
+        raise ApiError("response_plan_not_found", "Response plan not found", 404) from None
+
+
+@router.get("/response-plans/{plan_id}", response_model=ResponsePlanView)
+def response_plan(plan_id: UUID, request: Request) -> ResponsePlanView:
+    tenant_id, _ = _authority(request)
+    try:
+        return _service(request).plan_by_id(tenant_id=tenant_id, plan_id=plan_id)
+    except ToolApiNotFound:
+        raise ApiError("response_plan_not_found", "Response plan not found", 404) from None
+
+
+@router.post(
+    "/response-plans/{plan_id}/{action}",
+    response_model=ResponsePlanMutationView,
+)
+def control_response_plan(
+    plan_id: UUID,
+    action: str,
+    payload: ResponsePlanControlInput,
+    request: Request,
+) -> ResponsePlanMutationView:
+    _require_operator_control(request)
+    if action not in {"accept", "reject"}:
+        raise ApiError("response_plan_control_invalid", "Unsupported response plan control", 404)
+    tenant_id, actor_id = _authority(request)
+    try:
+        return _service(request).decide_plan(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            plan_id=plan_id,
+            outcome="accepted" if action == "accept" else "rejected",
+            reason=payload.reason,
+            now=datetime.now(UTC),
+            expected_revision=payload.current_revision,
+        )
+    except ResponsePlanDecisionNotFound:
+        raise ApiError("response_plan_not_found", "Response plan not found", 404) from None
+    except ResponsePlanDecisionConflict:
+        raise ApiError(
+            "response_plan_decision_conflict",
+            "Response plan decision is stale or not allowed",
+            409,
+        ) from None
+
+
 @router.post("/tools/plans/{plan_id}/decision", response_model=ResponsePlanMutationView)
 def decide_plan(
     plan_id: UUID,
     payload: ResponsePlanDecisionInput,
     request: Request,
 ) -> ResponsePlanMutationView:
+    _require_operator_control(request)
     tenant_id, actor_id = _authority(request)
     try:
         return _service(request).decide_plan(
@@ -78,6 +144,7 @@ def decide_plan(
 
 @router.post("/tools/calls/{call_id}/approval", response_model=ToolMutationView)
 def approve(call_id: UUID, payload: ToolDecisionInput, request: Request) -> ToolMutationView:
+    _require_operator_control(request)
     tenant_id, actor_id = _authority(request)
     try:
         return _service(request).decide(
@@ -100,6 +167,7 @@ def approve(call_id: UUID, payload: ToolDecisionInput, request: Request) -> Tool
 def control(
     call_id: UUID, action: str, payload: ToolControlInput, request: Request
 ) -> ToolMutationView:
+    _require_operator_control(request)
     if action not in {"pause", "resume", "cancel"}:
         raise ApiError("trusted_tool_control_invalid", "Unsupported tool control", 404)
     tenant_id, actor_id = _authority(request)
@@ -122,6 +190,7 @@ def control(
 
 @router.post("/tools/emergency-stop", response_model=ToolMutationView)
 def emergency(payload: ToolEmergencyInput, request: Request) -> ToolMutationView:
+    _require_operator_control(request)
     tenant_id, actor_id = _authority(request)
     return _service(request).emergency(
         tenant_id=tenant_id,

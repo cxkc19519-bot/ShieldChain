@@ -141,6 +141,18 @@ class McpPeerSnapshot:
     tools: tuple[McpToolSnapshot, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class McpPeerStatusSnapshot:
+    peer_id: str
+    protocol_version: str | None
+    catalog_revision: str
+    status: str
+    reason_code: str | None
+    discovered_at: datetime
+    expires_at: datetime
+    tool_count: int
+
+
 class McpSnapshotStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
@@ -171,6 +183,36 @@ class McpSnapshotStore:
             if row is None or row.status != "accepted" or _utc(row.expires_at) <= _utc(now):
                 return None
             return self._to_snapshot(session, row)
+
+    def latest_status(self, peer_id: str) -> McpPeerStatusSnapshot | None:
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(McpPeerSnapshotRow)
+                .where(McpPeerSnapshotRow.peer_id == peer_id)
+                .order_by(McpPeerSnapshotRow.discovered_at.desc(), McpPeerSnapshotRow.id.desc())
+                .limit(1)
+            )
+            if row is None:
+                return None
+            tool_count = len(
+                tuple(
+                    session.scalars(
+                        select(McpToolSnapshotRow.id).where(
+                            McpToolSnapshotRow.peer_snapshot_id == row.id
+                        )
+                    )
+                )
+            )
+            return McpPeerStatusSnapshot(
+                peer_id=row.peer_id,
+                protocol_version=row.protocol_version,
+                catalog_revision=row.catalog_revision,
+                status=row.status,
+                reason_code=row.error_code,
+                discovered_at=_utc(row.discovered_at),
+                expires_at=_utc(row.expires_at),
+                tool_count=tool_count,
+            )
 
     def save_accepted(
         self,

@@ -435,6 +435,48 @@ def test_plan_accept_creates_linked_calls_without_approving_high_risk_action(
         assert events[0].actor_subject_id == str(ACTOR)
 
 
+def test_plan_decision_rejects_a_stale_public_revision(plan_context) -> None:
+    service, factory = plan_context
+    with pytest.raises(ResponsePlanDecisionConflict, match="stale"):
+        service.decide(
+            tenant_id=TENANT,
+            actor_id=ACTOR,
+            plan_id=PLAN,
+            outcome="accepted",
+            reason="Reviewed an obsolete projection.",
+            now=NOW,
+            expected_revision=1,
+        )
+    with factory() as session:
+        assert session.get(ResponsePlanRow, str(PLAN)).status == "proposed"
+        assert session.scalar(select(func.count()).select_from(TrustedToolCallRow)) == 0
+
+
+def test_public_plan_projection_maps_actions_calls_and_verification_without_raw_payloads(
+    plan_context,
+) -> None:
+    service, factory = plan_context
+    accepted = _accept(service)
+    view = TrustedToolApiService(factory, safety_loop=NoopSafetyLoop()).plan_by_run(
+        tenant_id=TENANT,
+        run_id=RUN,
+    )
+    actions = view.revisions[0].actions
+    assert [item.call_id for item in actions] == [item.call_id for item in accepted.calls]
+    assert [item.call_status for item in actions] == ["approved", "awaiting_approval"]
+    assert actions[1].approval_required is True
+    assert actions[1].verification_tool == "query_firewall_state"
+    payload = view.model_dump_json()
+    for forbidden in (
+        "arguments_json",
+        "expected_state_json",
+        "operator_notes_json",
+        "result_summary",
+        "adapter_result",
+    ):
+        assert forbidden not in payload
+
+
 def test_plan_reject_and_cross_tenant_decision_create_no_calls(plan_context) -> None:
     service, factory = plan_context
     with pytest.raises(ResponsePlanDecisionNotFound):
