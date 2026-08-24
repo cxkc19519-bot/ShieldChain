@@ -548,6 +548,7 @@ curl "http://127.0.0.1:8080/api/v1/integrations/wazuh/cases?limit=20"
 新增公开数据集统一存放在服务器 `/home/user/jhk/security-datasets`，与代码仓库隔离。CTU-13 的来源登记、完整性校验、恶意载荷排除、白名单提取及后续流级评测步骤见 [公开安全数据集接入说明](docs/operations/public-security-datasets.md)。
 
 2026-08-24 的 v12 行为检测候选增加 IRC 会话聚合、异常连接扇出、周期信标、UDP/P2P 识别，并修正 WebShell 与 UDP 反弹连接误归。在冻结的 development 输出上，CTU-13 明确分类覆盖由 4/7 提升到 7/7，自建正常流量安全分类保持 0/180；该结果仍只是开发集覆盖，不是准确率。详见 [v12 行为检测 development 报告](docs/reports/xdr-probe-v12-behavior-development-20260824.md)。
+2026-08-25 完成冻结 v12 的 CTU-13 validation 首次运行：3/3 双引擎成功，机器输出在启封标签前锁定。validation 暴露出通用大 POST 被过度归为 WebShell，v12.1 将其调整为“疑似 HTTP 命令控制或数据外传”；正常 development 仍为 0/180 安全分类，CTU development 保持 7/7 明确分类。v12.1 已使用 validation 调整，不能把 3/3 表述为独立准确率。详见 [v12 validation 验收报告](docs/reports/xdr-probe-v12-validation-20260825.md)。
 
 ### 当前不足与结论边界
 

@@ -60,3 +60,7 @@ v12 只改变双引擎输出之后的分类逻辑，Suricata 规则和镜像没�
 - CTU 结果 SHA-256：`aae86061e6832b2cd2d64945b5e7d85ea6b96d59f5feb5746b1eeede64c76267`
 - Suricata 镜像：`sha256:11269002d0a4ba2628aced92de6e8d04895c0efa4f1318804addcdc7ec76dbf6`
 - Zeek 镜像：`sha256:adf96607966a0ee61800ede343c8c1cfe744bbb0a6e9b600cdc4ffa997e0fda0`
+
+## 8. validation 后续
+
+2026-08-25，冻结 v12 在 CTU-13 validation 上完成首次运行并在启封标签前锁定机器输出。validation 暴露出 Fast-flux-2 被过度归为 WebShell，随后形成 v12.1。v12.1 已使用 validation 调整，因此后续独立成绩必须来自仍未运行的新保留集。完整结果见 [v12 validation 验收报告](xdr-probe-v12-validation-20260825.md)。

@@ -266,6 +266,36 @@ class ClassifyFindingsTests(unittest.TestCase):
 
             self.assertEqual(category, "Suricata 安全规则告警")
 
+    def test_large_generic_script_posts_are_http_command_channel_not_webshell(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(
+                result / "zeek" / "http.log",
+                [
+                    {
+                        "method": "POST",
+                        "host": "unfamiliar.example",
+                        "uri": "/ajax.php",
+                        "request_body_len": 9000,
+                        "response_body_len": 25,
+                    }
+                    for _ in range(3)
+                ],
+            )
+            write_json_lines(result / "zeek" / "conn.log", [])
+            write_json_lines(result / "zeek" / "dns.log", [])
+
+            category, severity, mitre_ids, _, findings = nta.classify_findings(result)
+
+            self.assertEqual(category, "疑似 HTTP 命令控制或数据外传")
+            self.assertEqual(severity, 10)
+            self.assertIn("T1071.001", mitre_ids)
+            self.assertIn("T1041", mitre_ids)
+            self.assertTrue(any("command-channel" in item for item in findings))
+
     def test_repeated_normal_webmail_posts_are_not_webshell(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Path(temp)

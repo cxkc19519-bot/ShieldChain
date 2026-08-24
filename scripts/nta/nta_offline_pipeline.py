@@ -435,6 +435,19 @@ def classify_findings(
     )
     exploit_http = []
     shell_http = []
+    http_command_channels = []
+    command_endpoint_tokens = (
+        "cmd",
+        "command",
+        "shell",
+        "gateway",
+        "console",
+        "upload",
+        "eval",
+        "exec",
+        "manager",
+        "admin",
+    )
     per_uri: dict[str, list[dict[str, object]]] = {}
     transfer_seen = False
     for row in http_rows:
@@ -455,7 +468,10 @@ def classify_findings(
             (".jsp", ".jspx", ".php", ".asp", ".aspx")
         )
         if method == "POST" and body_len >= 8192 and script_path:
-            shell_http.append(uri[:512])
+            if any(token in uri for token in command_endpoint_tokens):
+                shell_http.append(uri[:512])
+            else:
+                http_command_channels.append(uri[:512])
 
     repeated_large_posts = []
     for uri, rows in per_uri.items():
@@ -476,21 +492,7 @@ def classify_findings(
         repeated_small_commands = len(posts) >= 8 and max_response >= 512
         agents = [str(row.get("user_agent") or "").strip() for row in posts]
         missing_agent = bool(posts) and not any(agents)
-        command_endpoint = any(
-            token in uri
-            for token in (
-                "cmd",
-                "command",
-                "shell",
-                "gateway",
-                "console",
-                "upload",
-                "eval",
-                "exec",
-                "manager",
-                "admin",
-            )
-        )
+        command_endpoint = any(token in uri for token in command_endpoint_tokens)
         strong_context = missing_agent or command_endpoint or max_body >= 8192
         if (
             script_endpoint
@@ -501,7 +503,10 @@ def classify_findings(
                 or repeated_small_commands
             )
         ):
-            repeated_large_posts.append(uri[:512])
+            if command_endpoint:
+                repeated_large_posts.append(uri[:512])
+            else:
+                http_command_channels.append(uri[:512])
     shell_http.extend(repeated_large_posts)
 
     suspicious_reverse_ports = set()
@@ -557,6 +562,18 @@ def classify_findings(
             f"Zeek observed {len(set(shell_http))} WebShell-like HTTP endpoint(s)"
         )
         return "疑似 WebShell 交互", 11, ["T1505.003", "T1059"], signatures, findings
+    if http_command_channels:
+        findings.append(
+            "Zeek observed repeated script POST behavior with strong command-channel "
+            f"context on {len(set(http_command_channels))} endpoint(s)"
+        )
+        return (
+            "疑似 HTTP 命令控制或数据外传",
+            10,
+            ["T1071.001", "T1041"],
+            signatures,
+            findings,
+        )
     if suspicious_reverse_ports:
         findings.append(
             "Zeek observed long-lived connection on suspicious post-exploitation "

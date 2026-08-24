@@ -125,3 +125,9 @@ Windows 管理采集链路已经提供：`windows_capture_plan.py` 生成受保�
 v12 在双引擎输出之后增加场景无关的 Zeek 行为聚合，不匹配文件名、家族名、场景编号或固定 IP。新增能力包括 IRC 命令序列聚合、高拒绝率目的地址扇出、周期信标、UDP/P2P 扇出、更严格的 WebShell 上下文，以及仅针对双向 TCP 的反弹连接证据。
 
 在冻结的 development 双引擎输出上，CTU-13 明确分类覆盖达到 7/7，自建正常 development 的安全分类保持 0/180。这是开发集覆盖结果，不是准确率或生产误报率。详见 [v12 行为检测 development 报告](../../docs/reports/xdr-probe-v12-behavior-development-20260824.md)。
+
+## v12.1 validation 候选
+
+冻结 v12 在 CTU-13 validation 场景 2、4、13 上完成首次双引擎运行，3/3 引擎成功，输出在读取标签前锁定。validation 暴露出通用大 HTTP POST 被过度归为 WebShell；v12.1 将非命令型端点上的强异常脚本 POST 调整为“疑似 HTTP 命令控制或数据外传”。
+
+v12.1 在正常 development 保持 0/180 安全分类，CTU development 保持 7/7 明确分类，validation 为 3/3 明确分类。由于 v12.1 已使用 validation 调整，该结果不是独立泛化成绩。详见 [v12 validation 验收报告](../../docs/reports/xdr-probe-v12-validation-20260825.md)。

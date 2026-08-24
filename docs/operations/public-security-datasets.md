@@ -140,3 +140,9 @@ CTU-13 的完整混合 PCAP 因隐私原因未公开；官方提供 Botnet PCAP 
 v12 分类器只使用 CTU-13 development 和自建正常 development 开发，增加 IRC 序列聚合、异常连接扇出、周期信标与 UDP/P2P 行为。对冻结 Zeek/Suricata 输出重新分类后，CTU development 明确分类覆盖由 4/7 提升到 7/7，正常 development 安全分类保持 0/180。
 
 该结果不是准确率，不能证明生产流量可用，也不代表可以启封 validation 或把 v11 final-blind 重新当作盲集。证据和哈希见 [v12 行为检测 development 报告](../reports/xdr-probe-v12-behavior-development-20260824.md)。
+
+## CTU-13 v12 validation 与 v12.1（2026-08-25）
+
+冻结 v12 首次运行 validation 场景 2、4、13，3/3 双引擎成功，机器输出在标签启封前锁定。Fast-flux-2 的通用大 HTTP POST 被归为 WebShell，说明类别过于具体。v12.1 将非命令型脚本端点上的强异常 POST 改为“疑似 HTTP 命令控制或数据外传”，并在正常 development、CTU development 和 validation 上重新回归。
+
+v12.1 使用过 validation 做类别修正，因此 validation 的 3/3 明确分类覆盖不能再作为独立泛化结果。CTU final-blind 仍未运行、未生成标签。完整纪律、证据和哈希见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。

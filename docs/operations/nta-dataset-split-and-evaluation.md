@@ -233,3 +233,9 @@ v11 在源码、规则、流水线、935 条匿名清单和 Suricata/Zeek 镜像
 - 详细报告：`docs/reports/xdr-probe-final-blind-v11-20260823.md`。
 
 final-blind 已消耗。后续新增检测规则必须升级为 v12，并使用 development 或新的外部数据开发；不能再次使用这 935 条宣称独立盲测成绩。
+
+## 10. CTU-13 v12 validation（2026-08-25）
+
+v12 候选冻结后只运行 CTU-13 validation 场景 2、4、13。运行前确认三个划分零重叠，PCAP 大小与 SHA-256 匹配；运行中不读取 BinetFlow 标签；3/3 双引擎成功后先锁定机器输出和完整引擎哈希，再生成 validation 标签报告。
+
+首次输出把 Fast-flux-2 归为 WebShell。validation 诊断后形成 v12.1，将通用大脚本 POST 改为 HTTP 命令控制/数据外传候选。由于 v12.1 已使用 validation 调整，其 validation 结果不是独立成绩。CTU final-blind 场景 9、10、11 仍未运行、未启封标签。详见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
