@@ -31,7 +31,7 @@ security-datasets/
 
 CTU-13 包含 13 个 Botnet 场景，适合补充 ShieldChain 当前较弱的 C2、周期连接、恶意软件下载和僵尸网络检测。它同时可能包含原始恶意样本，不能直接全量解压，更不能执行其中任何载荷。
 
-截至 2026-08-24，服务器已完成归档检查：共发现 66 个成员，白名单选中 39 个文件（13 个 PCAP、13 个 BinetFlow 和 13 个说明文件），预计展开 79,738,362,429 字节；另有 13 个 `.exe` 恶意样本被明确排除。检查记录位于 `/home/user/jhk/security-datasets/registry/ctu-13-inspection.json`。
+截至 2026-08-24，服务器已完成归档检查和白名单提取：共发现 66 个成员，实际提取 39 个文件（13 个 PCAP、13 个 BinetFlow 和 13 个说明文件），合计 79,738,362,429 字节；另有 13 个 `.exe` 恶意样本被明确排除，提取目录内 `.exe` 数为 0。检查记录位于 `/home/user/jhk/security-datasets/registry/ctu-13-inspection.json`，提取报告位于 `/home/user/jhk/security-datasets/registry/ctu-13-extraction.json`，报告与目录内清单的 SHA-256 均为 `8ca9cc5aac01ed5b0dbb856ebf6eb848deb9722744df412e7a66d4bd827c8681`。
 
 ## 3. 下载与校验
 
