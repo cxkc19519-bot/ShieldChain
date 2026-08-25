@@ -238,7 +238,10 @@ def summarize_suricata_alerts(path: Path) -> dict[str, object]:
     if path.exists():
         with path.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
-                if '"event_type":"alert"' not in line and '"event_type": "alert"' not in line:
+                if (
+                    '"event_type":"alert"' not in line
+                    and '"event_type": "alert"' not in line
+                ):
                     continue
                 try:
                     row = json.loads(line)
@@ -306,6 +309,191 @@ def _origin_profiles(conn_rows: Iterable[dict[str, object]]) -> list[dict[str, o
         if str(row.get("conn_state") or "").upper() in {"REJ", "S0"}:
             profile["rejected"] = int(profile["rejected"]) + 1
     return list(profiles.values())
+
+
+def _flood_span(profile: dict[str, object]) -> float:
+    first = _number(profile.get("first_ts"), -1)
+    last = _number(profile.get("last_ts"), -1)
+    return max(last - first, 1.0) if first >= 0 and last >= 0 else 1.0
+
+
+def _destination_transport_profiles(
+    conn_rows: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Aggregate bounded transport evidence without dataset labels or IP lists."""
+    profiles: dict[tuple[str, str], dict[str, object]] = {}
+    for row in conn_rows:
+        destination = str(row.get("id.resp_h") or "")
+        protocol = str(row.get("proto") or "").lower()
+        if not destination or protocol not in {"tcp", "udp", "icmp"}:
+            continue
+        key = (destination, protocol)
+        profile = profiles.setdefault(
+            key,
+            {
+                "destination": destination,
+                "protocol": protocol,
+                "connections": 0,
+                "origins": set(),
+                "destination_ports": set(),
+                "origin_packets": 0,
+                "origin_ip_bytes": 0,
+                "unanswered": 0,
+                "first_ts": None,
+                "last_ts": None,
+            },
+        )
+        profile["connections"] = int(profile["connections"]) + 1
+        origin = str(row.get("id.orig_h") or "")
+        if origin and len(profile["origins"]) < 4096:
+            profile["origins"].add(origin)
+        port = int(_number(row.get("id.resp_p")))
+        if port and len(profile["destination_ports"]) < 4096:
+            profile["destination_ports"].add(port)
+        profile["origin_packets"] = int(profile["origin_packets"]) + int(
+            _number(row.get("orig_pkts"))
+        )
+        profile["origin_ip_bytes"] = int(profile["origin_ip_bytes"]) + int(
+            _number(row.get("orig_ip_bytes"), _number(row.get("orig_bytes")))
+        )
+        if str(row.get("conn_state") or "").upper() in {"REJ", "S0", "OTH"}:
+            profile["unanswered"] = int(profile["unanswered"]) + 1
+        timestamp = _number(row.get("ts"), -1)
+        duration = max(_number(row.get("duration")), 0)
+        if timestamp >= 0:
+            first = profile["first_ts"]
+            last = profile["last_ts"]
+            profile["first_ts"] = (
+                timestamp if first is None else min(float(first), timestamp)
+            )
+            profile["last_ts"] = (
+                timestamp + duration
+                if last is None
+                else max(float(last), timestamp + duration)
+            )
+    return list(profiles.values())
+
+
+def _destination_http_profiles(
+    http_rows: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    profiles: dict[str, dict[str, object]] = {}
+    for row in http_rows:
+        destination = str(row.get("id.resp_h") or "")
+        if not destination:
+            continue
+        profile = profiles.setdefault(
+            destination,
+            {
+                "destination": destination,
+                "requests": 0,
+                "origins": set(),
+                "first_ts": None,
+                "last_ts": None,
+            },
+        )
+        profile["requests"] = int(profile["requests"]) + 1
+        origin = str(row.get("id.orig_h") or "")
+        if origin and len(profile["origins"]) < 4096:
+            profile["origins"].add(origin)
+        timestamp = _number(row.get("ts"), -1)
+        if timestamp >= 0:
+            first = profile["first_ts"]
+            last = profile["last_ts"]
+            profile["first_ts"] = (
+                timestamp if first is None else min(float(first), timestamp)
+            )
+            profile["last_ts"] = (
+                timestamp if last is None else max(float(last), timestamp)
+            )
+    return list(profiles.values())
+
+
+def detect_behavior_findings(result_dir: Path) -> list[dict[str, object]]:
+    """Return independent, composable behavior findings for a single PCAP."""
+    findings: list[dict[str, object]] = []
+    conn_path = result_dir / "zeek" / "conn.log"
+    for profile in _destination_transport_profiles(iter_json_lines(conn_path)):
+        protocol = str(profile["protocol"])
+        connections = int(profile["connections"])
+        origins = len(profile["origins"])
+        ports = len(profile["destination_ports"])
+        packets = int(profile["origin_packets"])
+        span = _flood_span(profile)
+        packet_rate = packets / span
+        unanswered_ratio = int(profile["unanswered"]) / max(connections, 1)
+        distributed_or_multi_flow = origins >= 2 or connections >= 100 or ports >= 50
+        extreme_one_way_flow = (
+            packets >= 100_000 and packet_rate >= 1_000 and unanswered_ratio >= 0.95
+        )
+        transport_flood = (
+            protocol in {"udp", "icmp"}
+            and packets >= 10_000
+            and packet_rate >= 250
+            and (distributed_or_multi_flow or extreme_one_way_flow)
+        )
+        syn_flood = (
+            protocol == "tcp"
+            and connections >= 1_000
+            and origins >= 4
+            and unanswered_ratio >= 0.70
+            and connections / span >= 20
+        )
+        if not (transport_flood or syn_flood):
+            continue
+        label = (
+            "疑似 UDP/ICMP 洪泛拒绝服务"
+            if transport_flood
+            else "疑似 TCP SYN 洪泛拒绝服务"
+        )
+        findings.append(
+            {
+                "finding_id": "dos:transport-flood",
+                "category": label,
+                "severity": 10,
+                "mitre_ids": ["T1498.001"],
+                "confidence": "high",
+                "evidence": {
+                    "protocol": protocol,
+                    "destination": profile["destination"],
+                    "connections": connections,
+                    "distinct_origins": origins,
+                    "distinct_destination_ports": ports,
+                    "origin_packets": packets,
+                    "origin_ip_bytes": int(profile["origin_ip_bytes"]),
+                    "span_seconds": round(span, 3),
+                    "packets_per_second": round(packet_rate, 3),
+                    "unanswered_ratio": round(unanswered_ratio, 4),
+                },
+            }
+        )
+
+    http_path = result_dir / "zeek" / "http.log"
+    for profile in _destination_http_profiles(iter_json_lines(http_path)):
+        requests = int(profile["requests"])
+        origins = len(profile["origins"])
+        span = _flood_span(profile)
+        request_rate = requests / span
+        if requests < 2_000 or origins < 4 or request_rate < 20:
+            continue
+        findings.append(
+            {
+                "finding_id": "dos:http-request-flood",
+                "category": "疑似 HTTP 请求洪泛拒绝服务",
+                "severity": 10,
+                "mitre_ids": ["T1498.001"],
+                "confidence": "high",
+                "evidence": {
+                    "protocol": "http",
+                    "destination": profile["destination"],
+                    "requests": requests,
+                    "distinct_origins": origins,
+                    "span_seconds": round(span, 3),
+                    "requests_per_second": round(request_rate, 3),
+                },
+            }
+        )
+    return findings
 
 
 def _periodic_connections(
@@ -458,8 +646,7 @@ def classify_findings(
             command
             for command in ("user", "nick", "join", "privmsg", "ping", "pong")
             if any(
-                f"irc {command}" in signature.lower()
-                for signature in signature_counts
+                f"irc {command}" in signature.lower() for signature in signature_counts
             )
         }
         irc_alert_count = sum(
@@ -474,9 +661,9 @@ def classify_findings(
             )
             return "疑似 IRC 命令控制", 10, ["T1071"], signatures, findings
 
-    http_rows = json_lines(result_dir / "zeek" / "http.log")
+    http_path = result_dir / "zeek" / "http.log"
     conn_path = result_dir / "zeek" / "conn.log"
-    dns_rows = json_lines(result_dir / "zeek" / "dns.log")
+    dns_count = count_json_records(result_dir / "zeek" / "dns.log")
     exploit_tokens = (
         "jbossmq-httpil",
         "/invoker/jmxinvokerservlet",
@@ -501,13 +688,14 @@ def classify_findings(
         "manager",
         "admin",
     )
-    per_uri: dict[str, list[dict[str, object]]] = {}
+    per_uri: dict[str, dict[str, object]] = {}
     transfer_seen = False
-    for row in http_rows:
+    http_count = 0
+    for row in iter_json_lines(http_path):
+        http_count += 1
         uri = str(row.get("uri") or "").lower()
         agent = str(row.get("user_agent") or "").lower()
         method = str(row.get("method") or "").upper()
-        per_uri.setdefault(uri, []).append(row)
         if "jspspy.jsp" in uri or "/bsh.servlet.bshservlet" in uri:
             shell_http.append(uri[:512])
         if any(token in uri for token in exploit_tokens):
@@ -517,6 +705,7 @@ def classify_findings(
         if "wget" in agent or "curl" in agent or "/shell/" in uri:
             transfer_seen = True
         body_len = int(row.get("request_body_len") or 0)
+        response_len = int(row.get("response_body_len") or 0)
         script_path = uri.split("?", 1)[0].endswith(
             (".jsp", ".jspx", ".php", ".asp", ".aspx")
         )
@@ -525,26 +714,34 @@ def classify_findings(
                 shell_http.append(uri[:512])
             else:
                 http_command_channels.append(uri[:512])
+        if method != "POST":
+            continue
+        stats = per_uri.setdefault(
+            uri,
+            {
+                "posts": 0,
+                "max_body": 0,
+                "max_response": 0,
+                "agent_seen": False,
+            },
+        )
+        stats["posts"] = int(stats["posts"]) + 1
+        stats["max_body"] = max(int(stats["max_body"]), body_len)
+        stats["max_response"] = max(int(stats["max_response"]), response_len)
+        stats["agent_seen"] = bool(stats["agent_seen"]) or bool(agent.strip())
 
     repeated_large_posts = []
-    for uri, rows in per_uri.items():
-        posts = [row for row in rows if str(row.get("method") or "").upper() == "POST"]
-        max_body = max(
-            (int(row.get("request_body_len") or 0) for row in posts),
-            default=0,
-        )
-        max_response = max(
-            (int(row.get("response_body_len") or 0) for row in posts),
-            default=0,
-        )
+    for uri, stats in per_uri.items():
+        post_count = int(stats["posts"])
+        max_body = int(stats["max_body"])
+        max_response = int(stats["max_response"])
         script_endpoint = uri.split("?", 1)[0].endswith(
             (".jsp", ".jspx", ".php", ".asp", ".aspx")
         )
-        repeated_medium_payload = len(posts) >= 3 and max_body >= 2048
-        repeated_large_responses = len(posts) >= 3 and max_response >= 4096
-        repeated_small_commands = len(posts) >= 8 and max_response >= 512
-        agents = [str(row.get("user_agent") or "").strip() for row in posts]
-        missing_agent = bool(posts) and not any(agents)
+        repeated_medium_payload = post_count >= 3 and max_body >= 2048
+        repeated_large_responses = post_count >= 3 and max_response >= 4096
+        repeated_small_commands = post_count >= 8 and max_response >= 512
+        missing_agent = not bool(stats["agent_seen"])
         command_endpoint = any(token in uri for token in command_endpoint_tokens)
         strong_context = missing_agent or command_endpoint or max_body >= 8192
         if (
@@ -561,7 +758,6 @@ def classify_findings(
             else:
                 http_command_channels.append(uri[:512])
     shell_http.extend(repeated_large_posts)
-
     suspicious_reverse_ports = set()
     for row in iter_json_lines(conn_path):
         try:
@@ -663,9 +859,9 @@ def classify_findings(
         return "疑似扫描与僵尸网络传播", 9, ["T1046"], signatures, findings
     if security_alert_count:
         return "Suricata 安全规则告警", 9, [], signatures, findings
-    if http_rows or conn_count or dns_rows:
+    if http_count or conn_count or dns_count:
         findings.append(
-            f"Zeek parsed conn={conn_count}, http={len(http_rows)}, dns={len(dns_rows)}"
+            f"Zeek parsed conn={conn_count}, http={http_count}, dns={dns_count}"
         )
         return "网络行为待研判", 5, [], signatures, findings
     return "未检出有效网络行为", 3, [], signatures, findings
@@ -678,6 +874,30 @@ def build_event(
     category, severity, mitre_ids, signatures, findings = classify_findings(
         result_dir, alert_summary
     )
+    behavior_findings = detect_behavior_findings(result_dir)
+    if behavior_findings:
+        strongest = max(
+            behavior_findings, key=lambda item: int(item.get("severity") or 0)
+        )
+        severity = max(severity, int(strongest["severity"]))
+        mitre_ids = list(
+            dict.fromkeys(
+                [
+                    *mitre_ids,
+                    *(
+                        mitre
+                        for item in behavior_findings
+                        for mitre in item.get("mitre_ids", [])
+                    ),
+                ]
+            )
+        )
+        if category in {
+            "未检出有效网络行为",
+            "网络行为待研判",
+            "Suricata 安全规则告警",
+        }:
+            category = str(strongest["category"])
     return {
         "external_id": f"nta-offline:{pcap_hash}",
         "occurred_at": datetime.now(timezone.utc).isoformat(),
@@ -713,6 +933,7 @@ def build_event(
                 result_dir / "zeek" / "dns.log"
             ),
             "content_findings": findings,
+            "behavior_findings": behavior_findings,
         },
     }
 

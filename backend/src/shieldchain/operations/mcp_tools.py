@@ -29,6 +29,25 @@ def _short(value: str, length: int = 120) -> str:
     return normalized[:length] + ("…" if len(normalized) > length else "")
 
 
+def _behavior_categories(evidence: dict[str, object]) -> tuple[str, ...]:
+    raw = evidence.get("behavior_findings")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return ()
+    if not isinstance(raw, list):
+        return ()
+    categories = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category") or "").strip()
+        if category and category not in categories:
+            categories.append(category)
+    return tuple(categories[:5])
+
+
 class ReadOnlyMcpTool(Protocol):
     name: str
     label: str
@@ -46,7 +65,13 @@ class _BaseWazuhTool:
 
     @staticmethod
     def _view(
-        *, name: str, label: str, start_at: datetime, end_at: datetime, items: list[str], summary: str
+        *,
+        name: str,
+        label: str,
+        start_at: datetime,
+        end_at: datetime,
+        items: list[str],
+        summary: str,
     ) -> McpToolCallView:
         return McpToolCallView(
             name=name,
@@ -82,7 +107,10 @@ class EventMcpTool(_BaseWazuhTool):
                 .limit(50)
             ).all()
         items = [
-            f"{row.tracking_year}-{row.tracking_sequence:04d}｜等级 {row.severity}｜{_short(row.title)}"
+            (
+                f"{row.tracking_year}-{row.tracking_sequence:04d}｜等级 "
+                f"{row.severity}｜{_short(row.title)}"
+            )
             for row in rows
         ]
         return self._view(
@@ -111,10 +139,13 @@ class AlertMcpTool(_BaseWazuhTool):
                 .order_by(WazuhAlertRow.severity.desc(), WazuhAlertRow.occurred_at.desc())
                 .limit(50)
             ).all()
-        items = [
-            f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}"
-            for row in rows
-        ]
+        items = []
+        for row in rows:
+            behaviors = _behavior_categories(row.evidence_json)
+            behavior_text = f"｜行为 {', '.join(behaviors)}" if behaviors else ""
+            items.append(
+                f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}{behavior_text}"
+            )
         critical = sum(1 for row in rows if row.severity >= 12)
         return self._view(
             name=self.name,
@@ -151,7 +182,9 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
                 if normalized in seen:
                     continue
                 seen.add(normalized)
-                findings.append(f"{normalized}｜关联告警等级 {row.severity}｜{_short(row.title, 70)}")
+                findings.append(
+                    f"{normalized}｜关联告警等级 {row.severity}｜{_short(row.title, 70)}"
+                )
                 if len(findings) == 50:
                     break
             if len(findings) == 50:

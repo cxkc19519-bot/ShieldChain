@@ -11,6 +11,7 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 - `prepare_ctu13_splits.py`：适配 BinetFlow 标签，按完整场景生成 development/validation/final-blind 清单，默认只读取 development 标签。
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
+- `slice_pcap_time.py`：单次流式读取经典 PCAP，按带时区的绝对时间窗口生成可复现切片与清单，不加载整个文件。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
 当前 v11 规则集包含 95 条 ShieldChain 自定义 Suricata 规则定义（其中 2 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。935 条 final-blind 已一次性完成：754 条得到明确分类、737 条产生安全告警、181 条待研判、双引擎失败 0。这是检测覆盖率，不是准确率。详细结果见 [v11 最终盲测报告](../../docs/reports/xdr-probe-final-blind-v11-20260823.md)。
@@ -75,6 +76,22 @@ python3 scripts/nta/generate_benign_fixture.py /tmp/benign-business.pcap
 - `events.jsonl`：可导入 ShieldChain 的最小化事件
 - `manifest.json`：规则哈希、样本数量和分类统计
 - 每个样本的 Zeek/Suricata 日志与引擎输出
+
+## 大型 PCAP 时间切片
+
+对几十 GB 的公开捕获文件，不应把全量 HTTP/连接日志一次载入内存。`nta_offline_pipeline.py` 的 Suricata、HTTP、DNS 与 Zeek 分类统计均采用流式读取；需要按官方攻击时间表取样时，使用 `slice_pcap_time.py` 在一次顺序扫描中同时写出多个窗口：
+
+```bash
+python3 scripts/nta/slice_pcap_time.py \
+  /path/to/source.pcap /path/to/slices \
+  --window benign-a,2018-02-21T08:30:00+00:00,2018-02-21T08:40:00+00:00 \
+  --window udp-a,2018-02-21T10:15:00+00:00,2018-02-21T10:25:00+00:00 \
+  --manifest /path/to/slice-manifest.json
+```
+
+时间窗口采用左闭右开区间，必须写明 UTC 偏移，名称只允许字母、数字、点、下划线和连字符。工具仅接受经典 PCAP；遇到 PCAPNG 会明确拒绝，不能静默误切。默认情况下，包头或包体不完整也会使切片失败。只有已确认损坏仅位于文件尾部时，才可显式增加 `--allow-truncated-tail`；此时清单会写入 `truncated_tail_discarded: true`，不能把丢弃行为隐藏起来。输出仍是原始网络数据，只能保存在受控数据目录，不能提交 Git。
+
+v13 事件在兼容原有 `rule_id` 主分类的同时，在 `evidence.behavior_findings` 中记录可组合的次级行为发现。这样同一捕获可同时保留 C2 通道和 UDP/ICMP、TCP SYN 或 HTTP 请求洪泛证据；若原主分类只是“待研判”，最强行为发现才会提升为主分类。检测使用连接数、数据包速率、来源数量、失败比例等观测量，不使用文件名、场景编号、固定 IP 或官方标签作为特征。
 
 ## 导入 ShieldChain
 

@@ -154,3 +154,36 @@ v12.1.1 是 v12.1 的纯性能修订：Suricata JSONL 和 Zeek conn.log 改为�
 场景 9、10、11 只运行一次，3/3 双引擎成功；事件、清单、日志以及 56 个原始引擎文件哈希在标签启封前锁定。三场景均给出明确安全分类，公开 BinetFlow 标签也均含 Botnet 流。Rbot 场景的 IRC C2 分类与公开说明一致，但 UDP/ICMP Flood 动作没有进入主分类；Neris 的 HTTP 细分类只能视为候选结论。
 
 公开 PCAP 是 Botnet-only，BinetFlow 是包含 Background、Normal、Botnet 的完整混合流量，二者无法逐流直接对齐。因此本轮只能报告 3/3 场景级恶意活动覆盖，不能报告逐流准确率或召回率。所有 PCAP 和约 108.09 GB 引擎结果均保存在服务器 /home/user/jhk/security-datasets，未下载到本机。详见 [v12.1.1 final-blind 验收报告](../reports/xdr-probe-v1211-final-blind-20260825.md)。
+
+## CSE-CIC-IDS2018 v13 DDoS 行为验收
+
+v13 使用加拿大网络安全研究院（CIC）官方 [CSE-CIC-IDS2018](https://www.unb.ca/cic/datasets/ids-2018.html) 原始 PCAP，目标是在现有 C2 主分类之外独立输出拒绝服务动作，而不是根据文件名或场景说明猜测攻击。官方页面说明数据集含真实格式的 PCAP、正常背景流量和 DDoS 场景，并按攻击时间、来源、目标、端口和协议标注流量。
+
+本轮在读取任何检测结果前固定以下角色：
+
+- development：2018-02-20，LOIC-HTTP（10:12–11:17）和 LOIC-UDP（13:13–13:32），允许检查结果并调整通用阈值；
+- independent holdout：2018-02-21，LOIC-UDP（10:09–10:43）和 HOIC（14:05–15:05），候选代码、阈值、测试与哈希冻结前禁止检查任何检测输出或包派生特征；
+- benign holdout：从 2018-02-21 两个攻击窗口至少相隔 30 分钟的时间段按预先固定规则取样，和攻击切片一同只运行一次。
+
+最初只把 CTU-13 场景 4 作为 development；实测其公开 Botnet-only PCAP 能看到 IRC C2，却没有保留洪泛动作包。因此在候选冻结前通过补充协议增加 2018-02-20 正样本开发集，2018-02-21 的留出角色保持不变。协议证据保存在服务器：
+
+- `/home/user/jhk/security-datasets/registry/v13-protocol-frozen-20260825.json`，SHA-256 `4735e94ce9be273154c93db8739f7d89fd2323e240ef8a83fc911ec1e25fbf23`；
+- `/home/user/jhk/security-datasets/registry/v13-protocol-addendum-1-20260825.json`，SHA-256 `150d1e831036ce7e99c3390015dc40dc0a34f63dc6127088e3bbf7ea522b9fea`。
+
+原始包只保存在服务器 `/home/user/jhk/security-datasets/downloads/cse-cic-ids2018`，不会下载到本机或提交 Git。开发日官方对象约 44.4 GB，留出日官方对象约 53.5 GB。下载支持断点和分段长度校验，完整包另算 SHA-256；解压后使用 `scripts/nta/slice_pcap_time.py` 一次顺序扫描写出带绝对时区的窗口切片与清单。
+
+检测特征明确禁止使用文件名、日期、场景编号、固定攻击者/目标 IP 和官方标签。v13 只使用 Zeek/Suricata 观测到的连接数、包速率、来源数量、目标集中度、端口分布、失败比例和 HTTP 请求速率；事件通过 `evidence.behavior_findings` 保存可组合发现。
+
+开发日原始包的最后一条 PCAP 记录不完整。严格模式首先发现并拒绝该文件；确认损坏只在尾部后，使用显式 `--allow-truncated-tail` 重新切片，并在清单保留 `truncated_tail_discarded: true`。这不是静默修复。最终得到 3 个 HTTP 攻击窗口、3 个 UDP 攻击窗口和 3 个非攻击时间对照窗口，共约 1.43 GB；14:00 对照窗口为空，已从样本清单排除。
+
+候选冻结前的开发结果如下：
+
+- 3/3 HTTP 窗口输出“疑似 HTTP 请求洪泛拒绝服务”；
+- 3/3 UDP 窗口输出“疑似 UDP/ICMP 洪泛拒绝服务”；
+- 3/3 非攻击时间对照窗口没有产生洪泛行为发现；其中一个窗口命中公开威胁情报信誉 IP 规则，该规则告警与洪泛行为分开保留；
+- 180 条隔离正常 development 再分类的洪泛行为命中为 0/180；
+- 7 个 CTU-13 C2/P2P development 输出的洪泛行为命中为 0/7，原有 C2/P2P 分类未被新动作覆盖。
+
+候选代码 SHA-256 为 `f69ecc97a62528308ed77b562385988ff720a1bc88f1a001d9c5c5e204da794e`，规则 SHA-256 为 `21a4711aabb5358c325ff52f1aaacf453a8d8fca38ebfaf05f8b96d39ba26f0af`。完整冻结清单保存在服务器 `/home/user/jhk/security-datasets/registry/v13-candidate-freeze-20260825`。上述结果只是开发验收和误报护栏，不是独立留出集成绩或生产误报率；2018-02-21 留出集只能在冻结后运行一次。
+
+独立留出集已在冻结后一次性完成：3/3 LOIC-UDP 窗口输出 UDP/ICMP 洪泛，3/3 HOIC 窗口输出 HTTP 请求洪泛，2/2 非攻击时间对照窗口没有洪泛行为发现，双引擎失败为 0。预先固定的 `benign-1200` 窗口为空，未作为样本运行。详细的完整性处理、行为指标、结果哈希和限制见 [v13 独立留出集验收报告](../reports/xdr-probe-v13-cse-cic-ids2018-holdout-20260825.md)。

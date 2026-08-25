@@ -65,6 +65,154 @@ class StreamingSummaryTests(unittest.TestCase):
                 summary["signature_counts"]["ShieldChain suspicious behavior"], 2
             )
 
+
+class BehaviorFindingTests(unittest.TestCase):
+    def test_udp_flood_is_an_independent_behavior_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "ts": 1 + index / 100,
+                        "id.orig_h": f"10.0.0.{index % 5 + 1}",
+                        "id.resp_h": "192.0.2.10",
+                        "id.resp_p": 10_000 + index,
+                        "proto": "udp",
+                        "conn_state": "OTH",
+                        "orig_pkts": 200,
+                        "orig_ip_bytes": 24_000,
+                    }
+                    for index in range(100)
+                ],
+            )
+
+            findings = nta.detect_behavior_findings(result)
+
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["finding_id"], "dos:transport-flood")
+            self.assertIn("T1498.001", findings[0]["mitre_ids"])
+
+    def test_extreme_single_flow_icmp_flood_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "ts": 1,
+                        "duration": 60,
+                        "id.orig_h": "10.0.0.1",
+                        "id.resp_h": "192.0.2.10",
+                        "proto": "icmp",
+                        "conn_state": "OTH",
+                        "orig_pkts": 150_000,
+                        "orig_ip_bytes": 12_600_000,
+                    }
+                ],
+            )
+
+            findings = nta.detect_behavior_findings(result)
+
+            self.assertEqual(findings[0]["finding_id"], "dos:transport-flood")
+            self.assertEqual(findings[0]["evidence"]["protocol"], "icmp")
+
+    def test_large_single_transfer_is_not_a_flood(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "ts": 1,
+                        "duration": 120,
+                        "id.orig_h": "10.0.0.1",
+                        "id.resp_h": "192.0.2.10",
+                        "id.resp_p": 443,
+                        "proto": "tcp",
+                        "conn_state": "SF",
+                        "orig_pkts": 100_000,
+                        "orig_ip_bytes": 100_000_000,
+                    }
+                ],
+            )
+
+            self.assertEqual(nta.detect_behavior_findings(result), [])
+
+    def test_http_flood_promotes_pending_primary_and_keeps_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            write_json_lines(result / "suricata" / "eve.json", [])
+            write_json_lines(result / "zeek" / "conn.log", [])
+            write_json_lines(result / "zeek" / "dns.log", [])
+            write_json_lines(
+                result / "zeek" / "http.log",
+                [
+                    {
+                        "ts": index / 50,
+                        "id.orig_h": f"10.0.0.{index % 5 + 1}",
+                        "id.resp_h": "192.0.2.20",
+                        "method": "GET",
+                        "uri": "/",
+                    }
+                    for index in range(2_000)
+                ],
+            )
+
+            event = nta.build_event(Path("opaque.pcap"), "b" * 64, result, 0, 0)
+
+            self.assertEqual(
+                event["rule_id"], "nta-baseline:疑似 HTTP 请求洪泛拒绝服务"
+            )
+            self.assertIn("T1498.001", event["mitre_ids"])
+            self.assertEqual(
+                event["evidence"]["behavior_findings"][0]["finding_id"],
+                "dos:http-request-flood",
+            )
+
+    def test_c2_primary_is_not_overwritten_by_secondary_flood(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp)
+            alerts = []
+            for command in ("USER", "NICK", "JOIN", "PRIVMSG"):
+                alerts.extend(
+                    {
+                        "event_type": "alert",
+                        "alert": {"signature": f"ET CHAT IRC {command} command"},
+                    }
+                    for _ in range(3)
+                )
+            write_json_lines(result / "suricata" / "eve.json", alerts)
+            write_json_lines(result / "zeek" / "http.log", [])
+            write_json_lines(result / "zeek" / "dns.log", [])
+            write_json_lines(
+                result / "zeek" / "conn.log",
+                [
+                    {
+                        "ts": 1 + index / 100,
+                        "id.orig_h": "10.0.0.4",
+                        "id.resp_h": "192.0.2.30",
+                        "id.resp_p": 20_000 + index,
+                        "proto": "udp",
+                        "conn_state": "OTH",
+                        "orig_pkts": 200,
+                    }
+                    for index in range(100)
+                ],
+            )
+
+            event = nta.build_event(Path("opaque.pcap"), "c" * 64, result, 0, 0)
+
+            self.assertEqual(event["rule_id"], "nta-baseline:疑似 IRC 命令控制")
+            self.assertEqual(
+                event["evidence"]["behavior_findings"][0]["finding_id"],
+                "dos:transport-flood",
+            )
+
+
 class ClassifyFindingsTests(unittest.TestCase):
     def test_sql_injection_alert_gets_database_category(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -42,7 +42,10 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
                 source_ip=None,
                 destination_ip=None,
                 destination_port=None,
-                evidence_json={"pcap_filename": "CVE-2026-1234.pcap"},
+                evidence_json={
+                    "pcap_filename": "CVE-2026-1234.pcap",
+                    "behavior_findings": ('[{"category":"疑似 UDP/ICMP 洪泛拒绝服务"}]'),
+                },
                 received_at=datetime(2026, 8, 1, tzinfo=UTC),
             )
         )
@@ -57,6 +60,7 @@ def test_operations_report_uses_ingested_alerts_and_disables_simulation_endpoint
         body = response.json()
         calls = {item["name"]: item for item in body["tool_calls"]}
         assert calls["security.alerts.list"]["result_count"] == 1
+        assert "疑似 UDP/ICMP 洪泛拒绝服务" in calls["security.alerts.list"]["items"][0]
         assert calls["security.vulnerabilities.list"]["items"][0].startswith("CVE-2026-1234")
         assert len(body["stages"]) == 6
     engine.dispose()
