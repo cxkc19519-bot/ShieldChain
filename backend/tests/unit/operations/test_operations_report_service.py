@@ -86,6 +86,13 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     assert all(tool.calls == 1 for tool in tools)
     assert "<script>" not in report.html
     assert "&lt;script&gt;" in report.html
+    assert [step.phase for step in report.reasoning_trace[:2]] == ["observe", "correlate"]
+    assert report.reasoning_trace[-1].phase == "close"
+    assert {item.status for item in report.cross_domain} == {"observed", "not_observed"}
+    knowledge_domain = next(item for item in report.cross_domain if item.key == "knowledge")
+    assert knowledge_domain.status == "not_observed"
+    assert report.closure.status == "awaiting_approval"
+    assert "结构化推理链" in report.markdown
     assert agent.get(report.id) == report
 
 
@@ -175,6 +182,42 @@ def test_specialist_model_selects_only_needed_tool() -> None:
     assert alert_tool["do_not_use_when"]
     assert alert_tool["limitations"]
     assert "选择工具前必须阅读" in requests[0][0]
+
+
+def test_rag_observation_is_projected_into_cross_domain_trace() -> None:
+    team = _team(Settings(_env_file=None, deepseek_api_key="test-key"))
+    broker = _ToolBroker((), datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC))
+    responses = iter(
+        [
+            {
+                "action": "call_tool",
+                "tool": "knowledge.rag.retrieve",
+                "query": "ATT&CK lateral movement",
+                "public_reason": "补充技战术依据",
+            },
+            {
+                "action": "finish",
+                "summary": "已获得可引用知识依据。",
+                "public_reason": "知识依据已足够",
+            },
+        ]
+    )
+
+    async def chat(_system, _user, **_kwargs):
+        return SimpleNamespace(
+            content=json.dumps(next(responses), ensure_ascii=False), model="deepseek-test"
+        )
+
+    team._chat = chat  # type: ignore[method-assign]
+    team._retrieve = lambda _query: "ATT&CK T1021 远程服务"  # type: ignore[method-assign]
+    summary, model, _reason = asyncio.run(
+        team._run_role(_SPECIALISTS["knowledge_retrieval"], broker, [])
+    )
+
+    assert "知识依据" in summary
+    assert model == "deepseek-test"
+    assert [item.name for item in broker.results] == ["knowledge.rag.retrieve"]
+    assert broker.results[0].result_count == 1
 
 
 def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:

@@ -15,7 +15,46 @@ export type ReportStage = {
   detail: string
 }
 
-export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string }
+export type AgentRoleRun = {
+  role: string
+  label: string
+  status: 'completed' | 'fallback'
+  summary: string
+  handoff_to: string | null
+  iteration: number
+  decision_reason: string
+  evidence_domains: string[]
+}
+
+export type ReasoningStep = {
+  sequence: number
+  phase: string
+  title: string
+  detail: string
+  evidence: string[]
+  domains: string[]
+  status: 'completed' | 'pending' | 'blocked'
+  confidence: number
+}
+
+export type CrossDomainEvidence = {
+  key: string
+  label: string
+  source: string
+  result_count: number
+  status: 'observed' | 'not_observed'
+  summary: string
+}
+
+export type ClosureLoop = {
+  status: 'analysis_complete' | 'awaiting_approval' | 'verification_pending' | 'closed'
+  observed: string
+  decision: string
+  action: string
+  verification: string
+  feedback: string
+  human_approval_required: boolean
+}
 
 export type OperationsReport = {
   id: string
@@ -27,6 +66,9 @@ export type OperationsReport = {
   stages: ReportStage[]
   collaboration: AgentRoleRun[]
   tool_calls: ToolCall[]
+  reasoning_trace: ReasoningStep[]
+  cross_domain: CrossDomainEvidence[]
+  closure: ClosureLoop
   markdown: string
   html: string
 }

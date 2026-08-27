@@ -18,6 +18,13 @@
 .agent-reasons code { padding: .3rem .5rem; color: var(--color-warning); background: #fff4d7; border-radius: .4rem; }
 .agent-handoffs, .agent-citations { display: grid; gap: .65rem; padding-left: 1.25rem; }
 .agent-citations li { display: flex; flex-wrap: wrap; gap: .65rem; }
+.agent-public-reasoning { padding: var(--space-4); border: 1px solid #c5e0f4; border-radius: var(--radius-control); background: #fbfdff; }
+.agent-public-reasoning > p { color: var(--color-text-muted); }
+.agent-public-reasoning ol { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+.agent-public-reasoning li { display: grid; grid-template-columns: 1.8rem minmax(0, 1fr); gap: .65rem; align-items: start; padding: .65rem; border-left: 3px solid var(--color-accent); background: #fff; }
+.agent-public-reasoning li > span { display: grid; place-items: center; width: 1.65rem; height: 1.65rem; border-radius: 50%; color: #fff; background: var(--color-accent); font-size: .8rem; font-weight: 700; }
+.agent-public-reasoning li strong { color: var(--color-accent); }
+.agent-public-reasoning li p { margin: .25rem 0 0; color: var(--color-text-muted); }
 .collaboration-workspace, .react-workspace { padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface-strong); }
 .react-timeline { display: grid; gap: var(--space-3); padding-left: 1.25rem; }
 .react-timeline li { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 3px solid var(--color-accent); background: white; }

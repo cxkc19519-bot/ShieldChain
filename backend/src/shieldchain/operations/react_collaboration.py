@@ -222,6 +222,14 @@ class _ToolBroker:
             self._order.append(name)
         return self._cache[name]
 
+    def record(self, item: McpToolCallView) -> McpToolCallView:
+        """Record a read-only observation produced by a non-windowed tool such as RAG."""
+
+        if item.name not in self._cache:
+            self._cache[item.name] = item
+            self._order.append(item.name)
+        return self._cache[item.name]
+
     def public_facts(self, limit: int = 4500) -> str:
         if not self._order:
             return "尚未调用运营数据工具。"
@@ -280,6 +288,13 @@ class RealDataAgentTeam:
                 handoff_to=None,
                 iteration=iteration,
                 decision_reason=tool_reason,
+                evidence_domains=[
+                    "知识库"
+                    if name == _RAG
+                    else _TOOL_CATALOG[name]["label"]
+                    for name in definition.allowed_tools
+                    if name in _TOOL_CATALOG
+                ],
             )
             results.append(current)
             next_role: str | None = None
@@ -396,6 +411,18 @@ class RealDataAgentTeam:
                     query = " ".join(str(parsed.get("query", "")).split())[:1000]
                     observation = await asyncio.to_thread(
                         self._retrieve, query or handoffs or definition.responsibility
+                    )
+                    empty = observation.startswith(("本地知识库为空", "未检索到", "RAG 暂不可用"))
+                    broker.record(
+                        McpToolCallView(
+                            name=_RAG,
+                            label=_TOOL_LABELS[_RAG],
+                            status="empty" if empty else "succeeded",
+                            arguments={"query": query or definition.responsibility, "limit": 3},
+                            result_count=0 if empty else 1,
+                            summary=observation[:1800],
+                            items=[],
+                        )
                     )
                     observations.append(f"{_TOOL_LABELS[_RAG]}：{observation}")
                 else:
