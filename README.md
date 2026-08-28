@@ -708,6 +708,8 @@ docker compose -f compose.yaml -f compose.local-llm.yaml config --quiet
 - [开发路线](docs/plans/development-roadmap.md)
 - [Windows 本地开发](docs/operations/local-development.md)
 - [Wazuh 只读告警接入](docs/operations/wazuh-read-only-ingestion.md)
+- [MCP、响应规划与安全闭环统一实施方案](docs/plans/mcp-agent-tools-response-safety-loop-implementation.md)
+- [MCP 与安全闭环加固合并交接说明](docs/delivery/mcp-safety-hardening-merge-handoff-20260828.md)
 - [真实模型与 RAG 验收](docs/reports/live-model-rag-acceptance-2026-07-28.md)
 - [安全标准](docs/standards/security-standards.md)
 
