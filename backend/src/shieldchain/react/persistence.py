@@ -21,8 +21,10 @@ from shieldchain.db.base import Base
 _LOOP_STATUSES = "'running','awaiting_execution','awaiting_human','completed','terminated'"
 _SOURCES = "'role','tool_call','tool_verification','control','evidence'"
 _CATEGORIES = (
-    "'verification_failed','verification_inconclusive','execution_failed',"
-    "'execution_outcome_unknown','approval_rejected','emergency_stopped','automation_disabled',"
+    "'plan_accepted','completed','verification_failed','verification_inconclusive',"
+    "'execution_failed',"
+    "'execution_outcome_unknown','approval_rejected','approval_expired','emergency_stopped',"
+    "'automation_disabled',"
     "'dependency_unavailable','evidence_insufficient','evidence_conflict','budget_exhausted','loop_detected','unclassified_failure'"
 )
 _DECISIONS = (
@@ -37,7 +39,7 @@ class ReactLoopRow(Base):
         UniqueConstraint("run_id", name="uq_react_loop_run"),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_react_loop_run_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_react_loop_revision"),

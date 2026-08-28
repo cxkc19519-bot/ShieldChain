@@ -41,10 +41,15 @@ def _view(row: dict[str, object]) -> AssistantConversationView:
 
 @router.get("/assistant/conversations", response_model=AssistantConversationListResponse)
 def conversations(request: Request) -> AssistantConversationListResponse:
-    return AssistantConversationListResponse(items=[_view(row) for row in _service(request).conversations()])
+    return AssistantConversationListResponse(
+        items=[_view(row) for row in _service(request).conversations()]
+    )
 
 
-@router.get("/assistant/conversations/{conversation_id}", response_model=AssistantConversationDetail)
+@router.get(
+    "/assistant/conversations/{conversation_id}",
+    response_model=AssistantConversationDetail,
+)
 def conversation(conversation_id: UUID, request: Request) -> AssistantConversationDetail:
     try:
         row = _service(request).conversation(conversation_id)
@@ -57,7 +62,10 @@ def conversation(conversation_id: UUID, request: Request) -> AssistantConversati
     )
 
 
-@router.patch("/assistant/conversations/{conversation_id}/title", response_model=AssistantConversationView)
+@router.patch(
+    "/assistant/conversations/{conversation_id}/title",
+    response_model=AssistantConversationView,
+)
 def rename_conversation(
     conversation_id: UUID, payload: AssistantConversationRenameRequest, request: Request
 ) -> AssistantConversationView:
@@ -67,7 +75,10 @@ def rename_conversation(
         raise ApiError("conversation_not_found", "Conversation not found", 404) from None
 
 
-@router.patch("/assistant/conversations/{conversation_id}/pin", response_model=AssistantConversationView)
+@router.patch(
+    "/assistant/conversations/{conversation_id}/pin",
+    response_model=AssistantConversationView,
+)
 def pin_conversation(
     conversation_id: UUID, payload: AssistantConversationPinRequest, request: Request
 ) -> AssistantConversationView:

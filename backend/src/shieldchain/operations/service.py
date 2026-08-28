@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 from datetime import UTC, datetime, timedelta
@@ -10,17 +11,28 @@ from uuid import UUID, uuid4
 import httpx
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
+from shieldchain.mcp_remote.persistence import AgentRunMcpSnapshotRow
+from shieldchain.mcp_remote.runtime import McpRemoteRuntime, RemoteRunCatalog
+from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
+from shieldchain.operations.persistence import OperationsRunRow
+from shieldchain.response_planning.compiler import ResponsePlanCompiler
 
-from .mcp_tools import ReadOnlyMcpTool, standard_mcp_tools
+from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
+from .response_plan_agent import OperationsResponsePlanAgent
 from .schemas import (
+    ClosureLoopView,
+    CrossDomainEvidenceView,
     McpToolCallView,
     OperationsReportRequest,
     OperationsReportView,
+    ReasoningStepView,
     ReportStageView,
+    ResponsePlanReferenceView,
 )
 
 
@@ -74,7 +86,7 @@ class OperationsReportStore:
 
 
 class SecurityOperationsReportAgent:
-    """Grounded security-operations agent with model-selected read-only MCP tools."""
+    """Grounded security-operations agent with model-selected read-only tools."""
 
     agent_name = "安全运营报告智能体"
 
@@ -87,16 +99,36 @@ class SecurityOperationsReportAgent:
         store: OperationsReportStore,
         knowledge,
         principal_id: UUID,
-        tools: tuple[ReadOnlyMcpTool, ...] | None = None,
+        tools: tuple[ReadOnlyAgentTool, ...] | None = None,
+        audit_store: AgentToolAuditStore | None = None,
+        remote_runtime: McpRemoteRuntime | None = None,
+        response_plan_agent: OperationsResponsePlanAgent | None = None,
     ) -> None:
         self._settings = settings
+        self._session_factory = session_factory
+        self._tenant_id = tenant_id
+        self._principal_id = principal_id
+        self._audit_store = audit_store or AgentToolAuditStore(session_factory)
         self._store = store
-        self._tools = tools or standard_mcp_tools(session_factory, tenant_id)
+        self._tools = tools or standard_agent_tools(session_factory, tenant_id)
+        self._remote_runtime = remote_runtime
+        self._response_plan_agent = response_plan_agent or OperationsResponsePlanAgent(
+            settings,
+            ResponsePlanCompiler(session_factory),
+            session_factory,
+            tenant_id=tenant_id,
+        )
         self._team = RealDataAgentTeam(
-            settings, knowledge, tenant_id=tenant_id, principal_id=principal_id
+            settings,
+            knowledge,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            response_plan_agent=self._response_plan_agent,
         )
 
-    async def generate(self, payload: OperationsReportRequest) -> OperationsReportView:
+    async def generate(
+        self, payload: OperationsReportRequest, *, request_id: str | None = None
+    ) -> OperationsReportView:
         now = datetime.now(UTC)
         end_at = self._utc(payload.end_at or now)
         start_at = self._utc(payload.start_at or (end_at - timedelta(hours=24)))
@@ -105,6 +137,51 @@ class SecurityOperationsReportAgent:
         if end_at - start_at > timedelta(days=31):
             raise ValueError("单次报告时间范围不能超过 31 天")
 
+        run_id = uuid4()
+        report_id = f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
+        remote_catalog = (
+            self._remote_runtime.prepare_run(now=now)
+            if self._remote_runtime is not None
+            else RemoteRunCatalog("builtin-read-only-v1", (), ())
+        )
+        self._create_run(run_id, report_id, start_at, end_at, now, remote_catalog)
+        audit_context = AgentToolAuditContext(
+            tenant_id=self._tenant_id,
+            principal_id=self._principal_id,
+            direction="internal",
+            request_id=request_id or uuid4().hex,
+            run_id=run_id,
+        )
+        try:
+            report = await self._generate_report(
+                run_id=run_id,
+                report_id=report_id,
+                now=now,
+                start_at=start_at,
+                end_at=end_at,
+                audit_context=audit_context,
+                tools=self._tools + remote_catalog.tools,
+            )
+        except asyncio.CancelledError:
+            self._finish_run(run_id, "cancelled", datetime.now(UTC))
+            raise
+        except Exception:
+            self._finish_run(run_id, "failed", datetime.now(UTC))
+            raise
+        self._finish_run(run_id, "completed", datetime.now(UTC))
+        return report
+
+    async def _generate_report(
+        self,
+        *,
+        run_id: UUID,
+        report_id: str,
+        now: datetime,
+        start_at: datetime,
+        end_at: datetime,
+        audit_context: AgentToolAuditContext,
+        tools: tuple[ReadOnlyAgentTool, ...],
+    ) -> OperationsReportView:
         stages = [
             ReportStageView(
                 key="time_window",
@@ -114,31 +191,85 @@ class SecurityOperationsReportAgent:
             )
         ]
         collaboration, collaboration_model, tool_calls = await self._team.run(
-            self._tools, start_at, end_at
+            tools,
+            start_at,
+            end_at,
+            audit_store=self._audit_store,
+            audit_context=audit_context,
+            run_id=run_id,
+            now=now,
         )
+        response_plan = next(
+            (
+                item.response_plan
+                for item in collaboration
+                if item.role == "response_planning" and item.response_plan is not None
+            ),
+            None,
+        )
+        if response_plan is None:
+            raise RuntimeError("response planning role did not produce a strict plan")
+        failed_tools = [item for item in tool_calls if item.status == "failed"]
         stages.append(
             ReportStageView(
                 key="mcp_tools",
                 label="ReAct 按需选择 MCP 工具",
-                status="completed",
+                status="fallback" if failed_tools else "completed",
                 detail=(
                     "智能体未选择运营数据工具。"
                     if not tool_calls
                     else "智能体自主选择并调用：" + "、".join(item.label for item in tool_calls)
                 )
-                + "；全部调用均为受限只读查询。",
+                + "；全部调用均为受限只读查询。"
+                + (
+                    f"其中 {len(failed_tools)} 类工具调用失败，未取得可信结果。"
+                    if failed_tools
+                    else ""
+                ),
             )
         )
         analysis = self._analyze(tool_calls)
+        cross_domain = self._cross_domain(tool_calls)
+        reasoning_trace = self._reasoning_trace(
+            collaboration=collaboration,
+            tool_calls=tool_calls,
+            analysis=analysis,
+        )
         stages.append(
             ReportStageView(
                 key="tool_analysis",
                 label="分析工具返回结果",
-                status="completed",
+                status="fallback" if analysis["failed_tools"] else "completed",
                 detail=analysis["summary"],
             )
         )
+        stages.append(
+            ReportStageView(
+                key="response_plan",
+                label="严格响应计划编译",
+                status=(
+                    "fallback"
+                    if response_plan.generation_status == "deterministic_fallback"
+                    else "completed"
+                ),
+                detail=(
+                    f"计划 {response_plan.plan_id} 第 {response_plan.revision} 版已保存为"
+                    f" {response_plan.status}；动作数 {response_plan.action_count}，未执行。"
+                )
+                + (
+                    f"安全降级原因：{response_plan.fallback_reason_code}。"
+                    if response_plan.fallback_reason_code
+                    else ""
+                ),
+            )
+        )
         synthesis, model, fallback = await self._synthesize(start_at, end_at, tool_calls, analysis)
+        closure = self._closure_loop(
+            analysis=analysis,
+            synthesis=synthesis,
+            fallback=fallback,
+            response_plan=response_plan,
+        )
         stages.append(
             ReportStageView(
                 key="synthesis",
@@ -149,7 +280,18 @@ class SecurityOperationsReportAgent:
                 else "已由安全运营报告智能体基于工具结果生成建议。",
             )
         )
-        markdown = self._render_markdown(start_at, end_at, tool_calls, analysis, synthesis, model)
+        markdown = self._render_markdown(
+            start_at,
+            end_at,
+            tool_calls,
+            analysis,
+            synthesis,
+            model,
+            response_plan,
+            reasoning_trace=reasoning_trace,
+            cross_domain=cross_domain,
+            closure=closure,
+        )
         stages.append(
             ReportStageView(
                 key="layout",
@@ -168,7 +310,9 @@ class SecurityOperationsReportAgent:
             )
         )
         report = OperationsReportView(
-            id=f"OPS-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}",
+            id=report_id,
+            run_id=run_id,
+            run_status="completed",
             generated_at=now,
             start_at=start_at,
             end_at=end_at,
@@ -177,6 +321,10 @@ class SecurityOperationsReportAgent:
             stages=stages,
             collaboration=collaboration,
             tool_calls=tool_calls,
+            response_plan=response_plan,
+            reasoning_trace=reasoning_trace,
+            cross_domain=cross_domain,
+            closure=closure,
             markdown=markdown,
             html=rendered_html,
         )
@@ -187,6 +335,61 @@ class SecurityOperationsReportAgent:
 
     def get(self, report_id: str) -> OperationsReportView | None:
         return self._store.get(report_id)
+
+    def _create_run(
+        self,
+        run_id: UUID,
+        report_id: str,
+        start_at: datetime,
+        end_at: datetime,
+        now: datetime,
+        remote_catalog: RemoteRunCatalog,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            session.add(
+                AgentRunRow(
+                    id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    principal_id=str(self._principal_id),
+                    run_kind="operations_report",
+                    status="running",
+                    goal="Generate a bounded security operations report.",
+                    catalog_revision=remote_catalog.catalog_revision,
+                    revision=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                OperationsRunRow(
+                    run_id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    start_at=start_at,
+                    end_at=end_at,
+                    report_id=report_id,
+                    created_at=now,
+                )
+            )
+            session.add_all(
+                AgentRunMcpSnapshotRow(
+                    run_id=str(run_id),
+                    tenant_id=str(self._tenant_id),
+                    peer_id=binding.peer_id,
+                    peer_snapshot_id=str(binding.peer_snapshot_id),
+                    catalog_revision=binding.catalog_revision,
+                )
+                for binding in remote_catalog.bindings
+            )
+
+    def _finish_run(self, run_id: UUID, status: str, now: datetime) -> None:
+        with self._session_factory.begin() as session:
+            row = session.get(AgentRunRow, str(run_id))
+            if row is None:
+                raise RuntimeError("operations agent run is missing")
+            row.status = status
+            row.revision += 1
+            row.updated_at = now
+            row.completed_at = now
 
     @staticmethod
     def _utc(value: datetime) -> datetime:
@@ -204,19 +407,230 @@ class SecurityOperationsReportAgent:
         alerts = count("security.alerts.list")
         vulnerabilities = count("security.vulnerabilities.list")
         weak_passwords = count("security.weak_passwords.list")
+        failed_tools = [item.name for item in tool_calls if item.status == "failed"]
+        failure_summary = (
+            f"有 {len(failed_tools)} 类工具调用失败，未取得可信结果，不能据此判定无风险。"
+            if failed_tools
+            else "未调用类别不表示结果为零。"
+        )
         return {
             "events": events,
             "alerts": alerts,
             "vulnerabilities": vulnerabilities,
             "weak_passwords": weak_passwords,
             "selected_tools": list(by_name),
+            "failed_tools": failed_tools,
+            "observed_domains": [
+                label
+                for name, label in (
+                    ("security.events.list", "事件调查"),
+                    ("security.alerts.list", "终端与检测"),
+                    ("security.vulnerabilities.list", "漏洞管理"),
+                    ("security.weak_passwords.list", "身份认证"),
+                    ("knowledge.rag.retrieve", "知识依据"),
+                )
+                if name in by_name and by_name[name].status != "failed"
+            ],
             "summary": (
                 f"智能体按需调用 {len(by_name)} 类运营工具；已调用工具返回 {events} 个待复核事件、"
                 f"{alerts} 条告警、{vulnerabilities} 个 CVE 标识线索、"
-                f"{weak_passwords} 条弱口令线索。"
-                "未调用类别不表示结果为零。"
+                f"{weak_passwords} 条弱口令线索。{failure_summary}"
             ),
         }
+
+    @staticmethod
+    def _cross_domain(tool_calls: list[McpToolCallView]) -> list[CrossDomainEvidenceView]:
+        """Project every supported domain, including missing domains as unknown.
+
+        A missing tool result is deliberately represented as ``not_observed`` rather
+        than zero. This prevents the UI and report from turning an omitted source
+        into a false negative while still making cross-domain coverage explicit.
+        """
+
+        definitions = (
+            ("events", "事件调查", "security.events.list", "事件 MCP"),
+            ("endpoint_detection", "终端与检测", "security.alerts.list", "告警 MCP"),
+            ("vulnerabilities", "漏洞管理", "security.vulnerabilities.list", "漏洞 MCP"),
+            ("identity", "身份认证", "security.weak_passwords.list", "弱口令 MCP"),
+            ("knowledge", "知识依据", "knowledge.rag.retrieve", "本地知识库 RAG"),
+        )
+        by_name = {item.name: item for item in tool_calls}
+        result: list[CrossDomainEvidenceView] = []
+        for key, label, tool_name, source in definitions:
+            item = by_name.get(tool_name)
+            if item is None or item.status == "failed":
+                result.append(
+                    CrossDomainEvidenceView(
+                        key=key,
+                        label=label,
+                        source=source,
+                        result_count=0,
+                        status="not_observed",
+                        summary=(
+                            item.summary
+                            if item is not None
+                            else "本次 ReAct 未选择该域；不能据此判断无风险。"
+                        ),
+                    )
+                )
+                continue
+            result.append(
+                CrossDomainEvidenceView(
+                    key=key,
+                    label=label,
+                    source=source,
+                    result_count=item.result_count,
+                    status="observed",
+                    summary=item.summary,
+                )
+            )
+        return result
+
+    @staticmethod
+    def _reasoning_trace(
+        *,
+        collaboration: list,
+        tool_calls: list[McpToolCallView],
+        analysis: dict[str, object],
+    ) -> list[ReasoningStepView]:
+        """Build a safe, replayable reasoning trace from public observations.
+
+        The trace is intentionally composed from allowlisted tool summaries and
+        role handoffs. It makes the investigation path reviewable without storing
+        hidden prompts, chain-of-thought tokens, credentials, or raw payloads.
+        """
+
+        domain_labels = [str(value) for value in analysis.get("observed_domains", [])]
+        evidence = [f"{item.label}：{item.summary}" for item in tool_calls]
+        trace: list[ReasoningStepView] = [
+            ReasoningStepView(
+                sequence=1,
+                phase="observe",
+                title="观测：汇总可用安全域",
+                detail=(
+                    "已读取受授权只读工具的公开摘要，"
+                    + (
+                        f"覆盖 {len(domain_labels)} 个域：" + "、".join(domain_labels) + "。"
+                        if domain_labels
+                        else "当前没有可用域结果。"
+                    )
+                    + " 未选择的域保持未知，不会被当作零事件。"
+                ),
+                evidence=evidence[:8],
+                domains=domain_labels,
+                status=(
+                    "completed"
+                    if domain_labels
+                    else "blocked"
+                    if analysis.get("failed_tools")
+                    else "pending"
+                ),
+                confidence=0.7 if domain_labels else 0.0,
+            ),
+            ReasoningStepView(
+                sequence=2,
+                phase="correlate",
+                title="定位：建立跨域证据关联",
+                detail=(
+                    "总控将事件、终端检测、漏洞和身份认证线索放入同一调查上下文，"
+                    "由专业角色通过交接摘要继续核对；线索之间的因果关系仍需人工复核。"
+                    if len(domain_labels) >= 2
+                    else "当前证据域不足以形成跨域关联，保留证据缺口并请求人工补充。"
+                ),
+                evidence=evidence[:8],
+                domains=domain_labels,
+                status="completed" if len(domain_labels) >= 2 else "pending",
+                confidence=0.6 if len(domain_labels) >= 2 else 0.0,
+            ),
+        ]
+        for item in collaboration:
+            domains = list(getattr(item, "evidence_domains", ()) or domain_labels)
+            trace.append(
+                ReasoningStepView(
+                    sequence=len(trace) + 1,
+                    phase="collaborate",
+                    title=f"协同：第 {item.iteration} 轮 · {item.label}",
+                    detail=item.summary,
+                    evidence=[item.decision_reason] if item.decision_reason else [],
+                    domains=domains,
+                    status="completed" if item.status == "completed" else "blocked",
+                    confidence=0.6 if item.status == "completed" else 0.0,
+                )
+            )
+        trace.extend(
+            [
+                ReasoningStepView(
+                    sequence=len(trace) + 1,
+                    phase="decide",
+                    title="定性与决策：形成可复核建议",
+                    detail="已综合公开证据、角色交接和数据局限，输出区分事实、线索与未知项的研判建议。",
+                    evidence=[str(analysis.get("summary", ""))],
+                    domains=domain_labels,
+                    status="completed",
+                    confidence=0.6 if tool_calls else 0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 2,
+                    phase="act",
+                    title="动作：进入受控处置边界",
+                    detail="仅生成需要人工批准的响应建议；本次报告未执行封禁、隔离、账号或修复动作。",
+                    evidence=[],
+                    domains=["处置控制"],
+                    status="pending",
+                    confidence=0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 3,
+                    phase="verify",
+                    title="验证：定义回执与新遥测条件",
+                    detail="待人工批准并执行受控动作后，重新查询相关域的告警、事件和身份/漏洞状态；验证失败则回到总控重新规划。",
+                    evidence=[],
+                    domains=domain_labels,
+                    status="pending",
+                    confidence=0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 4,
+                    phase="close",
+                    title="闭环：保存可回放调查记录",
+                    detail="报告、工具摘要、角色交接和验证条件已持久化，可供人工复核与后续重规划使用。",
+                    evidence=[],
+                    domains=["审计"],
+                    status="completed",
+                    confidence=1.0,
+                ),
+            ]
+        )
+        return trace
+
+    @staticmethod
+    def _closure_loop(
+        *,
+        analysis: dict[str, object],
+        synthesis: str,
+        fallback: bool,
+        response_plan: ResponsePlanReferenceView,
+    ) -> ClosureLoopView:
+        observed = str(analysis.get("summary", "已完成受控数据观测。"))
+        decision = synthesis.split("\n\n", 1)[0][:600] or "等待人工复核。"
+        feedback = (
+            "当前为保守降级结果；若人工补充新证据或验证失败，应把新遥测反馈给总控重新规划。"
+            if fallback
+            else "若验证条件不满足，应把新遥测与失败原因反馈给总控重新规划，"
+            "而不是将动作标记为成功。"
+        )
+        return ClosureLoopView(
+            status="analysis_complete",
+            observed=observed,
+            decision=decision,
+            action=(
+                f"已生成 {response_plan.action_count} 项响应计划动作；"
+                "尚未进入接受或审批流程，本次未执行任何处置。"
+            ),
+            verification="批准后需读取动作回执和新遥测，核对预先定义的成功/失败条件。",
+            feedback=feedback,
+            human_approval_required=True,
+        )
 
     async def _synthesize(
         self,
@@ -229,13 +643,19 @@ class SecurityOperationsReportAgent:
             "time_window": {"start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
             "analysis": analysis,
             "tools": [
-                {"name": item.name, "summary": item.summary, "items": item.items[:12]}
+                {
+                    "name": item.name,
+                    "status": item.status,
+                    "reason_code": item.reason_code,
+                    "summary": item.summary,
+                    "items": item.items[:12],
+                }
                 for item in tool_calls
             ],
         }
         system = (
             "你是 ShieldChain 的网络安全运营报告分析专家。任务是根据给出的受控事件、告警、"
-            "漏洞、弱口令 MCP 结果及本地知识依据，完成概括总结，并生成面向安全运营人员的"
+            "漏洞、弱口令工具结果及本地知识依据，完成概括总结，并生成面向安全运营人员的"
             "实用、精简、可复核建议。工作要求：一，先理解时间范围、威胁背景、风险类型和潜在影响；"
             "二，概括已观察到的行为、受影响对象、风险线索和仍待确认事项；三，结合 ShieldChain"
             " 已接入的事件与告警复查、Wazuh 终端日志、NTA 网络流量、本地 RAG、漏洞和弱口令线索，"
@@ -281,12 +701,18 @@ class SecurityOperationsReportAgent:
         alerts = int(analysis["alerts"])
         vulnerabilities = int(analysis["vulnerabilities"])
         weak_passwords = int(analysis["weak_passwords"])
-        priority = "高" if events or alerts else "低"
+        failed_tools = list(analysis["failed_tools"])
+        priority = "未知" if failed_tools else ("高" if events or alerts else "低")
+        failure_note = (
+            f"有 {len(failed_tools)} 类工具调用失败，不能把零计数解释为无风险。"
+            if failed_tools
+            else ""
+        )
         return "\n\n".join(
             [
                 (
                     f"概括总结：本时间范围内存在 {alerts} 条告警与 {events} 个"
-                    f"待人工复核事件，当前运营关注优先级为{priority}。"
+                    f"待人工复核事件，当前运营关注优先级为{priority}。{failure_note}"
                 ),
                 (
                     f"概括总结补充：{vulnerabilities} 个 CVE 标识仅来自告警元数据，"
@@ -312,6 +738,11 @@ class SecurityOperationsReportAgent:
         analysis: dict[str, object],
         synthesis: str,
         model: str | None,
+        response_plan: ResponsePlanReferenceView,
+        *,
+        reasoning_trace: list[ReasoningStepView],
+        cross_domain: list[CrossDomainEvidenceView],
+        closure: ClosureLoopView,
     ) -> str:
         lines = [
             "# ShieldChain 安全运营报告",
@@ -322,7 +753,7 @@ class SecurityOperationsReportAgent:
                 f"{end_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
             ),
             f"- 综合分析模型：{model or '保守规则降级（DeepSeek 未可用）'}",
-            "- 安全边界：智能体仅可自主选择受授权的只读 MCP；本报告不执行处置操作。",
+            "- 安全边界：智能体仅可自主选择受授权的只读工具；本报告不执行处置操作。",
             "",
             "## 工具返回汇总",
             "",
@@ -333,7 +764,9 @@ class SecurityOperationsReportAgent:
             lines.append(f"### {tool.label}")
             lines.append(tool.summary)
             lines.extend(f"- {item}" for item in tool.items[:12])
-            if not tool.items:
+            if tool.status == "failed":
+                lines.append(f"- 调用失败原因：{tool.reason_code}；未取得可信结果。")
+            elif not tool.items:
                 lines.append("- 本时间范围内未返回匹配记录。")
             lines.append("")
         lines.extend(
@@ -342,9 +775,65 @@ class SecurityOperationsReportAgent:
                 "",
                 str(analysis["summary"]),
                 "",
+                "## 结构化推理链（公开审计视图）",
+                "",
+                "以下内容由受控观察、角色交接和证据摘要组成，不包含模型隐藏思维链、私有提示或原始载荷。",
+                "",
+            ]
+        )
+        for step in reasoning_trace:
+            domains = "、".join(step.domains) if step.domains else "未标注域"
+            step_status = {
+                "completed": "已完成",
+                "pending": "待执行",
+                "blocked": "待人工处理",
+            }[step.status]
+            lines.append(f"### {step.sequence}. {step.title}")
+            lines.append(f"- 阶段：{step.phase}；状态：{step_status}；证据域：{domains}")
+            lines.append(step.detail)
+            lines.extend(f"- 证据：{item}" for item in step.evidence[:8])
+            lines.append("")
+        lines.extend(
+            [
+                "## 跨域证据协同",
+                "",
+            ]
+        )
+        for item in cross_domain:
+            domain_status = "已观测" if item.status == "observed" else "未观测"
+            lines.append(
+                f"- {item.label}（{item.source}）：{domain_status}，"
+                f"{item.result_count} 项；{item.summary}"
+            )
+        lines.extend(
+            [
+                "",
+                "## 闭环状态",
+                "",
+                f"- 当前状态：{closure.status}；人工审批："
+                f"{'需要' if closure.human_approval_required else '不需要'}",
+                f"- 观测：{closure.observed}",
+                f"- 决策：{closure.decision}",
+                f"- 动作：{closure.action}",
+                f"- 验证：{closure.verification}",
+                f"- 反馈/重规划：{closure.feedback}",
+                "",
+            ]
+        )
+        lines.extend(
+            [
                 "## 综合研判与建议",
                 "",
                 synthesis,
+                "",
+                "## 响应计划（建议，不是执行事实）",
+                "",
+                f"- 计划 ID：{response_plan.plan_id}",
+                f"- Revision：{response_plan.revision}",
+                f"- 计划状态：{response_plan.status}",
+                f"- 计划动作数：{response_plan.action_count}",
+                f"- 公开建议：{response_plan.public_summary}",
+                "- 执行事实：未执行任何响应计划动作；计划生成不代表接受、审批或执行。",
                 "",
                 "## 数据局限与复核要求",
                 "",

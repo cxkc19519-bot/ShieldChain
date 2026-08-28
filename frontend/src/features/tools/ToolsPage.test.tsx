@@ -3,19 +3,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToolsPage } from './ToolsPage'
 
-const api = vi.hoisted(() => ({ getToolTrace: vi.fn(), decideToolCall: vi.fn(), controlToolCall: vi.fn(), setEmergencyStop: vi.fn() }))
+const api = vi.hoisted(() => ({ getToolTrace: vi.fn(), getResponsePlan: vi.fn(), decideResponsePlan: vi.fn(), decideToolCall: vi.fn(), controlToolCall: vi.fn(), setEmergencyStop: vi.fn() }))
+const mcpApi = vi.hoisted(() => ({ getMcpRunCalls: vi.fn() }))
 vi.mock('./api', () => api)
+vi.mock('../mcp/api', () => mcpApi)
 const ID = '11111111-1111-4111-8111-111111111111'
 const ID_2 = '22222222-2222-4222-8222-222222222222'
 const ID_3 = '33333333-3333-4333-8333-333333333333'
 const call = (status: string, id = ID) => ({
-  id, tool_name: 'block_ip', tool_version: '1', status, reason: 'approval_required',
+  id, plan_id: ID_2, plan_revision_id: ID_2, plan_action_id: ID_3,
+  tool_name: 'block_ip', tool_version: '1', status, reason: 'approval_required',
   target: '203.0.113.8', policy_outcome: 'approval_required', risk: 'high', approval_outcome: null,
   attempt_outcomes: ['started'], verification_outcome: null, evidence_ids: [ID],
   created_at: '2026-07-23T00:00:00Z', updated_at: '2026-07-23T00:00:00Z',
 })
 
-beforeEach(() => Object.values(api).forEach((mock) => mock.mockReset()))
+beforeEach(() => {
+  Object.values(api).forEach((mock) => mock.mockReset())
+  Object.values(mcpApi).forEach((mock) => mock.mockReset())
+  api.getResponsePlan.mockRejectedValue(new Error('Response plan not found'))
+  mcpApi.getMcpRunCalls.mockResolvedValue([])
+})
 
 describe('ToolsPage', () => {
   it('renders the public execution trace without private material', async () => {
@@ -94,15 +102,41 @@ describe('ToolsPage', () => {
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument()
   })
 
+  it('separates plan acceptance, tool approval, execution, and verification', async () => {
+    api.getResponsePlan.mockResolvedValue({
+      plan_id: ID_2, run_id: ID, case_id: ID_3, status: 'proposed', current_revision: 0,
+      revisions: [{ id: ID_2, revision: 0, parent_revision: null, public_summary: '建议封禁已确认来源。', reason_code: null, created_at: '2026-08-24T00:00:00Z', actions: [{
+        id: ID_3, sequence: 1, tool_name: 'block_ip', tool_version: '1', target_type: 'ipv4', target: '203.0.113.8',
+        depends_on: [], evidence_ids: [ID], public_reason: '证据已确认，等待操作员接受计划。', assessed_risk: 'high',
+        approval_required: true, verification_tool: 'query_firewall_state', verification_version: '1', rollback_strategy: 'remove exact rule',
+        call_id: null, call_status: null, verification_outcome: null, raw_prompt: 'private prompt',
+      }] }], events: [], created_at: '2026-08-24T00:00:00Z', updated_at: '2026-08-24T00:00:00Z',
+    })
+    api.getToolTrace.mockResolvedValue({ run_id: ID, calls: [] })
+    api.decideResponsePlan.mockResolvedValue({ plan_id: ID_2, status: 'awaiting_execution', revision: 0, calls: [] })
+    render(<ToolsPage />)
+    fireEvent.change(screen.getByLabelText('调查运行 ID'), { target: { value: ID } })
+    fireEvent.click(screen.getByRole('button', { name: '查看处置轨迹' }))
+
+    expect(await screen.findByText('建议封禁已确认来源。')).toBeVisible()
+    expect(screen.getByText('尚未接受')).toBeVisible()
+    expect(screen.getByText('必须审批')).toBeVisible()
+    expect(screen.getByText('尚未创建调用')).toBeVisible()
+    expect(screen.getByText('尚未验证')).toBeVisible()
+    expect(screen.queryByText('private prompt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '接受计划并进入逐动作策略' }))
+    await waitFor(() => expect(api.decideResponsePlan).toHaveBeenCalledWith(ID_2, 'accept', 0, '人工复核后执行'))
+  })
+
   it('keeps a successful automation restore when the current run has no trusted trace', async () => {
     api.getToolTrace.mockRejectedValue(new Error('Trusted tool trace not found'))
     api.setEmergencyStop.mockResolvedValue({ call_id: null, status: 'automation_enabled', revision: 2 })
     render(<ToolsPage initialRunId={ID} embedded />)
-    await screen.findByRole('alert')
+    await screen.findByText('部分公开数据暂不可用')
 
     const restore = screen.getByRole('button', { name: '恢复自动化' })
     await waitFor(() => expect(restore).not.toBeDisabled())
     fireEvent.click(restore)
     expect(await screen.findByText(/automation_enabled/)).toBeVisible()
-    expect(api.getToolTrace).toHaveBeenCalledTimes(1)
+    expect(api.getToolTrace).toHaveBeenCalledTimes(2)
   })})

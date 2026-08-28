@@ -43,6 +43,11 @@ class SqlAlchemyGatewayStore:
         with self._session.begin_nested():
             yield
 
+    def commit(self) -> None:
+        """Make completed gateway phases visible to recovery workers."""
+
+        self._session.commit()
+
     def create_or_get(
         self, *, tenant_id: UUID, bound: BoundToolRequest, request_id: str
     ) -> tuple[TrustedToolCall, bool]:

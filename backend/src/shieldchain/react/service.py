@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from shieldchain.react.budget import ReactBudgetSupervisor, ReactConsumption
 from shieldchain.react.classification import DeterministicFailureClassifier, TrustedFailureInput
 from shieldchain.react.domain import (
+    FailureCategory,
     PlanRevision,
     ProposedAction,
     ReactDecision,
@@ -19,7 +20,7 @@ from shieldchain.react.domain import (
     ReactLoopStatus,
     ReactStepDecision,
 )
-from shieldchain.react.replanning import DeterministicReplanner
+from shieldchain.react.replanning import DeterministicReplanner, ReplanResult
 from shieldchain.react.repositories import ReactStepBundle, SqlAlchemyReactRepository
 from shieldchain.tools.registry import TrustedToolRegistry
 
@@ -69,6 +70,7 @@ class ControlledReactService:
         registry: TrustedToolRegistry,
         now: datetime,
         store: ReactStepStore,
+        completion_is_final: bool = True,
     ) -> ReactStepResult:
         if loop.status is not ReactLoopStatus.RUNNING:
             raise ValueError("only a running react loop can step")
@@ -89,7 +91,16 @@ class ControlledReactService:
                 budget_exhausted=projection.stop_category.value == "budget_exhausted",
             )
         assessment = self._classifier.classify(classified_input, now=now)
-        if projection.allowed:
+        if (
+            projection.allowed
+            and assessment.category is FailureCategory.COMPLETED
+            and not completion_is_final
+        ):
+            instruction = ReplanResult(
+                ReactDecision.CONTINUE_VERIFICATION,
+                "verified_action_continue_plan",
+            )
+        elif projection.allowed:
             instruction = self._replanner.decide(
                 loop=loop,
                 current=current_plan,
@@ -101,8 +112,6 @@ class ControlledReactService:
                 now=now,
             )
         else:
-            from shieldchain.react.replanning import ReplanResult
-
             instruction = ReplanResult(
                 ReactDecision.MANUAL_REVIEW, f"{assessment.category.value}_requires_operator"
             )
@@ -117,11 +126,10 @@ class ControlledReactService:
             now,
             instruction.plan_revision.id if instruction.plan_revision else None,
         )
-        status = (
-            ReactLoopStatus.AWAITING_HUMAN
-            if instruction.decision is ReactDecision.MANUAL_REVIEW
-            else ReactLoopStatus.AWAITING_EXECUTION
-        )
+        status = {
+            ReactDecision.MANUAL_REVIEW: ReactLoopStatus.AWAITING_HUMAN,
+            ReactDecision.COMPLETE: ReactLoopStatus.COMPLETED,
+        }.get(instruction.decision, ReactLoopStatus.AWAITING_EXECUTION)
         fingerprints = loop.observation_fingerprints
         if projection.fingerprint not in fingerprints:
             fingerprints = (*fingerprints, projection.fingerprint)

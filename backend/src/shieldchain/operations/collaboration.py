@@ -1,8 +1,9 @@
 """Bounded real-data collaboration team for security operations reports."""
+
+# ruff: noqa: E501
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from uuid import UUID
 

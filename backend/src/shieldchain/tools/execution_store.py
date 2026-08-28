@@ -11,6 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from shieldchain.incidents.repositories import append_incident_audit
+from shieldchain.response_planning.persistence import ResponsePlanActionRow
 from shieldchain.tools.domain import TrustedToolCall, TrustedToolCallStatus
 from shieldchain.tools.execution import (
     ExecutionLeaseGrant,
@@ -21,6 +22,7 @@ from shieldchain.tools.persistence import (
     ToolAutomationControlRow,
     ToolExecutionAttemptRow,
     ToolExecutionLeaseRow,
+    ToolVerificationRow,
     TrustedToolCallRow,
 )
 from shieldchain.tools.repositories import TrustedToolCallNotFound
@@ -86,6 +88,7 @@ class SqlAlchemyExecutionStore:
         ).scalar_one_or_none()
         if row is None:
             raise ExecutionLeaseConflict("tool call revision is stale or cross-tenant")
+        self._require_verified_dependencies(row)
         active = self._session.execute(
             select(ToolExecutionLeaseRow.id).where(
                 ToolExecutionLeaseRow.tool_call_id == str(call.request.id),
@@ -135,6 +138,37 @@ class SqlAlchemyExecutionStore:
         )
         self._session.flush()
         return ExecutionLeaseGrant(lease, token)
+
+    def _require_verified_dependencies(self, call: TrustedToolCallRow) -> None:
+        if call.plan_action_id is None:
+            return
+        action = self._session.execute(
+            select(ResponsePlanActionRow).where(
+                ResponsePlanActionRow.id == call.plan_action_id,
+                ResponsePlanActionRow.tenant_id == call.tenant_id,
+            )
+        ).scalar_one_or_none()
+        if action is None or action.plan_revision_id != call.plan_revision_id:
+            raise ExecutionLeaseConflict("plan action binding is invalid")
+        for dependency_id in action.depends_on_json:
+            dependency = self._session.execute(
+                select(TrustedToolCallRow).where(
+                    TrustedToolCallRow.tenant_id == call.tenant_id,
+                    TrustedToolCallRow.plan_revision_id == action.plan_revision_id,
+                    TrustedToolCallRow.plan_action_id == str(dependency_id),
+                )
+            ).scalar_one_or_none()
+            if dependency is None or dependency.status != TrustedToolCallStatus.SUCCEEDED.value:
+                raise ExecutionLeaseConflict("plan action dependencies are not verified")
+            verified = self._session.execute(
+                select(ToolVerificationRow.id).where(
+                    ToolVerificationRow.tenant_id == call.tenant_id,
+                    ToolVerificationRow.tool_call_id == dependency.id,
+                    ToolVerificationRow.outcome == "verified",
+                )
+            ).scalar_one_or_none()
+            if verified is None:
+                raise ExecutionLeaseConflict("plan action dependencies are not verified")
 
     def release_lease(
         self,
@@ -239,6 +273,61 @@ class SqlAlchemyExecutionStore:
             .limit(limit)
         ).scalars()
         return tuple(_lease(row) for row in rows)
+
+    def expire_active_lease(
+        self,
+        *,
+        tenant_id: UUID,
+        call: TrustedToolCall,
+        now: datetime,
+        request_id: str,
+    ) -> ToolExecutionLease:
+        row = self._session.execute(
+            select(ToolExecutionLeaseRow).where(
+                ToolExecutionLeaseRow.tool_call_id == str(call.request.id),
+                ToolExecutionLeaseRow.tenant_id == str(tenant_id),
+                ToolExecutionLeaseRow.released_at.is_(None),
+                ToolExecutionLeaseRow.expires_at <= now,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise ExecutionLeaseNotFound("expired execution lease not found")
+        result = self._session.execute(
+            update(ToolExecutionLeaseRow)
+            .where(
+                ToolExecutionLeaseRow.id == row.id,
+                ToolExecutionLeaseRow.released_at.is_(None),
+                ToolExecutionLeaseRow.expires_at <= now,
+            )
+            .values(released_at=now, release_reason="recovery_expired")
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ExecutionLeaseNotFound("expired execution lease is stale")
+        append_incident_audit(
+            self._session,
+            incident_id=call.request.case_id,
+            run_id=call.request.run_id,
+            event_type="trusted_tool_execution_lease_released",
+            request_id=request_id,
+            occurred_at=now,
+            payload={
+                "tool_call_id": str(call.request.id),
+                "lease_id": row.id,
+                "reason": "recovery_expired",
+            },
+        )
+        return ToolExecutionLease(
+            UUID(row.id),
+            UUID(row.tool_call_id),
+            UUID(row.holder_id),
+            row.attempt_number,
+            row.token_digest,
+            _utc(row.acquired_at),
+            _utc(row.expires_at),
+            now,
+            "recovery_expired",
+        )
 
     def require_call(self, *, tenant_id: UUID, request_id: UUID) -> TrustedToolCallRow:
         row = self._session.execute(

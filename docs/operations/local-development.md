@@ -80,6 +80,26 @@ Wazuh 适配器配置见 [Wazuh 只读告警接入](wazuh-read-only-ingestion.md
 
 ## 7. 验证
 
+### 标准开发脚本
+
+`scripts/dev.ps1`（开发启动）和 `scripts/test.ps1`（前后端测试）使用仓库根目录的 `.venv`，与上面的 Conda + `app.py` 启动方式是两种选择。若使用这些脚本，在仓库根目录配置：
+
+```powershell
+python -m venv .venv
+Push-Location backend
+& ..\.venv\Scripts\python.exe -m pip install -r requirements.lock
+Pop-Location
+npm ci --prefix frontend
+# 首次配置时复制 .env.example；已有 .env 不要覆盖。
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev.ps1 -CheckOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
+```
+
+`scripts/verify.ps1` 是完整离线门禁，依次检查后端、前端、依赖审计、临时库迁移、脚本合同和 Task 14 smoke。它也支持 `backend/.venv` 或 PATH 中已装好锁定依赖的 Python（例如 CI）；不会自动开启付费模型调用。正常运行前端需要 Node.js/npm 在 PATH 中。Windows CI 使用 `scripts/verify.ps1 -StaticOnly`，该参数只将容器 smoke 限制为静态合同，其他门禁照常执行；Linux CI 独立实际构建和运行容器，避免 Windows 容器引擎误拉 Linux 镜像。
+
+### 聚焦功能验证
+
 ```powershell
 conda run -n ShieldChain python -m pytest `
   backend/tests/integration/api/test_operations_report.py `

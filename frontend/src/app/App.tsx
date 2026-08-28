@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle, Sparkles } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, Bot, ShieldCheck, Server } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -8,11 +8,14 @@ import { useRouteFocus } from './useRouteFocus'
 const navigation = [
   { label: '运营总览', icon: Activity, to: '/dashboard' },
   { label: '安全运营报告', icon: Search, to: '/operations-report' },
+  { label: '智能体与 ReAct', icon: Bot, to: '/agents' },
+  { label: '处置中心', icon: ShieldCheck, to: '/response' },
   { label: '实时告警', icon: AlertTriangle, to: '/alerts' },
   { label: '知识库', icon: Database, to: '/knowledge' },
   { label: '历史报告', icon: FileText, to: '/reports' },
   { label: '智能助手', icon: MessageCircle, to: '/assistant' },
   { label: '模型测试', icon: Sparkles, to: '/qwen-chat' },
+  { label: 'MCP 服务状态', icon: Server, to: '/status' },
 ]
 
 export function App() {

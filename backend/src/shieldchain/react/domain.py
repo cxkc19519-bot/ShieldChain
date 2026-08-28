@@ -19,7 +19,10 @@ from shieldchain.agents.domain import (
 )
 
 _CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
-_ACTION = re.compile(r"^proposed:(block_ip|isolate_endpoint|disable_account)$")
+_ACTION = re.compile(
+    r"^proposed:(query_firewall_state|block_ip|query_endpoint_state|isolate_endpoint|"
+    r"query_account_state|disable_account)$"
+)
 _MAX_ITEMS = 100
 _MAX_TEXT = 512
 
@@ -41,11 +44,14 @@ class ObservationSource(StrEnum):
 
 
 class FailureCategory(StrEnum):
+    PLAN_ACCEPTED = "plan_accepted"
+    COMPLETED = "completed"
     VERIFICATION_FAILED = "verification_failed"
     VERIFICATION_INCONCLUSIVE = "verification_inconclusive"
     EXECUTION_FAILED = "execution_failed"
     EXECUTION_OUTCOME_UNKNOWN = "execution_outcome_unknown"
     APPROVAL_REJECTED = "approval_rejected"
+    APPROVAL_EXPIRED = "approval_expired"
     EMERGENCY_STOPPED = "emergency_stopped"
     AUTOMATION_DISABLED = "automation_disabled"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"

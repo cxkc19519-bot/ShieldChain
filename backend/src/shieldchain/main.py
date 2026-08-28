@@ -1,5 +1,8 @@
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.engine import Engine
@@ -12,6 +15,7 @@ from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
+from shieldchain.api.mcp import router as mcp_router
 from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
@@ -35,6 +39,13 @@ from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
+from shieldchain.mcp_auth import build_mcp_auth_runtime
+from shieldchain.mcp_remote.discovery import McpDiscoveryService
+from shieldchain.mcp_remote.peer_config import load_mcp_remote_config
+from shieldchain.mcp_remote.persistence import McpSnapshotStore
+from shieldchain.mcp_remote.runtime import McpRemoteRuntime
+from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
+from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 from shieldchain.qwen_experience.api import router as qwen_experience_router
 from shieldchain.qwen_experience.service import QwenExperienceService
@@ -43,6 +54,34 @@ from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
 from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.wazuh.service import WazuhAlertService
+
+logger = structlog.get_logger(__name__)
+_SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
+
+
+async def _periodic_safety_recovery(
+    service,
+    *,
+    tenant_id,
+    stop: asyncio.Event,
+    interval_seconds: float = _SAFETY_RECOVERY_INTERVAL_SECONDS,
+) -> None:
+    if interval_seconds <= 0:
+        raise ValueError("safety recovery interval must be positive")
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await asyncio.to_thread(
+                service.recover_safety_loops,
+                tenant_id=tenant_id,
+                now=datetime.now(UTC),
+            )
+        except Exception as error:
+            logger.warning("safety_loop_periodic_recovery_failed", error_type=type(error).__name__)
 
 
 def create_app(
@@ -65,19 +104,81 @@ def create_app(
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
     knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
+    agent_tool_audit_store = AgentToolAuditStore(session_factory)
+    mcp_remote_config = (
+        load_mcp_remote_config(settings.mcp_remote_config_path)
+        if settings.mcp_remote_config_path is not None
+        else None
+    )
+    mcp_snapshot_store = McpSnapshotStore(session_factory)
+    mcp_remote_discovery = (
+        McpDiscoveryService(mcp_snapshot_store, settings) if mcp_remote_config is not None else None
+    )
+    mcp_remote_runtime = (
+        McpRemoteRuntime(mcp_snapshot_store, mcp_remote_config, settings)
+        if mcp_remote_config is not None
+        else None
+    )
+    mcp_server = (
+        create_mcp_server(
+            session_factory,
+            tenant_id=settings.rag_demo_tenant_id,
+            principal_id=settings.rag_demo_principal_id,
+            audit_store=agent_tool_audit_store,
+            auth_runtime=build_mcp_auth_runtime(settings),
+        )
+        if settings.mcp_server_enabled
+        else None
+    )
+    mcp_http_app = create_mcp_http_app(mcp_server, settings) if mcp_server is not None else None
+    trusted_tools = trusted_tool_api_service or TrustedToolApiService(session_factory)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        _app.state.accepting_requests = True
+        agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
+        recover_safety = getattr(trusted_tools, "recover_safety_loops", None)
+        recovery_stop = asyncio.Event()
+        recovery_task = None
+        if callable(recover_safety):
+            recover_safety(
+                tenant_id=settings.rag_demo_tenant_id,
+                now=datetime.now(UTC),
+            )
+            recovery_task = asyncio.create_task(
+                _periodic_safety_recovery(
+                    trusted_tools,
+                    tenant_id=settings.rag_demo_tenant_id,
+                    stop=recovery_stop,
+                )
+            )
         try:
-            yield
+            if mcp_remote_discovery is not None and mcp_remote_config is not None:
+                _app.state.mcp_remote_discovery_outcomes = (
+                    await mcp_remote_discovery.refresh_enabled(mcp_remote_config)
+                )
+            _app.state.accepting_requests = True
+            if mcp_server is None:
+                yield
+            else:
+                async with mcp_server.session_manager.run():
+                    yield
         finally:
             _app.state.accepting_requests = False
+            recovery_stop.set()
+            if recovery_task is not None:
+                await recovery_task
             if owns_engine:
                 engine.dispose()
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
+    app.state.mcp_server = mcp_server
+    app.state.mcp_remote_config = mcp_remote_config
+    app.state.mcp_snapshot_store = mcp_snapshot_store
+    app.state.mcp_remote_discovery = mcp_remote_discovery
+    app.state.mcp_remote_runtime = mcp_remote_runtime
+    app.state.mcp_remote_discovery_outcomes = ()
+    app.state.agent_tool_audit_store = agent_tool_audit_store
     app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
@@ -99,9 +200,7 @@ def create_app(
         principal_id=settings.rag_demo_principal_id,
         store=LocalConversationStore(settings.assistant_data_root),
     )
-    app.state.trusted_tool_api_service = trusted_tool_api_service or TrustedToolApiService(
-        session_factory
-    )
+    app.state.trusted_tool_api_service = trusted_tools
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
     app.state.wazuh_alert_service = WazuhAlertService()
@@ -112,6 +211,8 @@ def create_app(
         store=OperationsReportStore(settings.assistant_data_root),
         knowledge=knowledge_service,
         principal_id=settings.rag_demo_principal_id,
+        audit_store=agent_tool_audit_store,
+        remote_runtime=mcp_remote_runtime,
     )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(
@@ -144,8 +245,11 @@ def create_app(
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(incidents_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
+    app.include_router(mcp_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(react_router, prefix="/api/v1")
     app.include_router(wazuh_router, prefix="/api/v1")
     app.include_router(operations_router, prefix="/api/v1")
+    if mcp_http_app is not None:
+        app.mount("/", mcp_http_app)
     return app

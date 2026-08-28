@@ -18,6 +18,7 @@
 12. 阶段 5 设计：`docs/superpowers/specs/2026-07-23-phase-5-trusted-tool-calling-design.md`
 14. 阶段 6 设计：`docs/superpowers/specs/2026-07-23-phase-6-react-loop-design.md`
 15. 阶段 6 实施计划：`docs/superpowers/plans/2026-07-23-phase-6-react-loop.md`
+16. MCP、响应规划、智能体工具与安全闭环统一实施方案：`docs/plans/mcp-agent-tools-response-safety-loop-implementation.md`
 13. 阶段 5 实施计划：`docs/superpowers/plans/2026-07-23-phase-5-trusted-tool-calling.md`
 10. 阶段 4 设计：`docs/superpowers/specs/2026-07-20-phase-4-multi-agent-context-design.md`
 11. 阶段 4 实施计划：`docs/superpowers/plans/2026-07-20-phase-4-multi-agent-context.md`
@@ -45,4 +46,3 @@
 ## 阶段完成门槛
 
 功能验收通过、自动化测试通过、安全检查通过、相关文档和当日日志更新后，才可进入下一阶段。
-

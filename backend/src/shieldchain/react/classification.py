@@ -81,6 +81,8 @@ class TrustedFailureInput:
 
 
 _ALLOWED_DECISIONS: dict[FailureCategory, frozenset[ReactDecision]] = {
+    FailureCategory.PLAN_ACCEPTED: frozenset({ReactDecision.MANUAL_REVIEW}),
+    FailureCategory.COMPLETED: frozenset({ReactDecision.COMPLETE}),
     FailureCategory.VERIFICATION_FAILED: frozenset(
         {ReactDecision.REPLAN, ReactDecision.MANUAL_REVIEW}
     ),
@@ -103,6 +105,7 @@ _ALLOWED_DECISIONS: dict[FailureCategory, frozenset[ReactDecision]] = {
         category: frozenset({ReactDecision.MANUAL_REVIEW})
         for category in (
             FailureCategory.APPROVAL_REJECTED,
+            FailureCategory.APPROVAL_EXPIRED,
             FailureCategory.EMERGENCY_STOPPED,
             FailureCategory.AUTOMATION_DISABLED,
             FailureCategory.EVIDENCE_CONFLICT,
@@ -164,6 +167,8 @@ class DeterministicFailureClassifier:
         if value.evidence_conflict:
             return FailureCategory.EVIDENCE_CONFLICT
         if value.verification is not None:
+            if value.verification.outcome is VerificationOutcome.VERIFIED:
+                return FailureCategory.COMPLETED
             if value.verification.outcome is VerificationOutcome.FAILED:
                 return FailureCategory.VERIFICATION_FAILED
             if value.verification.outcome is VerificationOutcome.INCONCLUSIVE:
@@ -174,6 +179,8 @@ class DeterministicFailureClassifier:
             if value.attempt.outcome is ExecutionOutcome.FAILED:
                 return FailureCategory.EXECUTION_FAILED
         if value.call is not None:
+            if value.call.reason is PolicyReason.APPROVAL_EXPIRED:
+                return FailureCategory.APPROVAL_EXPIRED
             if (
                 value.call.status is TrustedToolCallStatus.REJECTED
                 and value.call.reason is PolicyReason.APPROVAL_REJECTED
