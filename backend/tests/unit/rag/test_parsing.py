@@ -259,8 +259,11 @@ def test_large_worker_result_does_not_use_a_pipe_and_cleans_parent_temp(tmp_path
     ],
 )
 def test_worker_failure_paths_leave_no_process_or_temp(
-    tmp_path: Path, worker: object, error: type[Exception]
+    tmp_path: Path, worker: object, error: type[Exception], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # pytest importlib mode names this module rag.test_parsing; spawn must be able
+    # to import the injected worker in a fresh interpreter as well.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     parser = BoundedDocumentParser(
         ParsingLimits(timeout_seconds=0.05 if worker is hanging_worker else 5.0),
         temp_root=tmp_path,

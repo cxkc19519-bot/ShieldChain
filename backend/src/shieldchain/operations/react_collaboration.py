@@ -336,6 +336,14 @@ class AgentToolBroker:
             self._order.append(name)
         return self._cache[name]
 
+    def record(self, item: McpToolCallView) -> McpToolCallView:
+        """Record a read-only observation produced by a non-windowed tool such as RAG."""
+
+        if item.name not in self._cache:
+            self._cache[item.name] = item
+            self._order.append(item.name)
+        return self._cache[item.name]
+
     def public_facts(self, limit: int = 4500) -> str:
         if not self._order:
             return "尚未调用运营数据工具。"
@@ -440,6 +448,11 @@ class RealDataAgentTeam:
                 iteration=iteration,
                 decision_reason=tool_reason,
                 response_plan=response_plan,
+                evidence_domains=[
+                    "知识库" if name == _RAG else AGENT_TOOL_CATALOG[name]["label"]
+                    for name in definition.allowed_tools
+                    if name in AGENT_TOOL_CATALOG
+                ],
             )
             results.append(current)
             next_role: str | None = None
@@ -556,6 +569,20 @@ class RealDataAgentTeam:
                     query = " ".join(str(parsed.get("query", "")).split())[:1000]
                     observation = await asyncio.to_thread(
                         self._retrieve, query or handoffs or definition.responsibility
+                    )
+                    unavailable = observation.startswith("RAG 暂不可用")
+                    empty = observation.startswith(("本地知识库为空", "未检索到"))
+                    broker.record(
+                        McpToolCallView(
+                            name=_RAG,
+                            label=AGENT_TOOL_LABELS[_RAG],
+                            status="failed" if unavailable else "empty" if empty else "succeeded",
+                            reason_code="tool_dependency_failed" if unavailable else None,
+                            arguments={"query": query or definition.responsibility, "limit": 3},
+                            result_count=0 if empty or unavailable else 1,
+                            summary=observation[:1800],
+                            items=[],
+                        )
                     )
                     observations.append(f"{AGENT_TOOL_LABELS[_RAG]}：{observation}")
                 else:

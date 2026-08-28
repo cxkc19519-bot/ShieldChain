@@ -27,9 +27,30 @@ function trajectoryError(value: unknown, fallback: string): string {
   return /[\u4e00-\u9fff]/.test(message) ? message : fallback
 }
 function Collaboration({ trajectory }: { trajectory: CollaborationTrajectory }) {
+  const reasoning = [
+    {
+      title: '观测：确认事实与证据',
+      detail: trajectory.confirmed_facts.length > 0
+        ? `已确认 ${trajectory.confirmed_facts.length} 条事实，并保留 ${trajectory.citations.length} 条完整性引用。`
+        : '当前没有已确认事实，所有判断均保留为待复核线索。',
+    },
+    ...trajectory.handoffs.map((item) => ({
+      title: `协同：${item.sender} → ${item.receiver}`,
+      detail: `${item.conclusion}${item.open_questions.length > 0 ? ` 待补证：${item.open_questions.join('、')}` : ''}`,
+    })),
+    {
+      title: '定性：形成当前调查结论',
+      detail: `当前公开调查状态：${trajectory.phase}（修订 ${trajectory.revision}），共享摘要已交给后续角色复核。`,
+    },
+    {
+      title: '闭环：验证后反馈总控',
+      detail: `当前阶段为 ${trajectory.phase}；验证不通过时应带着新证据回到总控重新规划。`,
+    },
+  ]
   return <div className="agent-workspace collaboration-workspace">
     <header><div><span className="agent-phase">{trajectory.phase}</span><h3>{trajectory.shared_summary}</h3></div><small>修订 {trajectory.revision}</small></header>
     <section aria-labelledby="budget-title"><h3 id="budget-title">协作预算</h3><div className="agent-metrics"><Metric label="步骤" used={trajectory.budget.steps_used} limit={trajectory.budget.step_limit} /><Metric label="Token" used={trajectory.budget.tokens_used} limit={trajectory.budget.token_limit} /><Metric label="工具调用" used={trajectory.budget.tool_calls_used} limit={trajectory.budget.tool_call_limit} /></div></section>
+    <section aria-labelledby="public-reasoning-title" className="agent-public-reasoning"><h3 id="public-reasoning-title">结构化调查推理链</h3><p>以下是基于公开事实、引用和交接的可审计视图，不包含模型隐藏思维链。</p><ol>{reasoning.map((item, index) => <li key={`${item.title}-${index}`}><span>{index + 1}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></li>)}</ol></section>
     {trajectory.reason_codes.length > 0 && <section><h3>原因码</h3><div className="agent-reasons">{trajectory.reason_codes.map((code) => <code key={code}>{code}</code>)}</div></section>}
     <section aria-labelledby="roles-title"><h3 id="roles-title">角色状态</h3><div className="agent-role-grid">{trajectory.role_statuses.map((item) => <article key={item.role}><StatusBadge tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</StatusBadge><h4>{item.role}</h4><p>{item.summary ?? '尚未开始'}</p>{item.reason_code && <code>{item.reason_code}</code>}</article>)}</div></section>
     <section aria-labelledby="handoffs-title"><h3 id="handoffs-title">结构化交接</h3>{trajectory.handoffs.length === 0 ? <p>暂无交接。</p> : <ol className="agent-handoffs">{trajectory.handoffs.map((item) => <li key={item.id}><strong>{item.sender} → {item.receiver}</strong><p>{item.conclusion}</p><small>置信度 {Math.round(item.confidence * 100)}%</small></li>)}</ol>}</section>
@@ -96,7 +117,7 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
   }
 
   return <section aria-labelledby="agents-title" className="page-card agents-page">
-    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="组合公开协作与受控循环轨迹；不展示私有上下文、原始提示、思维链或凭据。" />
+    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="组合结构化公开推理、角色交接与受控循环轨迹；不展示私有上下文、原始提示、隐藏思维链或凭据。" />
     <form className="agent-run-form" onSubmit={load}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={runId} onChange={(event) => setRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !runId.trim()} type="submit">{busy ? '加载中…' : '查看联合轨迹'}</button></div></form>
     {!runId.trim() && <EmptyState title="尚未选择运行" detail="从调查页启动运行，或输入已有运行 ID。" />}
     {collaborationError && <p role="alert" className="agent-error">协作轨迹：{collaborationError}</p>}

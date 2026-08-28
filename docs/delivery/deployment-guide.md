@@ -1,8 +1,10 @@
-# 部署手册
+# ShieldChain 部署手册
 
 > 文档状态：当前参考（更新于 2026-08-24）。Docker 与 Wazuh 已在学校服务器环境实际使用；本地 30B 模型仍受权重下载和共享 GPU 可用性约束。MCP OAuth/JWKS 已通过本地协议与配置测试，真实身份平台、TLS 和 Nginx 容器链路尚待授权环境验收。
 
 ## 基础 Compose
+
+常用启动命令：`docker compose up --build`；清理演示环境：`docker compose down -v`。
 
 ```bash
 docker compose up -d --build

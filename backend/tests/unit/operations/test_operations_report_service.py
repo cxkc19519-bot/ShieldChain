@@ -125,6 +125,14 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     assert all(tool.calls == 1 for tool in tools)
     assert "<script>" not in report.html
     assert "&lt;script&gt;" in report.html
+    assert [step.phase for step in report.reasoning_trace[:2]] == ["observe", "correlate"]
+    assert report.reasoning_trace[-1].phase == "close"
+    assert {item.status for item in report.cross_domain} == {"observed", "not_observed"}
+    knowledge_domain = next(item for item in report.cross_domain if item.key == "knowledge")
+    assert knowledge_domain.status == "not_observed"
+    assert report.closure.status == "analysis_complete"
+    assert "尚未进入接受或审批流程" in report.closure.action
+    assert "结构化推理链" in report.markdown
     assert agent.get(report.id) == report
     engine.dispose()
 
@@ -250,6 +258,57 @@ def test_specialist_model_selects_only_needed_tool() -> None:
     assert "选择工具前必须阅读" in requests[0][0]
 
 
+@pytest.mark.parametrize(
+    ("observation", "status", "count"),
+    [
+        ("ATT&CK T1021 远程服务", "succeeded", 1),
+        ("未检索到可引用片段。", "empty", 0),
+        ("RAG 暂不可用；不得据此扩写事实。", "failed", 0),
+    ],
+)
+def test_rag_observation_is_projected_into_cross_domain_trace(
+    observation: str,
+    status: str,
+    count: int,
+) -> None:
+    team = _team(Settings(_env_file=None, deepseek_api_key="test-key"))
+    broker = AgentToolBroker((), datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC))
+    responses = iter(
+        [
+            {
+                "action": "call_tool",
+                "tool": "knowledge.rag.retrieve",
+                "query": "ATT&CK lateral movement",
+                "public_reason": "补充技战术依据",
+            },
+            {
+                "action": "finish",
+                "summary": "已获得可引用知识依据。",
+                "public_reason": "知识依据已足够",
+            },
+        ]
+    )
+
+    async def chat(_system, _user, **_kwargs):
+        return SimpleNamespace(
+            content=json.dumps(next(responses), ensure_ascii=False), model="deepseek-test"
+        )
+
+    team._chat = chat  # type: ignore[method-assign]
+    team._retrieve = lambda _query: observation  # type: ignore[method-assign]
+    summary, model, _reason = asyncio.run(
+        team._run_role(_SPECIALISTS["knowledge_retrieval"], broker, [])
+    )
+
+    assert "知识依据" in summary
+    assert model == "deepseek-test"
+    assert [item.name for item in broker.results] == ["knowledge.rag.retrieve"]
+    assert broker.results[0].result_count == count
+    assert broker.results[0].status == status
+    if status == "failed":
+        assert broker.results[0].reason_code == "tool_dependency_failed"
+
+
 def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
     tools = _tools()
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
@@ -344,6 +403,19 @@ def test_failed_tool_is_not_analyzed_as_zero_risk() -> None:
 
     assert analysis["failed_tools"] == ["security.alerts.list"]
     assert "不能据此判定无风险" in str(analysis["summary"])
+    assert analysis["observed_domains"] == []
+    domains = SecurityOperationsReportAgent._cross_domain([failed])
+    alert_domain = next(item for item in domains if item.key == "endpoint_detection")
+    assert alert_domain.status == "not_observed"
+    assert "调用失败" in alert_domain.summary
+    trace = SecurityOperationsReportAgent._reasoning_trace(
+        collaboration=[],
+        tool_calls=[failed],
+        analysis=analysis,
+    )
+    assert trace[0].status == "blocked"
+    assert trace[0].confidence == 0
+    assert trace[1].status == "pending"
 
 
 def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(

@@ -1,4 +1,11 @@
-# 测试报告
+# ShieldChain 测试报告
+
+<!-- ShieldChain acceptance boundary flags: these are intentionally explicit until the corresponding external environments are available. -->
+DOCKER_RUNTIME_TESTED=False
+NETWORK_ACCESS_TESTED=False
+REAL_MODEL_PLANNING_TESTED=False
+REAL_DEVICE_PATHS_TESTED=False
+CI_RUNTIME_TESTED=False
 
 > 文档状态：当前验证摘要（更新于 2026-08-24）。Phase 8 历史报告保留当时结果，本页记录当前功能相关验证。
 
@@ -20,6 +27,14 @@
 - Alembic 临时 SQLite `upgrade head → downgrade -1 → upgrade head` 实际通过，最终 head 为 `20260824_08`；
 - 后端 Ruff 全量通过；后端历史全量 `1190 passed, 27 skipped`；
 - 前端安全补丁升级后 `npm audit --audit-level=moderate` 报告 0 漏洞；
+
+### 智能体审计分支历史验证（2026-08-27）
+
+- 智能体、运营报告、ReAct/RAG 关键后端回归：8 个通过；
+- 交付文档与最终交付合同：6 个通过；
+- 前端全量：26 个测试文件、95 个测试通过；
+- TypeScript 类型检查、ESLint 与 Vite 生产构建通过；
+
 - `compose.yaml + compose.server.yaml` 配置检查通过；
 - `compose.yaml + compose.local-llm.yaml` 配置检查通过；
 - 交付清单支持区分 `available` 与 `planned`，并检查未完成的 PPT、视频、ZIP 和校验和不会提前出现在仓库；

@@ -16,7 +16,7 @@ export type ReportStage = {
   detail: string
 }
 
-export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string; response_plan: ResponsePlanReference | null }
+export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string; response_plan: ResponsePlanReference | null; evidence_domains: string[] }
 
 export type ResponsePlanReference = {
   plan_id: string
@@ -28,6 +28,36 @@ export type ResponsePlanReference = {
   generation_status: 'model_compiled' | 'deterministic_fallback'
   fallback_reason_code: string | null
   execution_status: 'not_executed'
+}
+
+export type ReasoningStep = {
+  sequence: number
+  phase: string
+  title: string
+  detail: string
+  evidence: string[]
+  domains: string[]
+  status: 'completed' | 'pending' | 'blocked'
+  confidence: number
+}
+
+export type CrossDomainEvidence = {
+  key: string
+  label: string
+  source: string
+  result_count: number
+  status: 'observed' | 'not_observed'
+  summary: string
+}
+
+export type ClosureLoop = {
+  status: 'analysis_complete' | 'awaiting_approval' | 'verification_pending' | 'closed'
+  observed: string
+  decision: string
+  action: string
+  verification: string
+  feedback: string
+  human_approval_required: boolean
 }
 
 export type OperationsReport = {
@@ -43,6 +73,9 @@ export type OperationsReport = {
   collaboration: AgentRoleRun[]
   tool_calls: ToolCall[]
   response_plan: ResponsePlanReference | null
+  reasoning_trace: ReasoningStep[]
+  cross_domain: CrossDomainEvidence[]
+  closure: ClosureLoop
   markdown: string
   html: string
 }
@@ -153,6 +186,46 @@ function agentRole(value: unknown): AgentRoleRun {
     iteration: integer(item.iteration),
     decision_reason: text(item.decision_reason),
     response_plan: nullableResponsePlan(item.response_plan),
+    evidence_domains: item.evidence_domains === undefined ? [] : list(item.evidence_domains, text),
+  }
+}
+
+function reasoningStep(value: unknown): ReasoningStep {
+  const item = record(value)
+  if (typeof item.confidence !== 'number' || !Number.isFinite(item.confidence) || item.confidence < 0 || item.confidence > 1) throw new Error('调查推理置信度无效')
+  const sequence = integer(item.sequence)
+  if (sequence < 1) throw new Error('调查推理序号无效')
+  return {
+    sequence, phase: text(item.phase), title: text(item.title), detail: text(item.detail),
+    evidence: list(item.evidence, text), domains: list(item.domains, text),
+    status: choice(item.status, ['completed', 'pending', 'blocked'] as const),
+    confidence: item.confidence,
+  }
+}
+
+function crossDomain(value: unknown): CrossDomainEvidence {
+  const item = record(value)
+  return {
+    key: text(item.key), label: text(item.label), source: text(item.source),
+    result_count: integer(item.result_count),
+    status: choice(item.status, ['observed', 'not_observed'] as const),
+    summary: text(item.summary),
+  }
+}
+
+function closureLoop(value: unknown): ClosureLoop {
+  if (value === undefined) return {
+    status: 'analysis_complete', observed: '尚无结构化调查轨迹。', decision: '等待人工复核。',
+    action: '未执行任何安全动作。', verification: '尚未进入验证阶段。',
+    feedback: '验证失败时应返回总控重新规划。', human_approval_required: true,
+  }
+  const item = record(value)
+  if (typeof item.human_approval_required !== 'boolean') throw new Error('人工审批标记无效')
+  return {
+    status: choice(item.status, ['analysis_complete', 'awaiting_approval', 'verification_pending', 'closed'] as const),
+    observed: text(item.observed), decision: text(item.decision), action: text(item.action),
+    verification: text(item.verification), feedback: text(item.feedback),
+    human_approval_required: item.human_approval_required,
   }
 }
 
@@ -174,6 +247,9 @@ function operationsReport(value: unknown): OperationsReport {
     collaboration: list(item.collaboration, agentRole),
     tool_calls: list(item.tool_calls, toolCall),
     response_plan: nullableResponsePlan(item.response_plan),
+    reasoning_trace: item.reasoning_trace === undefined ? [] : list(item.reasoning_trace, reasoningStep),
+    cross_domain: item.cross_domain === undefined ? [] : list(item.cross_domain, crossDomain),
+    closure: closureLoop(item.closure),
     markdown: text(item.markdown),
     html: text(item.html),
   }

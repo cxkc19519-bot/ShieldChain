@@ -25,9 +25,12 @@ from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
 from .response_plan_agent import OperationsResponsePlanAgent
 from .schemas import (
+    ClosureLoopView,
+    CrossDomainEvidenceView,
     McpToolCallView,
     OperationsReportRequest,
     OperationsReportView,
+    ReasoningStepView,
     ReportStageView,
     ResponsePlanReferenceView,
 )
@@ -226,6 +229,12 @@ class SecurityOperationsReportAgent:
             )
         )
         analysis = self._analyze(tool_calls)
+        cross_domain = self._cross_domain(tool_calls)
+        reasoning_trace = self._reasoning_trace(
+            collaboration=collaboration,
+            tool_calls=tool_calls,
+            analysis=analysis,
+        )
         stages.append(
             ReportStageView(
                 key="tool_analysis",
@@ -255,6 +264,12 @@ class SecurityOperationsReportAgent:
             )
         )
         synthesis, model, fallback = await self._synthesize(start_at, end_at, tool_calls, analysis)
+        closure = self._closure_loop(
+            analysis=analysis,
+            synthesis=synthesis,
+            fallback=fallback,
+            response_plan=response_plan,
+        )
         stages.append(
             ReportStageView(
                 key="synthesis",
@@ -273,6 +288,9 @@ class SecurityOperationsReportAgent:
             synthesis,
             model,
             response_plan,
+            reasoning_trace=reasoning_trace,
+            cross_domain=cross_domain,
+            closure=closure,
         )
         stages.append(
             ReportStageView(
@@ -304,6 +322,9 @@ class SecurityOperationsReportAgent:
             collaboration=collaboration,
             tool_calls=tool_calls,
             response_plan=response_plan,
+            reasoning_trace=reasoning_trace,
+            cross_domain=cross_domain,
+            closure=closure,
             markdown=markdown,
             html=rendered_html,
         )
@@ -399,12 +420,217 @@ class SecurityOperationsReportAgent:
             "weak_passwords": weak_passwords,
             "selected_tools": list(by_name),
             "failed_tools": failed_tools,
+            "observed_domains": [
+                label
+                for name, label in (
+                    ("security.events.list", "事件调查"),
+                    ("security.alerts.list", "终端与检测"),
+                    ("security.vulnerabilities.list", "漏洞管理"),
+                    ("security.weak_passwords.list", "身份认证"),
+                    ("knowledge.rag.retrieve", "知识依据"),
+                )
+                if name in by_name and by_name[name].status != "failed"
+            ],
             "summary": (
                 f"智能体按需调用 {len(by_name)} 类运营工具；已调用工具返回 {events} 个待复核事件、"
                 f"{alerts} 条告警、{vulnerabilities} 个 CVE 标识线索、"
                 f"{weak_passwords} 条弱口令线索。{failure_summary}"
             ),
         }
+
+    @staticmethod
+    def _cross_domain(tool_calls: list[McpToolCallView]) -> list[CrossDomainEvidenceView]:
+        """Project every supported domain, including missing domains as unknown.
+
+        A missing tool result is deliberately represented as ``not_observed`` rather
+        than zero. This prevents the UI and report from turning an omitted source
+        into a false negative while still making cross-domain coverage explicit.
+        """
+
+        definitions = (
+            ("events", "事件调查", "security.events.list", "事件 MCP"),
+            ("endpoint_detection", "终端与检测", "security.alerts.list", "告警 MCP"),
+            ("vulnerabilities", "漏洞管理", "security.vulnerabilities.list", "漏洞 MCP"),
+            ("identity", "身份认证", "security.weak_passwords.list", "弱口令 MCP"),
+            ("knowledge", "知识依据", "knowledge.rag.retrieve", "本地知识库 RAG"),
+        )
+        by_name = {item.name: item for item in tool_calls}
+        result: list[CrossDomainEvidenceView] = []
+        for key, label, tool_name, source in definitions:
+            item = by_name.get(tool_name)
+            if item is None or item.status == "failed":
+                result.append(
+                    CrossDomainEvidenceView(
+                        key=key,
+                        label=label,
+                        source=source,
+                        result_count=0,
+                        status="not_observed",
+                        summary=(
+                            item.summary
+                            if item is not None
+                            else "本次 ReAct 未选择该域；不能据此判断无风险。"
+                        ),
+                    )
+                )
+                continue
+            result.append(
+                CrossDomainEvidenceView(
+                    key=key,
+                    label=label,
+                    source=source,
+                    result_count=item.result_count,
+                    status="observed",
+                    summary=item.summary,
+                )
+            )
+        return result
+
+    @staticmethod
+    def _reasoning_trace(
+        *,
+        collaboration: list,
+        tool_calls: list[McpToolCallView],
+        analysis: dict[str, object],
+    ) -> list[ReasoningStepView]:
+        """Build a safe, replayable reasoning trace from public observations.
+
+        The trace is intentionally composed from allowlisted tool summaries and
+        role handoffs. It makes the investigation path reviewable without storing
+        hidden prompts, chain-of-thought tokens, credentials, or raw payloads.
+        """
+
+        domain_labels = [str(value) for value in analysis.get("observed_domains", [])]
+        evidence = [f"{item.label}：{item.summary}" for item in tool_calls]
+        trace: list[ReasoningStepView] = [
+            ReasoningStepView(
+                sequence=1,
+                phase="observe",
+                title="观测：汇总可用安全域",
+                detail=(
+                    "已读取受授权只读工具的公开摘要，"
+                    + (
+                        f"覆盖 {len(domain_labels)} 个域：" + "、".join(domain_labels) + "。"
+                        if domain_labels
+                        else "当前没有可用域结果。"
+                    )
+                    + " 未选择的域保持未知，不会被当作零事件。"
+                ),
+                evidence=evidence[:8],
+                domains=domain_labels,
+                status=(
+                    "completed"
+                    if domain_labels
+                    else "blocked"
+                    if analysis.get("failed_tools")
+                    else "pending"
+                ),
+                confidence=0.7 if domain_labels else 0.0,
+            ),
+            ReasoningStepView(
+                sequence=2,
+                phase="correlate",
+                title="定位：建立跨域证据关联",
+                detail=(
+                    "总控将事件、终端检测、漏洞和身份认证线索放入同一调查上下文，"
+                    "由专业角色通过交接摘要继续核对；线索之间的因果关系仍需人工复核。"
+                    if len(domain_labels) >= 2
+                    else "当前证据域不足以形成跨域关联，保留证据缺口并请求人工补充。"
+                ),
+                evidence=evidence[:8],
+                domains=domain_labels,
+                status="completed" if len(domain_labels) >= 2 else "pending",
+                confidence=0.6 if len(domain_labels) >= 2 else 0.0,
+            ),
+        ]
+        for item in collaboration:
+            domains = list(getattr(item, "evidence_domains", ()) or domain_labels)
+            trace.append(
+                ReasoningStepView(
+                    sequence=len(trace) + 1,
+                    phase="collaborate",
+                    title=f"协同：第 {item.iteration} 轮 · {item.label}",
+                    detail=item.summary,
+                    evidence=[item.decision_reason] if item.decision_reason else [],
+                    domains=domains,
+                    status="completed" if item.status == "completed" else "blocked",
+                    confidence=0.6 if item.status == "completed" else 0.0,
+                )
+            )
+        trace.extend(
+            [
+                ReasoningStepView(
+                    sequence=len(trace) + 1,
+                    phase="decide",
+                    title="定性与决策：形成可复核建议",
+                    detail="已综合公开证据、角色交接和数据局限，输出区分事实、线索与未知项的研判建议。",
+                    evidence=[str(analysis.get("summary", ""))],
+                    domains=domain_labels,
+                    status="completed",
+                    confidence=0.6 if tool_calls else 0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 2,
+                    phase="act",
+                    title="动作：进入受控处置边界",
+                    detail="仅生成需要人工批准的响应建议；本次报告未执行封禁、隔离、账号或修复动作。",
+                    evidence=[],
+                    domains=["处置控制"],
+                    status="pending",
+                    confidence=0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 3,
+                    phase="verify",
+                    title="验证：定义回执与新遥测条件",
+                    detail="待人工批准并执行受控动作后，重新查询相关域的告警、事件和身份/漏洞状态；验证失败则回到总控重新规划。",
+                    evidence=[],
+                    domains=domain_labels,
+                    status="pending",
+                    confidence=0.0,
+                ),
+                ReasoningStepView(
+                    sequence=len(trace) + 4,
+                    phase="close",
+                    title="闭环：保存可回放调查记录",
+                    detail="报告、工具摘要、角色交接和验证条件已持久化，可供人工复核与后续重规划使用。",
+                    evidence=[],
+                    domains=["审计"],
+                    status="completed",
+                    confidence=1.0,
+                ),
+            ]
+        )
+        return trace
+
+    @staticmethod
+    def _closure_loop(
+        *,
+        analysis: dict[str, object],
+        synthesis: str,
+        fallback: bool,
+        response_plan: ResponsePlanReferenceView,
+    ) -> ClosureLoopView:
+        observed = str(analysis.get("summary", "已完成受控数据观测。"))
+        decision = synthesis.split("\n\n", 1)[0][:600] or "等待人工复核。"
+        feedback = (
+            "当前为保守降级结果；若人工补充新证据或验证失败，应把新遥测反馈给总控重新规划。"
+            if fallback
+            else "若验证条件不满足，应把新遥测与失败原因反馈给总控重新规划，"
+            "而不是将动作标记为成功。"
+        )
+        return ClosureLoopView(
+            status="analysis_complete",
+            observed=observed,
+            decision=decision,
+            action=(
+                f"已生成 {response_plan.action_count} 项响应计划动作；"
+                "尚未进入接受或审批流程，本次未执行任何处置。"
+            ),
+            verification="批准后需读取动作回执和新遥测，核对预先定义的成功/失败条件。",
+            feedback=feedback,
+            human_approval_required=True,
+        )
 
     async def _synthesize(
         self,
@@ -513,6 +739,10 @@ class SecurityOperationsReportAgent:
         synthesis: str,
         model: str | None,
         response_plan: ResponsePlanReferenceView,
+        *,
+        reasoning_trace: list[ReasoningStepView],
+        cross_domain: list[CrossDomainEvidenceView],
+        closure: ClosureLoopView,
     ) -> str:
         lines = [
             "# ShieldChain 安全运营报告",
@@ -545,6 +775,53 @@ class SecurityOperationsReportAgent:
                 "",
                 str(analysis["summary"]),
                 "",
+                "## 结构化推理链（公开审计视图）",
+                "",
+                "以下内容由受控观察、角色交接和证据摘要组成，不包含模型隐藏思维链、私有提示或原始载荷。",
+                "",
+            ]
+        )
+        for step in reasoning_trace:
+            domains = "、".join(step.domains) if step.domains else "未标注域"
+            step_status = {
+                "completed": "已完成",
+                "pending": "待执行",
+                "blocked": "待人工处理",
+            }[step.status]
+            lines.append(f"### {step.sequence}. {step.title}")
+            lines.append(f"- 阶段：{step.phase}；状态：{step_status}；证据域：{domains}")
+            lines.append(step.detail)
+            lines.extend(f"- 证据：{item}" for item in step.evidence[:8])
+            lines.append("")
+        lines.extend(
+            [
+                "## 跨域证据协同",
+                "",
+            ]
+        )
+        for item in cross_domain:
+            domain_status = "已观测" if item.status == "observed" else "未观测"
+            lines.append(
+                f"- {item.label}（{item.source}）：{domain_status}，"
+                f"{item.result_count} 项；{item.summary}"
+            )
+        lines.extend(
+            [
+                "",
+                "## 闭环状态",
+                "",
+                f"- 当前状态：{closure.status}；人工审批："
+                f"{'需要' if closure.human_approval_required else '不需要'}",
+                f"- 观测：{closure.observed}",
+                f"- 决策：{closure.decision}",
+                f"- 动作：{closure.action}",
+                f"- 验证：{closure.verification}",
+                f"- 反馈/重规划：{closure.feedback}",
+                "",
+            ]
+        )
+        lines.extend(
+            [
                 "## 综合研判与建议",
                 "",
                 synthesis,

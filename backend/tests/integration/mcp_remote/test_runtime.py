@@ -100,7 +100,15 @@ def test_runtime_pins_only_latest_usable_accepted_snapshot(tmp_path: Path) -> No
     engine.dispose()
 
 
-def test_operations_run_persists_selected_peer_snapshot_revision(tmp_path: Path) -> None:
+def test_operations_run_persists_selected_peer_snapshot_revision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (NOW + timedelta(minutes=1)).astimezone(tz)
+
+    monkeypatch.setattr("shieldchain.operations.service.datetime", FrozenDatetime)
     engine = create_engine_from_url(f"sqlite:///{tmp_path / 'run-binding.db'}")
     Base.metadata.create_all(engine)
     factory = create_session_factory(engine)

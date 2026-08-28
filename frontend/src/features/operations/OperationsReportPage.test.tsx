@@ -13,9 +13,26 @@ vi.mock('./api', () => api)
 
 beforeEach(() => Object.values(api).forEach((mock) => mock.mockReset()))
 
+const auditProjection = {
+  reasoning_trace: [{
+    sequence: 1, phase: 'observe', title: '观测：汇总安全域', detail: '保留证据缺口。',
+    evidence: [], domains: [], status: 'pending', confidence: 0,
+  }],
+  cross_domain: [{
+    key: 'endpoint_detection', label: '终端与检测', source: '告警工具',
+    result_count: 0, status: 'not_observed', summary: '尚无可信观察。',
+  }],
+  closure: {
+    status: 'analysis_complete', observed: '已记录查询结果。', decision: '人工复核。',
+    action: '未执行处置。', verification: '尚未验证。', feedback: '等待新证据。',
+    human_approval_required: true,
+  },
+}
+
 describe('OperationsReportPage', () => {
   it('shows a failed tool as unknown instead of an empty successful query', async () => {
     api.listOperationsReports.mockResolvedValue([{
+      ...auditProjection,
       id: 'OPS-20260822-FAILURE',
       run_id: null,
       run_status: 'legacy_without_run',
@@ -52,6 +69,7 @@ describe('OperationsReportPage', () => {
 
   it('shows a compiled response plan as advice and not execution', async () => {
     api.listOperationsReports.mockResolvedValue([{
+      ...auditProjection,
       id: 'OPS-20260823-PLAN',
       run_id: '00000000-0000-4000-8000-000000000201',
       run_status: 'completed',
@@ -81,6 +99,9 @@ describe('OperationsReportPage', () => {
     render(<MemoryRouter><OperationsReportPage /></MemoryRouter>)
 
     expect(await screen.findByText('响应计划')).toBeVisible()
+    expect(screen.getByRole('heading', { name: '结构化调查推理链' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '跨域证据覆盖' })).toBeVisible()
+    expect(screen.getByText('本轮未观测')).toBeVisible()
     expect(screen.getByText('请进入处置中心核验')).toBeVisible()
     expect(screen.getByText(/计划生成不代表接受、审批、执行或验证成功/)).toBeVisible()
     expect(screen.getByText('建议人工复核当前报告线索。')).toBeVisible()
