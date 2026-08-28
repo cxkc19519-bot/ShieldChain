@@ -97,6 +97,10 @@ def test_ci_actions_are_sha_pinned_and_least_privilege() -> None:
         assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action)
     assert "persist-credentials: false" in workflow
     assert "timeout-minutes:" in workflow
+    windows_job, linux_job = workflow.split("  linux-container:", 1)
+    assert "scripts\\verify.ps1 -StaticOnly" in windows_job
+    assert "run-phase8-container-smoke.ps1" in linux_job
+    assert "-StaticOnly" not in linux_job
 
 
 def test_container_smoke_is_bounded_optional_and_cleans_its_own_project() -> None:

@@ -96,7 +96,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-`scripts/verify.ps1` 是完整离线门禁，依次检查后端、前端、依赖审计、临时库迁移、脚本合同和 Task 14 smoke。它也支持 `backend/.venv` 或 PATH 中已装好锁定依赖的 Python（例如 CI）；不会自动开启付费模型调用。正常运行前端需要 Node.js/npm 在 PATH 中。
+`scripts/verify.ps1` 是完整离线门禁，依次检查后端、前端、依赖审计、临时库迁移、脚本合同和 Task 14 smoke。它也支持 `backend/.venv` 或 PATH 中已装好锁定依赖的 Python（例如 CI）；不会自动开启付费模型调用。正常运行前端需要 Node.js/npm 在 PATH 中。Windows CI 使用 `scripts/verify.ps1 -StaticOnly`，该参数只将容器 smoke 限制为静态合同，其他门禁照常执行；Linux CI 独立实际构建和运行容器，避免 Windows 容器引擎误拉 Linux 镜像。
 
 ### 聚焦功能验证
 

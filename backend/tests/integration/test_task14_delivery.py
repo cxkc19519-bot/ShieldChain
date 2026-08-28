@@ -39,6 +39,8 @@ def test_task14_offline_smoke_and_mcp_conformance_are_bounded() -> None:
     assert '$containerArguments += "-StaticOnly"' in smoke
     assert "-ProjectRoot $ProjectRoot -StaticOnly" not in smoke
     assert "run-task14-smoke.ps1" in verify
+    assert "[switch]$StaticOnly" in verify
+    assert '$smokeArguments += "-StaticOnly"' in verify
     assert '"audit", "--prefix"' in verify
     assert '"downgrade", "-1"' in verify
 

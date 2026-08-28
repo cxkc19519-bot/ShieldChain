@@ -5,7 +5,8 @@ param(
     [string]$TestCommandDirectory,
     [switch]$LiveProfile,
     [ValidateRange(0, 10)]
-    [int]$LiveCallLimit = 0
+    [int]$LiveCallLimit = 0,
+    [switch]$StaticOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +61,9 @@ else {
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         (Join-Path $ProjectRoot "tests\scripts\run-task14-smoke.ps1")
     )
+    if ($StaticOnly) {
+        $smokeArguments += "-StaticOnly"
+    }
 }
 
 $liveConfigurationNames = @(
