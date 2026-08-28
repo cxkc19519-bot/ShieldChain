@@ -73,7 +73,7 @@ try {
     $frontendHealth = Invoke-RestMethod `
         -Uri "http://127.0.0.1:8080/healthz" `
         -TimeoutSec 5
-    if ($frontendHealth -ne "ok") {
+    if ($frontendHealth -isnot [string] -or $frontendHealth.Trim() -cne "ok") {
         throw "Frontend health response was not ok."
     }
     $ready = Invoke-RestMethod `

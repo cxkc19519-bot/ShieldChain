@@ -1,6 +1,10 @@
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -109,6 +113,41 @@ def test_container_smoke_is_bounded_optional_and_cleans_its_own_project() -> Non
     assert "down --volumes --remove-orphans" in script
     assert "shieldchain-phase8-" in script
     assert "Remove-Item" not in script
+
+
+@pytest.mark.parametrize(
+    ("response", "exit_code"),
+    [
+        ("'ok'", 0),
+        ('"ok`n"', 0),
+        ('"ok`r`n"', 0),
+        ("'not ok'", 1),
+        ("''", 1),
+        ("$null", 1),
+    ],
+)
+def test_container_health_accepts_plain_text_line_endings(response, exit_code) -> None:
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        pytest.skip("PowerShell is required to execute the container smoke predicate")
+    script = _read("tests/scripts/run-phase8-container-smoke.ps1")
+    condition = re.search(r"if \(([^\n]*\$frontendHealth[^\n]*)\) \{", script)
+    assert condition is not None
+    result = subprocess.run(
+        [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"$frontendHealth = {response}; "
+            f"if ({condition.group(1)}) {{ exit 1 }} else {{ exit 0 }}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == exit_code, result.stderr
 
 
 def test_compose_volume_is_project_scoped_for_safe_smoke_cleanup() -> None:
