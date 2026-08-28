@@ -59,23 +59,18 @@ try {
     Assert-True ($secretSafetyResult.Output -notmatch [regex]::Escape($secret)) "dev never prints environment secret values"
     Remove-Item -LiteralPath (Join-Path $fixtureRoot ".env") -Force
 
-    $realEnvPath = Join-Path $repositoryRoot ".env"
-    $createdRealEnv = -not (Test-Path -LiteralPath $realEnvPath)
-    if ($createdRealEnv) {
-        Set-Content -LiteralPath $realEnvPath -Value "DEEPSEEK_API_KEY="
-    }
-    try {
-        $configuredResult = Invoke-CapturedPowerShell -Arguments @(
-            "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
-            "-CheckOnly", "-ProjectRoot", $repositoryRoot
-        )
-        Assert-True ($configuredResult.ExitCode -eq 0) "dev check-only succeeds in the configured worktree"
-    }
-    finally {
-        if ($createdRealEnv) {
-            Remove-Item -LiteralPath $realEnvPath -Force
-        }
-    }
+    # CheckOnly validates paths, so isolate this contract from the developer/CI
+    # interpreter layout and never create or remove the repository's real .env.
+    $configuredRoot = Join-Path $fixtureRoot "configured"
+    New-Item -ItemType Directory -Path (Join-Path $configuredRoot ".venv\Scripts") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $configuredRoot "frontend\node_modules") -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $configuredRoot ".venv\Scripts\python.exe") -Value ""
+    Set-Content -LiteralPath (Join-Path $configuredRoot ".env") -Value "DEEPSEEK_API_KEY="
+    $configuredResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
+        "-CheckOnly", "-ProjectRoot", $configuredRoot
+    )
+    Assert-True ($configuredResult.ExitCode -eq 0) "dev check-only succeeds in the configured fixture"
 
     $productionScripts = @(
         (Join-Path $repositoryRoot "scripts\dev.ps1"),
