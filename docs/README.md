@@ -1,6 +1,6 @@
 # ShieldChain 文档中心
 
-> 文档状态：当前入口（更新于 2026-08-24）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
+> 文档状态：当前入口（更新于 2026-08-28）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
 
 ## 当前系统
 
@@ -36,6 +36,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 9. [开发路线](plans/development-roadmap.md)
 10. [可安装 Skills 运行时实施方案](plans/skills-runtime-implementation.md)
 11. [MCP、响应规划、智能体工具与安全闭环统一实施方案](plans/mcp-agent-tools-response-safety-loop-implementation.md)
+12. [MCP 与安全闭环加固合并交接说明](delivery/mcp-safety-hardening-merge-handoff-20260828.md)
 
 ## 文档状态约定
 

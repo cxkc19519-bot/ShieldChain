@@ -1,6 +1,6 @@
 # ShieldChain MCP、响应规划、智能体工具与安全闭环统一实施方案
 
-> 文档状态：已实施（2026-08-24）。Task 0～14 已完成。本文是后续维护、评审、测试、迁移和 Git 提交的执行基线；真实身份平台、外部 peer 和真实设备仍需在授权环境单独验收。实施后如果改变协议版本、安全边界或数据模型，必须先更新本文并记录迁移影响。
+> 文档状态：已实施（2026-08-24）。Task 0～15 已完成。本文是后续维护、评审、测试、迁移和 Git 提交的执行基线；真实身份平台、外部 peer 和真实设备仍需在授权环境单独验收。实施后如果改变协议版本、安全边界或数据模型，必须先更新本文并记录迁移影响。
 
 ## 1. 文档目的
 
@@ -1542,15 +1542,25 @@ LIVE_MCP_CALL_LIMIT=0
 
 ### 21.1 分支
 
-实际功能开发从本文档评审完成的提交创建。当前连续实施分支为 `codex/mcp-agent-safety-loop`：
+实际功能开发从本文档评审完成的提交创建。Task 0～14 的连续实施分支为
+`codex/mcp-agent-safety-loop`，实现证据提交为 `9852903`。Task 15 的审查加固分支为
+`codex/mcp-safety-hardening`，其实现与验证证据提交为 `da61cd1`。后一个分支完整包含前一个分支，
+不得把两个分支分别重复合入同一目标分支。
+
+评审时以远端最新提交为准：
 
 ```bash
-git switch codex/mcp-agent-safety-loop
 git status --short --branch
-git switch -c codex/mcp-agent-safety-loop
+git fetch --prune origin
+git switch codex/mcp-safety-hardening
+git rev-parse HEAD
+git rev-parse '@{upstream}'
 ```
 
-如果本文已经合并到正式基线，则直接从包含本文的合并提交创建功能分支，并在开发日志记录基线 commit。不得在脏工作区切换或重写用户改动。
+如果本地尚无该分支，应创建对 `origin/codex/mcp-safety-hardening` 的跟踪分支，而不是从其他提交创建同名分支。
+最终合并由项目主导人从最新默认集成分支发起，并按
+[合并交接说明](../delivery/mcp-safety-hardening-merge-handoff-20260828.md)处理并发改动、冲突和合并后门禁。
+不得在脏工作区切换或重写共享历史。
 
 ### 21.2 提交
 
