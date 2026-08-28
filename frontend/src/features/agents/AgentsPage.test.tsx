@@ -5,12 +5,14 @@ import { AgentsPage } from './AgentsPage'
 
 const api = vi.hoisted(() => ({ getCollaborationTrajectory: vi.fn() }))
 const reactApi = vi.hoisted(() => ({ getReactTrajectory: vi.fn(), controlReactLoop: vi.fn() }))
+const mcpApi = vi.hoisted(() => ({ getMcpRunCalls: vi.fn() }))
 vi.mock('./api', () => api)
 vi.mock('./reactApi', () => reactApi)
+vi.mock('../mcp/api', () => mcpApi)
 const ID = '11111111-1111-4111-8111-111111111111'
 const budget = { steps_used: 2, step_limit: 10, loops_used: 1, loop_limit: 3, time_used_seconds: 5, time_limit_seconds: 60, tokens_used: 200, token_limit: 1000, cost_used_usd: 0, cost_limit_usd: 1, tool_calls_used: 0, tool_call_limit: 5 }
 
-beforeEach(() => { api.getCollaborationTrajectory.mockReset(); reactApi.getReactTrajectory.mockReset().mockRejectedValue(new Error('ReAct trajectory not found')); reactApi.controlReactLoop.mockReset() })
+beforeEach(() => { api.getCollaborationTrajectory.mockReset(); reactApi.getReactTrajectory.mockReset().mockRejectedValue(new Error('ReAct trajectory not found')); reactApi.controlReactLoop.mockReset(); mcpApi.getMcpRunCalls.mockReset().mockResolvedValue([]) })
 
 describe('AgentsPage', () => {
   it('renders only the public collaboration trajectory fields', async () => {
@@ -47,5 +49,17 @@ describe('AgentsPage', () => {
     expect(await screen.findByText(/人工接管成功/)).toBeVisible()
     expect(reactApi.controlReactLoop).toHaveBeenCalledWith(ID, 'takeover', '人工复核运行轨迹', expect.any(AbortSignal))
     expect(screen.queryByText(/chain_of_thought|raw_prompt|private_context/)).not.toBeInTheDocument()
+  })
+
+  it('shows bounded MCP catalog revisions and hides raw payloads', async () => {
+    api.getCollaborationTrajectory.mockRejectedValue(new Error('Agent trajectory not found'))
+    mcpApi.getMcpRunCalls.mockResolvedValue([{ id: ID, role: 'reporting', direction: 'mcp_outbound', provider_kind: 'remote_mcp', provider_id: 'approved-peer', tool_alias: 'external.approved.alerts_list', catalog_revision: 'catalog-v2', schema_revision: 'alerts-v3', status: 'timed_out', reason_code: 'mcp_remote_timed_out', result_count: 0, summary: '外部 MCP 调用超时，未取得可信结果。', duration_ms: 30000, attempt: 1, truncated: false, created_at: '2026-08-24T00:00:00Z', finished_at: '2026-08-24T00:00:30Z', raw_payload: 'secret-token' }])
+    render(<AgentsPage />)
+    fireEvent.change(screen.getByLabelText('调查运行 ID'), { target: { value: ID } })
+    fireEvent.click(screen.getByRole('button', { name: '查看联合轨迹' }))
+    expect(await screen.findByText('external.approved.alerts_list')).toBeVisible()
+    expect(screen.getByText(/目录 catalog-v2 · Schema alerts-v3/)).toBeVisible()
+    expect(screen.getByText('mcp_remote_timed_out')).toBeVisible()
+    expect(screen.queryByText('secret-token')).not.toBeInTheDocument()
   })
 })

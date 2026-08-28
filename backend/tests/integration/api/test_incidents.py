@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa
+
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -29,6 +31,14 @@ from shieldchain.incidents.ports import InvalidInvestigationState
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
 from shieldchain.main import create_app
+
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "archived fixed-phishing simulation API contract; the product routes were retired "
+        "and current investigation safety is covered by repository/workflow tests"
+    )
+)
 
 
 class RecordingRunner:

@@ -1,8 +1,10 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from shieldchain.core.config import get_settings
@@ -15,10 +17,13 @@ def test_fresh_checkout_requires_migration_before_database_becomes_ready(
 ) -> None:
     repository_root = Path(__file__).resolve().parents[3]
     placeholder = repository_root / "data" / ".gitkeep"
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git executable is unavailable in this test process")
 
     tracked = subprocess.run(
         [
-            "git",
+            git,
             "-c",
             f"safe.directory={repository_root.as_posix()}",
             "ls-files",

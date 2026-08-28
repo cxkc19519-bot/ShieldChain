@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 
+from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
 from shieldchain.react.api_service import ReactApiNotFound, ReactApiService, ReactControlConflict
 from shieldchain.react.schemas import ReactControlInput, ReactMutationView, ReactTrajectoryView
@@ -24,6 +25,16 @@ def _authority(request: Request) -> tuple[UUID, UUID]:
     )
 
 
+def _require_operator_control(request: Request) -> None:
+    settings = cast(Settings, request.app.state.settings)
+    if settings.environment == "production":
+        raise ApiError(
+            "operator_auth_required",
+            "Operator controls require an authenticated administrator boundary",
+            403,
+        )
+
+
 @router.get("/react/runs/{run_id}/trajectory", response_model=ReactTrajectoryView)
 def trajectory(run_id: UUID, request: Request) -> ReactTrajectoryView:
     tenant_id, _ = _authority(request)
@@ -37,6 +48,7 @@ def trajectory(run_id: UUID, request: Request) -> ReactTrajectoryView:
 def control(
     loop_id: UUID, action: str, payload: ReactControlInput, request: Request
 ) -> ReactMutationView:
+    _require_operator_control(request)
     if action not in {"takeover", "resume"}:
         raise ApiError("react_control_invalid", "Unsupported ReAct control", 404)
     tenant_id, actor_id = _authority(request)

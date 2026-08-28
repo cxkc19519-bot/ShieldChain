@@ -15,6 +15,7 @@ from shieldchain.agents.persistence import (
     AgentExecutionRow,
     AgentHandoffRow,
     AgentPrivateContextRow,
+    AgentRunRow,
     CaseContextRow,
     ConfirmedCaseFactRow,
 )
@@ -100,6 +101,21 @@ def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+_SYSTEM_PRINCIPAL_ID = "00000000-0000-4000-8000-000000000000"
+_GENERIC_INVESTIGATION_STATUSES = {
+    InvestigationStatus.PENDING: "pending",
+    InvestigationStatus.COLLECTING: "running",
+    InvestigationStatus.ANALYZING: "running",
+    InvestigationStatus.ACTION_PLANNED: "running",
+    InvestigationStatus.EXECUTING: "running",
+    InvestigationStatus.VERIFYING: "verifying",
+    InvestigationStatus.NEEDS_REVIEW: "needs_review",
+    InvestigationStatus.FAILED: "failed",
+    InvestigationStatus.INTERRUPTED: "needs_review",
+    InvestigationStatus.CLOSED: "completed",
+}
 
 
 def _run_from_row(row: InvestigationRunRow) -> InvestigationRun:
@@ -235,15 +251,30 @@ class SqlAlchemyIncidentRepository:
         request_id: str,
         now: datetime,
     ) -> InvestigationRun:
-        incident_id = session.execute(
-            select(IncidentRow.id)
+        incident = session.execute(
+            select(IncidentRow.id, IncidentRow.tenant_id)
             .where(IncidentRow.simulation_instance_id == str(simulation_id))
             .with_for_update()
-        ).scalar_one_or_none()
-        if incident_id is None:
+        ).one_or_none()
+        if incident is None:
             raise SimulationNotFound(simulation_id)
+        incident_id, tenant_id = incident
+        run_id = str(uuid4())
+        parent = AgentRunRow(
+            id=run_id,
+            tenant_id=tenant_id,
+            principal_id=_SYSTEM_PRINCIPAL_ID,
+            run_kind="incident_investigation",
+            status="pending",
+            goal=f"Investigate incident {incident_id}.",
+            catalog_revision="legacy-investigation-v1",
+            revision=0,
+            created_at=now,
+            updated_at=now,
+        )
         row = InvestigationRunRow(
-            id=str(uuid4()),
+            id=run_id,
+            tenant_id=tenant_id,
             incident_id=incident_id,
             simulation_instance_id=str(simulation_id),
             status=InvestigationStatus.PENDING.value,
@@ -254,6 +285,7 @@ class SqlAlchemyIncidentRepository:
         self._ensure_sqlite_outer_transaction(session)
         try:
             with session.begin_nested():
+                session.add(parent)
                 session.add(row)
                 self._append_audit(
                     session,
@@ -285,8 +317,12 @@ class SqlAlchemyIncidentRepository:
         if status is not InvestigationStatus.PENDING:
             raise InvalidInvestigationState(run_id, status)
         session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        parent = session.get(AgentRunRow, str(run_id))
         session.delete(row)
         session.flush()
+        if parent is not None:
+            session.delete(parent)
+            session.flush()
 
     def delete_historical_run(self, session: Session, run_id: UUID) -> None:
         row = self._require_run(session, run_id, lock=True)
@@ -296,17 +332,31 @@ class SqlAlchemyIncidentRepository:
 
         incident_id = row.incident_id
         simulation_id = row.simulation_instance_id
-        session.execute(delete(ConfirmedCaseFactRow).where(ConfirmedCaseFactRow.case_context_id == str(run_id)))
+        session.execute(
+            delete(ConfirmedCaseFactRow).where(
+                ConfirmedCaseFactRow.case_context_id == str(run_id)
+            )
+        )
         session.execute(delete(AgentExecutionRow).where(AgentExecutionRow.run_id == str(run_id)))
         session.execute(delete(AgentHandoffRow).where(AgentHandoffRow.run_id == str(run_id)))
-        session.execute(delete(AgentPrivateContextRow).where(AgentPrivateContextRow.run_id == str(run_id)))
+        session.execute(
+            delete(AgentPrivateContextRow).where(AgentPrivateContextRow.run_id == str(run_id))
+        )
         session.execute(delete(CaseContextRow).where(CaseContextRow.run_id == str(run_id)))
-        session.execute(delete(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run_id)))
+        session.execute(
+            delete(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run_id))
+        )
         session.execute(delete(EvidenceRecordRow).where(EvidenceRecordRow.run_id == str(run_id)))
-        session.execute(delete(SimulationToolCallRow).where(SimulationToolCallRow.run_id == str(run_id)))
+        session.execute(
+            delete(SimulationToolCallRow).where(SimulationToolCallRow.run_id == str(run_id))
+        )
         session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        parent = session.get(AgentRunRow, str(run_id))
         session.delete(row)
         session.flush()
+        if parent is not None:
+            session.delete(parent)
+            session.flush()
 
         remaining_runs = session.scalar(
             select(func.count()).select_from(InvestigationRunRow).where(
@@ -324,8 +374,11 @@ class SqlAlchemyIncidentRepository:
                 SimulationToolCallRow.simulation_instance_id == simulation_id
             )
         )
-        session.execute(delete(SimulationInstanceRow).where(SimulationInstanceRow.id == simulation_id))
+        session.execute(
+            delete(SimulationInstanceRow).where(SimulationInstanceRow.id == simulation_id)
+        )
         session.flush()
+
     def get_simulation(
         self, session: Session, simulation_id: UUID
     ) -> PhishingScenarioState | None:
@@ -420,6 +473,7 @@ class SqlAlchemyIncidentRepository:
             row.status = target.value
             row.updated_at = now
             row.completed_at = now if is_terminal(target) else None
+            self._sync_agent_run(session, row, target, now)
             self._append_audit(
                 session,
                 incident_id=UUID(row.incident_id),
@@ -721,6 +775,9 @@ class SqlAlchemyIncidentRepository:
                 row.status = InvestigationStatus.INTERRUPTED.value
                 row.updated_at = now
                 row.completed_at = now
+                self._sync_agent_run(
+                    session, row, InvestigationStatus.INTERRUPTED, now
+                )
                 self._append_audit(
                     session,
                     incident_id=UUID(row.incident_id),
@@ -735,6 +792,21 @@ class SqlAlchemyIncidentRepository:
                 )
             session.flush()
         return len(rows)
+
+    @staticmethod
+    def _sync_agent_run(
+        session: Session,
+        investigation: InvestigationRunRow,
+        status: InvestigationStatus,
+        now: datetime,
+    ) -> None:
+        row = session.get(AgentRunRow, investigation.id)
+        if row is None:
+            raise InvestigationNotFound(UUID(investigation.id))
+        row.status = _GENERIC_INVESTIGATION_STATUSES[status]
+        row.revision += 1
+        row.updated_at = now
+        row.completed_at = now if is_terminal(status) else None
 
     @staticmethod
     def _require_run(

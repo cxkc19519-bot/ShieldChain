@@ -127,6 +127,99 @@ class SqlAlchemyReactRepository:
         ).scalar_one_or_none()
         return _loop(row) if row else None
 
+    def get_by_run(self, session: Session, *, tenant_id: UUID, run_id: UUID) -> ReactLoop | None:
+        row = session.execute(
+            select(ReactLoopRow).where(
+                ReactLoopRow.run_id == str(run_id),
+                ReactLoopRow.tenant_id == str(tenant_id),
+            )
+        ).scalar_one_or_none()
+        return _loop(row) if row else None
+
+    def transition_status(
+        self,
+        session: Session,
+        *,
+        tenant_id: UUID,
+        current: ReactLoop,
+        target: ReactLoopStatus,
+        now: datetime,
+    ) -> ReactLoop:
+        allowed = {
+            ReactLoopStatus.RUNNING: {
+                ReactLoopStatus.AWAITING_EXECUTION,
+                ReactLoopStatus.AWAITING_HUMAN,
+                ReactLoopStatus.TERMINATED,
+            },
+            ReactLoopStatus.AWAITING_EXECUTION: {
+                ReactLoopStatus.RUNNING,
+                ReactLoopStatus.AWAITING_HUMAN,
+                ReactLoopStatus.TERMINATED,
+            },
+        }
+        if target not in allowed.get(current.status, set()):
+            raise ReactBoundaryViolation("automated loop status transition is not allowed")
+        changed = replace(
+            current,
+            status=target,
+            revision=current.revision + 1,
+            updated_at=now,
+        )
+        result = session.execute(
+            update(ReactLoopRow)
+            .where(
+                ReactLoopRow.id == str(current.id),
+                ReactLoopRow.tenant_id == str(tenant_id),
+                ReactLoopRow.status == current.status.value,
+                ReactLoopRow.revision == current.revision,
+            )
+            .values(status=target.value, revision=changed.revision, updated_at=now)
+        )
+        if result.rowcount != 1:
+            raise StaleReactLoop("automated loop status transition is stale")
+        session.flush()
+        return changed
+
+    def append_observation(
+        self,
+        session: Session,
+        *,
+        tenant_id: UUID,
+        loop: ReactLoop,
+        observation: ReactObservation,
+    ) -> None:
+        if (
+            observation.loop_id,
+            observation.case_id,
+            observation.run_id,
+        ) != (loop.id, loop.case_id, loop.run_id):
+            raise ReactBoundaryViolation("observation crosses loop boundary")
+        existing = session.get(ReactObservationRow, str(observation.id))
+        if existing is not None:
+            if existing.tenant_id != str(tenant_id):
+                raise ReactBoundaryViolation("observation belongs to another tenant")
+            return
+        session.add(
+            ReactObservationRow(
+                id=str(observation.id),
+                loop_id=str(observation.loop_id),
+                tenant_id=str(tenant_id),
+                case_id=str(observation.case_id),
+                run_id=str(observation.run_id),
+                iteration=observation.iteration,
+                source=observation.source.value,
+                status=observation.status,
+                reason_code=observation.reason_code,
+                references_json=[item.to_dict() for item in observation.references],
+                tool_call_id=str(observation.tool_call_id) if observation.tool_call_id else None,
+                verification_id=str(observation.verification_id)
+                if observation.verification_id
+                else None,
+                observed_at=observation.observed_at,
+            )
+        )
+        session.flush()
+
     def commit_step(
         self, session: Session, *, tenant_id: UUID, bundle: ReactStepBundle
     ) -> ReactLoop:
@@ -169,6 +262,7 @@ class SqlAlchemyReactRepository:
                 observed_at=bundle.observation.observed_at,
             )
         )
+        session.flush()
         session.add(
             ReactAssessmentRow(
                 id=str(bundle.assessment.id),
@@ -181,6 +275,7 @@ class SqlAlchemyReactRepository:
                 assessed_at=bundle.assessment.assessed_at,
             )
         )
+        session.flush()
         if bundle.plan:
             session.add(
                 ReactPlanRevisionRow(
@@ -198,6 +293,7 @@ class SqlAlchemyReactRepository:
                     created_at=bundle.plan.created_at,
                 )
             )
+            session.flush()
         session.add(
             ReactDecisionRow(
                 id=str(bundle.decision.id),

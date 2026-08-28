@@ -90,6 +90,7 @@ def action(**changes):
 
 def test_enums_are_closed_and_explicit() -> None:
     assert ReactDecision.QUERY_STATUS.value == "query_status"
+    assert FailureCategory.COMPLETED.value == "completed"
     assert FailureCategory.UNCLASSIFIED_FAILURE.value == "unclassified_failure"
     assert "execute_arbitrary" not in ReactDecision._value2member_map_
 

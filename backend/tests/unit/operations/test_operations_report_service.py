@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+
 from shieldchain.core.config import Settings
+from shieldchain.db.base import Base
+from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.operations import service as service_module
 from shieldchain.operations.react_collaboration import (
     _SPECIALISTS,
+    AgentToolBroker,
     RealDataAgentTeam,
-    _ToolBroker,
 )
-from shieldchain.operations.schemas import McpToolCallView, OperationsReportRequest
+from shieldchain.operations.schemas import (
+    McpToolCallView,
+    OperationsReportRequest,
+    OperationsReportView,
+)
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 
 
 class FakeTool:
+    identity = UUID("00000000-0000-4000-8000-000000009999")
+    provider_kind = "builtin"
+    provider_id = "test.operations"
+    catalog_revision = "test-v1"
+    schema_revision = "test-v1"
+
     def __init__(self, name: str, label: str, items: list[str]) -> None:
         self.name = name
         self.label = label
@@ -36,6 +50,23 @@ class FakeTool:
             summary=f"{self.label} 返回 {len(self.items)} 项。",
             items=self.items,
         )
+
+
+class FailingTool:
+    identity = UUID("00000000-0000-4000-8000-000000009998")
+    name = "security.alerts.list"
+    label = "告警 MCP"
+    provider_kind = "builtin"
+    provider_id = "test.operations"
+    catalog_revision = "test-v1"
+    schema_revision = "test-v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def call(self, _start_at: datetime, _end_at: datetime) -> McpToolCallView:
+        self.calls += 1
+        raise RuntimeError("private dependency detail")
 
 
 def _tools() -> tuple[FakeTool, ...]:
@@ -58,8 +89,10 @@ def _team(settings: Settings | None = None) -> RealDataAgentTeam:
 
 def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Path) -> None:
     tools = _tools()
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'operations-unit.db'}")
+    Base.metadata.create_all(engine)
     agent = SecurityOperationsReportAgent(
-        None,  # type: ignore[arg-type]
+        create_session_factory(engine),
         settings=Settings(_env_file=None),
         tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
         store=OperationsReportStore(tmp_path),
@@ -81,12 +114,52 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
         )
     )
 
-    assert len(report.stages) == 6
+    assert len(report.stages) == 7
+    assert report.response_plan is not None
+    assert report.response_plan.status == "completed_advisory"
+    assert report.response_plan.execution_status == "not_executed"
+    response_role = next(item for item in report.collaboration if item.role == "response_planning")
+    assert response_role.response_plan is not None
+    assert response_role.response_plan.plan_id == report.response_plan.plan_id
     assert {item.name for item in report.tool_calls} == {tool.name for tool in tools}
     assert all(tool.calls == 1 for tool in tools)
     assert "<script>" not in report.html
     assert "&lt;script&gt;" in report.html
     assert agent.get(report.id) == report
+    engine.dispose()
+
+
+def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
+    store = OperationsReportStore(tmp_path)
+    path = tmp_path / "operations-reports" / "reports.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "OPS-LEGACY",
+                    "generated_at": "2026-08-01T00:00:00Z",
+                    "start_at": "2026-08-01T00:00:00Z",
+                    "end_at": "2026-08-02T00:00:00Z",
+                    "agent_name": "安全运营报告智能体",
+                    "model": None,
+                    "stages": [],
+                    "collaboration": [],
+                    "tool_calls": [],
+                    "markdown": "legacy",
+                    "html": "<p>legacy</p>",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = store.list()[0]
+
+    assert isinstance(report, OperationsReportView)
+    assert report.run_id is None
+    assert report.run_status == "legacy_without_run"
+    assert report.response_plan is None
 
 
 def test_react_superagent_controls_specialist_order() -> None:
@@ -132,7 +205,7 @@ def test_specialist_model_selects_only_needed_tool() -> None:
     team = _team(Settings(_env_file=None, deepseek_api_key="test-key"))
     tools = _tools()
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker(tools, start_at, start_at)
+    broker = AgentToolBroker(tools, start_at, start_at)
     responses = iter(
         [
             {
@@ -180,7 +253,7 @@ def test_specialist_model_selects_only_needed_tool() -> None:
 def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
     tools = _tools()
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker(tools, start_at, start_at)
+    broker = AgentToolBroker(tools, start_at, start_at)
 
     catalog = broker.catalog(_SPECIALISTS["threat_investigation"].allowed_tools)
 
@@ -207,13 +280,70 @@ def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
 
 def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> None:
     start_at = datetime(2026, 8, 1, tzinfo=UTC)
-    broker = _ToolBroker((), start_at, start_at)
+    broker = AgentToolBroker((), start_at, start_at)
 
     catalog = broker.catalog(_SPECIALISTS["knowledge_retrieval"].allowed_tools)
 
     assert [item["name"] for item in catalog] == ["knowledge.rag.retrieve"]
     assert "query" in catalog[0]["parameters"]
     assert "当前事件的已确认事实" in catalog[0]["do_not_use_when"]
+
+
+@pytest.mark.parametrize(
+    ("start_at", "end_at"),
+    [
+        (datetime(2026, 8, 1), datetime(2026, 8, 2)),
+        (datetime(2026, 8, 2, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC)),
+        (
+            datetime(2026, 8, 1, tzinfo=UTC),
+            datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=31, seconds=1),
+        ),
+    ],
+)
+def test_agent_tool_broker_rejects_invalid_time_windows(
+    start_at: datetime, end_at: datetime
+) -> None:
+    with pytest.raises(ValueError):
+        AgentToolBroker((), start_at, end_at)
+
+
+def test_agent_tool_broker_caches_sanitized_failure() -> None:
+    tool = FailingTool()
+    now = datetime(2026, 8, 1, tzinfo=UTC)
+    broker = AgentToolBroker((tool,), now, now)
+
+    first = asyncio.run(broker.call(tool.name))
+    second = asyncio.run(broker.call(tool.name))
+
+    assert first is second
+    assert first.status == "failed"
+    assert first.reason_code == "tool_dependency_failed"
+    assert first.result_count == 0
+    assert first.items == []
+    assert "private dependency detail" not in first.summary
+    assert tool.calls == 1
+
+
+def test_failed_tool_is_not_analyzed_as_zero_risk() -> None:
+    failed = McpToolCallView(
+        name="security.alerts.list",
+        label="告警 MCP",
+        status="failed",
+        reason_code="tool_dependency_failed",
+        arguments={
+            "start_at": "2026-08-01T00:00:00+00:00",
+            "end_at": "2026-08-02T00:00:00+00:00",
+            "limit": 50,
+        },
+        result_count=0,
+        summary="告警工具调用失败；未取得可信结果，需人工复核。",
+        items=[],
+    )
+
+    analysis = SecurityOperationsReportAgent._analyze([failed])
+
+    assert analysis["failed_tools"] == ["security.alerts.list"]
+    assert "不能据此判定无风险" in str(analysis["summary"])
 
 
 def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(

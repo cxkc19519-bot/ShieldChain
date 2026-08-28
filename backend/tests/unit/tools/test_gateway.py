@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from uuid import UUID, uuid4
 
 import pytest
@@ -56,6 +58,20 @@ def bound(tool: str = "block_ip") -> BoundToolRequest:
     )
 
 
+def bound_with_timeout(tool: str, timeout_seconds: float) -> BoundToolRequest:
+    current = bound(tool)
+    return replace(
+        current,
+        registration=replace(
+            current.registration,
+            definition=replace(
+                current.registration.definition,
+                timeout_seconds=timeout_seconds,
+            ),
+        ),
+    )
+
+
 def context(**changes: object) -> ToolPolicyContext:
     values = {
         "tenant_id": TENANT,
@@ -90,12 +106,16 @@ class Store:
         self.attempts = []
         self.verifications = []
         self.atomic_sections = 0
+        self.commits = 0
         self.released_leases = []
 
     @contextmanager
     def atomic(self):
         self.atomic_sections += 1
         yield
+
+    def commit(self):
+        self.commits += 1
 
     def create_or_get(self, *, tenant_id, bound, request_id):
         if self.call is not None:
@@ -189,6 +209,31 @@ class Adapter:
         )
 
 
+class BlockingExecutionAdapter(Adapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = Event()
+        self.completed = Event()
+
+    def execute(self, request):
+        self.executed.append(request)
+        self.release.wait(timeout=1)
+        self.completed.set()
+        return self.execution
+
+
+class BlockingVerificationAdapter(Adapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = Event()
+        self.completed = Event()
+
+    def verify(self, request, execution, *, now):
+        self.release.wait(timeout=1)
+        self.completed.set()
+        return super().verify(request, execution, now=now)
+
+
 def submit(store: Store, adapter: Adapter, *, tool="block_ip", **context_changes):
     return TrustedToolGateway().submit(
         bound=bound(tool),
@@ -209,6 +254,7 @@ def test_fixed_pipeline_auto_approves_executes_and_verifies() -> None:
     assert adapter.executed == [bound()]
     assert len(store.attempts) == len(store.verifications) == 1
     assert store.atomic_sections == 4
+    assert store.commits == 3
 
 
 def test_denied_and_approval_required_calls_do_not_reach_adapter() -> None:
@@ -359,6 +405,46 @@ def test_timeout_is_unknown_and_is_never_retried_even_for_read_only_tool() -> No
     assert result.call.status is TrustedToolCallStatus.NEEDS_REVIEW
     assert len(adapter.executed) == len(store.attempts) == 1
     assert store.released_leases[0].release_reason == "outcome_unknown"
+
+
+def test_gateway_enforces_adapter_execution_deadline_without_replay() -> None:
+    store = Store()
+    adapter = BlockingExecutionAdapter()
+
+    result = TrustedToolGateway().submit(
+        bound=bound_with_timeout("block_ip", 0.05),
+        context=context(),
+        store=store,
+        adapter=adapter,
+        request_id="req-gateway-deadline",
+    )
+
+    assert result.call.status is TrustedToolCallStatus.NEEDS_REVIEW
+    assert result.attempt is not None
+    assert result.attempt.outcome is ExecutionOutcome.UNKNOWN
+    assert result.attempt.error_category == "timeout"
+    assert adapter.completed.is_set() is False
+    assert len(adapter.executed) == 1
+    adapter.release.set()
+
+
+def test_gateway_enforces_verification_deadline_as_inconclusive() -> None:
+    store = Store()
+    adapter = BlockingVerificationAdapter()
+
+    result = TrustedToolGateway().submit(
+        bound=bound_with_timeout("block_ip", 0.05),
+        context=context(),
+        store=store,
+        adapter=adapter,
+        request_id="req-verification-deadline",
+    )
+
+    assert result.call.status is TrustedToolCallStatus.NEEDS_REVIEW
+    assert result.verification is not None
+    assert result.verification.outcome is VerificationOutcome.INCONCLUSIVE
+    assert adapter.completed.is_set() is False
+    adapter.release.set()
 
 
 def test_state_changing_failure_is_never_blindly_retried() -> None:

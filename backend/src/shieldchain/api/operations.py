@@ -21,13 +21,15 @@ def _agent(request: Request) -> SecurityOperationsReportAgent:
 @router.post("", response_model=OperationsReportView, status_code=status.HTTP_201_CREATED)
 async def create_report(payload: OperationsReportRequest, request: Request) -> OperationsReportView:
     try:
-        return await _agent(request).generate(payload)
+        return await _agent(request).generate(payload, request_id=str(request.state.request_id))
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
 
 
 @router.get("", response_model=OperationsReportListResponse)
-def list_reports(request: Request, limit: int = Query(default=30, ge=1, le=100)) -> OperationsReportListResponse:
+def list_reports(
+    request: Request, limit: int = Query(default=30, ge=1, le=100)
+) -> OperationsReportListResponse:
     return OperationsReportListResponse(items=_agent(request).list(limit))
 
 

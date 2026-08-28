@@ -109,7 +109,9 @@ class IncidentQueryService:
                         endpoint=incident.endpoint,
                         created_at=_utc(run.created_at),
                         updated_at=_utc(run.updated_at),
-                        completed_at=_utc(run.completed_at) if run.completed_at is not None else None,
+                        completed_at=(
+                            _utc(run.completed_at) if run.completed_at is not None else None
+                        ),
                     )
                     for run, incident in rows
                 ]

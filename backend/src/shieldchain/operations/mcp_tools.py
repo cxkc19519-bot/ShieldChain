@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
@@ -48,16 +50,39 @@ def _behavior_categories(evidence: dict[str, object]) -> tuple[str, ...]:
     return tuple(categories[:5])
 
 
-class ReadOnlyMcpTool(Protocol):
+class ReadOnlyAgentTool(Protocol):
+    identity: UUID
     name: str
     label: str
+    provider_kind: str
+    provider_id: str
+    catalog_revision: str
+    schema_revision: str
 
-    def call(self, start_at: datetime, end_at: datetime) -> McpToolCallView: ...
+    def call(
+        self, start_at: datetime, end_at: datetime
+    ) -> McpToolCallView | AgentToolExecutionResult | Awaitable[AgentToolExecutionResult]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolExecutionResult:
+    view: McpToolCallView
+    result_bytes: int | None = None
+    truncated: bool = False
+
+
+# Kept for callers that still use the old façade name while the protocol adapter is introduced.
+ReadOnlyMcpTool = ReadOnlyAgentTool
 
 
 class _BaseWazuhTool:
+    identity = UUID("00000000-0000-4000-8000-000000001000")
     name = ""
     label = ""
+    provider_kind = "builtin"
+    provider_id = "shieldchain.operations"
+    catalog_revision = "builtin-read-only-v1"
+    schema_revision = "operations-time-window-v1"
 
     def __init__(self, session_factory: sessionmaker[Session], tenant_id: UUID) -> None:
         self._session_factory = session_factory
@@ -91,6 +116,7 @@ class _BaseWazuhTool:
 class EventMcpTool(_BaseWazuhTool):
     """Read-only MCP façade for review cases generated from incoming events."""
 
+    identity = UUID("00000000-0000-4000-8000-000000001001")
     name = "security.events.list"
     label = "事件 MCP"
 
@@ -124,6 +150,7 @@ class EventMcpTool(_BaseWazuhTool):
 
 
 class AlertMcpTool(_BaseWazuhTool):
+    identity = UUID("00000000-0000-4000-8000-000000001002")
     name = "security.alerts.list"
     label = "告警 MCP"
 
@@ -158,6 +185,7 @@ class AlertMcpTool(_BaseWazuhTool):
 
 
 class VulnerabilityMcpTool(_BaseWazuhTool):
+    identity = UUID("00000000-0000-4000-8000-000000001003")
     name = "security.vulnerabilities.list"
     label = "漏洞 MCP"
 
@@ -203,6 +231,7 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
 
 
 class WeakPasswordMcpTool(_BaseWazuhTool):
+    identity = UUID("00000000-0000-4000-8000-000000001004")
     name = "security.weak_passwords.list"
     label = "弱口令 MCP"
 
@@ -238,10 +267,10 @@ class WeakPasswordMcpTool(_BaseWazuhTool):
         )
 
 
-def standard_mcp_tools(
+def standard_agent_tools(
     session_factory: sessionmaker[Session], tenant_id: UUID
-) -> tuple[ReadOnlyMcpTool, ...]:
-    """The report agent is intentionally bound to these four read-only MCP tools only."""
+) -> tuple[ReadOnlyAgentTool, ...]:
+    """Return the four internal read-only tools available to the report agent."""
 
     return (
         EventMcpTool(session_factory, tenant_id),
@@ -249,3 +278,6 @@ def standard_mcp_tools(
         VulnerabilityMcpTool(session_factory, tenant_id),
         WeakPasswordMcpTool(session_factory, tenant_id),
     )
+
+
+standard_mcp_tools = standard_agent_tools

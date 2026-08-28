@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+
+pytest.importorskip("torch", reason="local-rag is an optional runtime profile")
 
 from shieldchain.rag.local_model_server import create_model_app
 

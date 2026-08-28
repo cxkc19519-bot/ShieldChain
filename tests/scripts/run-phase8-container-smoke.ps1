@@ -12,8 +12,12 @@ else {
     $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 }
 
-$pythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-if (Test-Path -LiteralPath $pythonPath) {
+$pythonPaths = @(
+    (Join-Path $ProjectRoot "backend\.venv\Scripts\python.exe"),
+    (Join-Path $ProjectRoot ".venv\Scripts\python.exe")
+)
+$pythonPath = $pythonPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not [string]::IsNullOrWhiteSpace($pythonPath)) {
     $pythonCommand = $pythonPath
 }
 else {
