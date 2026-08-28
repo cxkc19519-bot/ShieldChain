@@ -7,7 +7,23 @@ REAL_MODEL_PLANNING_TESTED=False
 REAL_DEVICE_PATHS_TESTED=False
 CI_RUNTIME_TESTED=False
 
-> 文档状态：当前验证摘要（更新于 2026-08-24）。Phase 8 历史报告保留当时结果，本页记录当前功能相关验证。
+> 文档状态：当前验证摘要（更新于 2026-08-28）。以下先记录分支整合验证，再保留各分支的历史结果；历史实时链路状态不代表本次重新验收。
+
+## 2026-08-28 同门分支整合验证
+
+集成分支：`codex/merge-team-20260828`；目标：仓库默认分支 `codex/phase-6-react-loop`。合并请求：[PR #1](https://github.com/cxkc19519-bot/ShieldChain/pull/1)。`main` 无共同祖先，本次未修改。
+
+- 后端全量：`1194 passed, 26 skipped`（131.73 秒）；24 项为已退役仿真路由归档，1 项为可选本地模型运行环境，1 项为需显式开启的付费模型测试。
+- 前端全量：30 个文件、114 项通过；TypeScript、ESLint 与 Vite 生产构建通过。
+- 根目录脚本与 NTA 回归：60 项通过、4 个 subtests 通过；V11～V13 脚本和既有专项测试未被覆盖或删改。
+- Ruff、`pip check` 通过；`npm audit --audit-level=moderate` 为 0 漏洞。
+- Task 14 MCP conformance、16 项后端 smoke、13 项前端 smoke、12 项容器静态合同通过。
+- 临时 SQLite 实际执行 `upgrade head → downgrade -1 → upgrade head`，最终为 `20260824_08`，没有操作真实数据库。
+- 新增兼容性回归覆盖响应计划与公开审计字段共存、旧报告缺失新字段、拒绝非法/私有字段、RAG 成功/空/失败、工具失败不能解释成无风险、计划生成不能解释成已审批。
+- 修复两项测试隔离问题：远程 MCP 快照测试使用固定时钟，Windows 解析器子进程测试显式添加测试模块路径；没有放松运行时过期检查或解析超时限制。
+- 本次本地未验收 Docker 运行、真实外部 MCP/身份提供方、付费模型或真实设备执行；GitHub CI 结果以 PR #1 检查页为准。服务器未部署或重启。
+
+## 历史验证记录
 
 ## 已执行验证
 
