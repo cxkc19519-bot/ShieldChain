@@ -1,0 +1,5 @@
+sample_docs/security_vertical/*.md text eol=lf
+sample_docs/security_vertical/*.html text eol=lf
+sample_docs/security_vertical/*.json text eol=lf
+sample_docs/security_vertical/evaluation/*.json text eol=lf
+sample_docs/security_vertical/*.pdf binary
