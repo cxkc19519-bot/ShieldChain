@@ -15,6 +15,7 @@ MAX_CASES = 10_000
 MAX_RANKED_ITEMS = 1_000
 MAX_IDENTIFIER_LENGTH = 200
 MAX_QUERY_LENGTH = 8_192
+MAX_CLAIMS_PER_CASE = 100
 MAX_CALLS_PER_CASE = 10_000
 MAX_LATENCY_MS = 86_400_000.0
 MAX_COST_USD = 1_000_000.0
@@ -39,6 +40,14 @@ def _ids(value: object, field: str) -> tuple[str, ...]:
     if len(set(result)) != len(result):
         raise ValueError(f"{field} must not contain duplicates")
     return result
+
+
+def _claims(value: object, field: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TypeError(f"{field} must be a sequence")
+    if len(value) > MAX_CLAIMS_PER_CASE:
+        raise ValueError(f"{field} must not exceed {MAX_CLAIMS_PER_CASE} items")
+    return tuple(_text(item, field, maximum=MAX_QUERY_LENGTH) for item in value)
 
 
 def _finite_number(value: object, field: str, *, minimum: float, maximum: float) -> float:
@@ -118,6 +127,8 @@ class EvaluationObservation:
     estimated_cost_usd: float
     call_count: int
     failed_call_count: int
+    answer_claims: Sequence[str] = ()
+    cited_evidence_texts: Sequence[str] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_id", _text(self.case_id, "case_id"))
@@ -148,6 +159,12 @@ class EvaluationObservation:
         )
         if self.failed_call_count > self.call_count:
             raise ValueError("failed_call_count must not exceed call_count")
+        claims = _claims(self.answer_claims, "answer_claims")
+        evidence = _claims(self.cited_evidence_texts, "cited_evidence_texts")
+        if self.refused and claims:
+            raise ValueError("refused observations must not contain answer claims")
+        object.__setattr__(self, "answer_claims", claims)
+        object.__setattr__(self, "cited_evidence_texts", evidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,8 +186,6 @@ class EvaluationDataset:
             raise TypeError("cases must contain EvaluationCase values")
         if len({case.case_id for case in cases}) != len(cases):
             raise ValueError("case identifiers must be unique")
-        if {case.language for case in cases} != {"zh", "en"}:
-            raise ValueError("dataset must contain both Chinese and English cases")
         if (
             not isinstance(self.digest_sha256, str)
             or len(self.digest_sha256) != 64
@@ -243,12 +258,15 @@ def load_evaluation_dataset(path: str | Path) -> EvaluationDataset:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return EvaluationDataset(
+    dataset = EvaluationDataset(
         dataset_id=document["dataset_id"],
         version=document["version"],
         cases=cases,
         digest_sha256=sha256(canonical).hexdigest(),
     )
+    if {case.language for case in dataset.cases} != {"zh", "en"}:
+        raise ValueError("dataset must contain both Chinese and English cases")
+    return dataset
 
 
 def evaluate(
@@ -281,6 +299,9 @@ def evaluate(
     reranked_ndcg: list[float] = []
     citation_correct = 0
     citation_denominator = 0
+    citation_precision_values: list[float] = []
+    expected_citation_recall_values: list[float] = []
+    extractive_faithfulness_values: list[float] = []
     refusal_correct = 0
     latencies: list[float] = []
     total_cost = 0.0
@@ -301,8 +322,36 @@ def evaluate(
         citation_denominator += max(len(expected_citations), len(actual_citations))
 
         if case.relevance:
-            result_ids = observation.reranked_ids[:k]
             relevant = set(case.relevance)
+            citation_precision_values.append(
+                len(relevant & actual_citations) / len(actual_citations)
+                if actual_citations
+                else 0.0
+            )
+            expected_citation_recall_values.append(
+                len(expected_citations & actual_citations) / len(expected_citations)
+                if expected_citations
+                else 1.0
+            )
+            normalized_evidence = tuple(
+                _normalized_text(text) for text in observation.cited_evidence_texts
+            )
+            extractive_faithfulness_values.append(
+                _mean(
+                    [
+                        float(
+                            any(
+                                _normalized_text(claim) in evidence
+                                for evidence in normalized_evidence
+                            )
+                        )
+                        for claim in observation.answer_claims
+                    ]
+                )
+                if observation.answer_claims
+                else 0.0
+            )
+            result_ids = observation.reranked_ids[:k]
             recall_values.append(len(relevant & set(result_ids)) / len(relevant))
             reciprocal_ranks.append(_reciprocal_rank(result_ids, relevant))
             baseline_ndcg.append(_ndcg(observation.baseline_ids[:k], case.relevance, k))
@@ -329,6 +378,13 @@ def evaluate(
             "rerank_gain_at_k": _rounded(reranked - baseline),
             "citation_correctness": _rounded(
                 citation_correct / citation_denominator if citation_denominator else 1.0
+            ),
+            "citation_precision": _rounded(_mean(citation_precision_values)),
+            "expected_citation_recall": _rounded(
+                _mean(expected_citation_recall_values)
+            ),
+            "extractive_faithfulness": _rounded(
+                _mean(extractive_faithfulness_values)
             ),
             "refusal_accuracy": _rounded(refusal_correct / len(dataset.cases)),
         },
@@ -384,6 +440,10 @@ def _rounded(value: float) -> float:
     return 0.0 if result == 0 else result
 
 
+def _normalized_text(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def _validate_report_schema(payload: Mapping[str, Any]) -> None:
     if not isinstance(payload, Mapping):
         raise TypeError("report payload must be a mapping")
@@ -398,6 +458,9 @@ def _validate_report_schema(payload: Mapping[str, Any]) -> None:
             "baseline_ndcg_at_k",
             "rerank_gain_at_k",
             "citation_correctness",
+            "citation_precision",
+            "expected_citation_recall",
+            "extractive_faithfulness",
             "refusal_accuracy",
         },
         "operations": {

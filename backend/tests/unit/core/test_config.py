@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import AnyHttpUrl, ValidationError
 
@@ -22,6 +24,7 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.mcp_remote_config_path is None
     assert settings.mcp_remote_snapshot_ttl_seconds == 3600
     assert settings.mcp_remote_max_tools == 100
+    assert settings.rag_evaluation_root == Path("sample_docs/security_vertical/evaluation")
 
 
 def test_remote_mcp_limits_are_bounded_and_empty_path_is_disabled() -> None:

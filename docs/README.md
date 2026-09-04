@@ -1,6 +1,6 @@
 # ShieldChain 文档中心
 
-> 文档状态：当前入口（更新于 2026-08-28）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
+> 文档状态：当前入口（更新于 2026-09-04）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
 
 ## 当前系统
 
@@ -17,11 +17,11 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 - 离线仿真案件已连接耐久租约、执行/验证 deadline、ReAct 观察、状态查询、失败 revision、人工接管、周期恢复和成功尝试状态重建；只有全部必需验证成功才关闭运行，真实设备闭环仍未接入；
 - REST 已提供 MCP 状态/目录/peer、Agent Tool/MCP 调用、响应计划、可信调用和 ReAct 的安全公开投影；处置中心明确区分建议、计划接受、工具审批、执行和验证；
 - 当前没有真实管理员 RBAC，生产环境只允许上述只读投影，计划、工具、急停和 ReAct REST 写控制保持关闭；
-- RAG 支持持久化知识库、语义分块、混合召回、向量检索和重排；
-- 智能助手基于知识库与历史报告回答问题并持久化对话记忆；
+- RAG 支持持久化知识库、语义分块、中文短语 BM25、混合召回、向量检索、重排、来源引用以及过期/冲突/无依据拒答；内置安全垂直知识包具备来源、哈希、复核期限和使用政策校验，可从知识库页面幂等导入；
+- 智能助手基于知识库与历史报告回答问题并持久化对话记忆；8 条中英文固定集可从 API、页面或隔离脚本复跑，2026-09-04 离线抽取式门禁 8/8 通过；
 - 可通过外部 DeepSeek API 或本地 vLLM `Qwen3-30B-A3B-Instruct-2507-FP8` 提供模型能力；
 - 模型只负责分析、规划和建议，真实处置仍受策略、审批、可信工具网关与执行后验证约束。
-- Task 0～15 统一实施与安全加固已完成：官方 SDK MCP conformance、migration head `20260824_08`/往返、后端 `1190 passed, 27 skipped`、前端 `107 passed`、静态容器安全合同和前端零漏洞依赖审计均已记录；Docker runtime、真实身份/peer/设备仍未验收。
+- Task 0～15 统一实施与安全加固已完成：官方 SDK MCP conformance、migration head `20260824_08`/往返、后端 `1226 passed, 26 skipped`、前端 `120 passed`、静态容器安全合同和前端依赖审计均已记录；Docker runtime、真实身份/peer/设备及当前版本完整模型链路仍未验收。
 
 ## 阅读顺序
 
@@ -37,6 +37,9 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 10. [可安装 Skills 运行时实施方案](plans/skills-runtime-implementation.md)
 11. [MCP、响应规划、智能体工具与安全闭环统一实施方案](plans/mcp-agent-tools-response-safety-loop-implementation.md)
 12. [MCP 与安全闭环加固合并交接说明](delivery/mcp-safety-hardening-merge-handoff-20260828.md)
+13. [安全知识库、RAG 与智能助手实施方案](plans/security-knowledge-rag-assistant-implementation.md)
+14. [助手固定基线](reports/assistant-security-vertical-baseline-2026-09-04.md)
+15. [完整模型预检](reports/full-model-preflight-2026-09-04.md)
 
 ## 文档状态约定
 

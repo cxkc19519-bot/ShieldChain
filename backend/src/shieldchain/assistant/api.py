@@ -15,8 +15,14 @@ from .schemas import (
     AssistantConversationPinRequest,
     AssistantConversationRenameRequest,
     AssistantConversationView,
+    AssistantEvaluationRequest,
+    AssistantEvaluationResponse,
 )
-from .service import AssistantUnavailable, GroundedAssistantService
+from .service import (
+    AssistantEvaluationRejected,
+    AssistantUnavailable,
+    GroundedAssistantService,
+)
 from .store import ConversationNotFound, LocalConversationStore
 
 router = APIRouter(tags=["assistant"])
@@ -103,3 +109,13 @@ async def chat(payload: AssistantChatRequest, request: Request) -> AssistantChat
         raise ApiError("conversation_not_found", "Conversation not found", 404) from None
     except AssistantUnavailable as error:
         raise ApiError("assistant_unavailable", str(error), 503) from None
+
+
+@router.post("/assistant/evaluations", response_model=AssistantEvaluationResponse)
+async def evaluate_assistant(
+    payload: AssistantEvaluationRequest, request: Request
+) -> AssistantEvaluationResponse:
+    try:
+        return await _service(request).evaluate(payload)
+    except AssistantEvaluationRejected as error:
+        raise ApiError("assistant_evaluation_rejected", str(error), 422) from None

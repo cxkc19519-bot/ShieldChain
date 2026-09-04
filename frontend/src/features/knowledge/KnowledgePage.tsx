@@ -6,6 +6,7 @@ import {
   createKnowledgeBase,
   deleteDocument,
   deleteKnowledgeBase,
+  importSecurityVerticalPack,
   listDocumentChunks,
   listDocuments,
   listKnowledgeBases,
@@ -16,7 +17,14 @@ import {
   runEvaluation,
   uploadDocument,
 } from './api'
-import type { EvaluationSummary, KnowledgeBase, KnowledgeChunk, KnowledgeDocument, RetrievalResult } from './types'
+import type {
+  CuratedPackImportSummary,
+  EvaluationSummary,
+  KnowledgeBase,
+  KnowledgeChunk,
+  KnowledgeDocument,
+  RetrievalResult,
+} from './types'
 import './knowledge.css'
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md', '.html']
@@ -149,8 +157,33 @@ function Evaluation({ summary }: { summary: EvaluationSummary }) {
     <section aria-labelledby="evaluation-title" className="evaluation-summary">
       <h3 id="evaluation-title">评测摘要</h3>
       <p><strong>{summary.dataset_id}</strong> · {summary.dataset_version} · {summary.case_count} 条</p>
+      {summary.dataset_sha256 && <p>数据集 SHA-256：<code>{summary.dataset_sha256}</code></p>}
       <p className={`quality-gate ${summary.quality_gate_passed ? '' : 'quality-gate--failed'}`}>{summary.quality_gate_passed ? '质量门禁通过' : '质量门禁未通过'}</p>
       <dl className="metric-grid">{Object.entries(summary.metrics).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl>
+      <details>
+        <summary>查看门禁阈值</summary>
+        <dl className="metric-grid">{Object.entries(summary.thresholds).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl>
+      </details>
+      <h4>逐题诊断</h4>
+      <ol className="result-list">{summary.case_results.map((item) => (
+        <li key={item.case_id}>
+          <details>
+            <summary>{item.passed ? '通过' : '未通过'} · {item.case_id} · {item.language}</summary>
+            <p>{item.query}</p>
+            <dl className="score-grid">
+              <dt>期望文档</dt><dd>{item.expected_document_ids.join('；') || '无（应拒答）'}</dd>
+              <dt>BM25 基线</dt><dd>{item.baseline_document_ids.join('；') || '无'}</dd>
+              <dt>最终召回</dt><dd>{item.retrieved_document_ids.join('；') || '无'}</dd>
+              <dt>实际引用</dt><dd>{item.cited_document_ids.join('；') || '无'}</dd>
+              <dt>拒答</dt><dd>期望 {item.expected_refusal ? '是' : '否'} / 实际 {item.actual_refusal ? '是' : '否'}</dd>
+              <dt>Recall@5</dt><dd>{item.recall_at_k?.toFixed(3) ?? '不适用'}</dd>
+              <dt>引用精确率</dt><dd>{item.citation_precision?.toFixed(3) ?? '不适用'}</dd>
+              <dt>抽取忠实度</dt><dd>{item.extractive_faithfulness?.toFixed(3) ?? '不适用'}</dd>
+              <dt>失败原因</dt><dd>{item.failure_reasons.join('；') || '无'}</dd>
+            </dl>
+          </details>
+        </li>
+      ))}</ol>
     </section>
   )
 }
@@ -164,6 +197,7 @@ export function KnowledgePage() {
   const [newBaseName, setNewBaseName] = useState('')
   const [result, setResult] = useState<RetrievalResult | null>(null)
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null)
+  const [importSummary, setImportSummary] = useState<CuratedPackImportSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -267,12 +301,26 @@ export function KnowledgePage() {
 
       {error && <p className="knowledge-message knowledge-message--error" role="alert">{error}</p>}
       {notice && <p className="knowledge-message" role="status">{notice}</p>}
+      {importSummary && (
+        <p className="knowledge-message" data-testid="curated-pack-summary">
+          权威知识包 {importSummary.pack_version} · 核验 {importSummary.verified_at} ·
+          下次复核 {importSummary.review_due_at} · 新增 {importSummary.imported.length} ·
+          已存在 {importSummary.skipped.length}。{importSummary.usage_policy}
+        </p>
+      )}
 
       {initialLoading && <LoadingState title="正在加载知识库" detail="正在读取公开知识库与文档状态。" />}
       {!initialLoading && (
       <div className="knowledge-layout">
         <aside className="knowledge-bases" aria-label="知识库列表">
           <h3>知识库</h3>
+          <button disabled={busy} type="button" onClick={() => void execute(async (signal) => {
+            const summary = await importSecurityVerticalPack(signal)
+            setImportSummary(summary)
+            setSelectedId(summary.knowledge_base_id)
+          }, '安全垂直知识包已完成完整性校验并导入')}>
+            导入安全垂直知识包
+          </button>
           <form className="create-base" onSubmit={(event) => {
             event.preventDefault()
             const name = newBaseName.trim()

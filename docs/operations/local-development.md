@@ -1,6 +1,6 @@
 # Windows 本地开发与运行
 
-> 文档状态：当前参考（更新于 2026-08-08）。固定钓鱼仿真接口已退役，验证以真实告警、运营报告、RAG 和助手为主。
+> 文档状态：当前参考（更新于 2026-09-02）。固定钓鱼仿真接口已退役，验证以真实告警、运营报告、RAG 和助手为主。
 
 ## 1. 环境
 
@@ -21,6 +21,8 @@ Copy-Item .env.example .env
 
 - `DATABASE_URL`：应用元数据数据库；
 - `RAG_CONTENT_ROOT`：知识库持久化目录；
+- `SECURITY_VERTICAL_PACK_ROOT`：内置安全垂直知识包目录，默认 `sample_docs/security_vertical`；
+- `RAG_EVALUATION_ROOT`：只读固定 RAG 评测集目录，默认 `sample_docs/security_vertical/evaluation`；
 - `ASSISTANT_DATA_ROOT`：助手会话和记忆目录；
 - `WAZUH_WEBHOOK_TOKEN`：Wazuh 转发鉴权；
 - `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_API_KEY`：OpenAI 兼容模型接口；使用本地 vLLM 时由 Compose 覆盖。
@@ -62,6 +64,8 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 
 ## 5. RAG
 
+新环境可先进入 `/knowledge`，点击“导入安全垂直知识包”。服务端会在写入前校验清单、媒体类型、文档哈希、权威来源和复核期限，并直接解析项目内已归档的深信服官方 PDF 与中央网信办官方 HTML 快照；重复操作只跳过已经存在的同名版本。HTML 入库不执行脚本或访问外链，动态法规目录按访问日快照使用。若返回 `curated_pack_invalid`，应检查知识包是否缺失、被修改或已经过期，不应绕过校验。
+
 上传文档后检查：
 
 1. 文档版本状态为成功；
@@ -69,6 +73,19 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 3. “查看分块”显示合理偏移与长度；
 4. 混合检索返回来源、块号和分数；
 5. 重启应用后知识库仍存在。
+
+导入内置知识包后，选中对应知识库并点击“运行评测”，系统会执行 `shieldchain-security-vertical-v1`，而不是返回示例指标。未启动本地 BGE/Milvus/Reranker 时允许得到 BM25 降级结果，但失败率会进入门禁，不能视为完整链路通过。2026-09-03 的首份真实降级基线见 `docs/reports/rag-security-vertical-baseline-2026-09-03.md`。
+
+无需启动前端也可重复执行两套固定评测：
+
+```powershell
+conda run -n ShieldChain python scripts/run_rag_evaluation.py --as-of 2026-09-04
+conda run -n ShieldChain python scripts/run_assistant_evaluation.py --offline --as-of 2026-09-04
+```
+
+第一条会真实探测当前配置的 BGE/Milvus/Reranker，并在不可用时记录失败后降级；第二条专门验证生成模型不可用时的抽取式助手路径。去掉 `--offline` 可测试当前配置的 OpenAI 兼容生成模型。脚本默认使用隔离临时目录，不污染日常知识库和助手会话。
+
+两个脚本都支持 `--output <文件>` 保存纯 JSON 结果，并可用相同的 `--data-root` 复用已导入资料。完整 BGE/Reranker 与 Qwen 同机联调时，使用 `LOCAL_LLM_HOST_PORT=8002` 避免 Qwen 与默认位于 `8001` 的 BGE 服务发生主机端口冲突。服务器复验清单见 `docs/delivery/security-knowledge-rag-assistant-validation-handoff-20260904.md`。
 
 Milvus 或模型不可用时，界面必须显示真实降级状态，不能写成云 RAG 成功。
 

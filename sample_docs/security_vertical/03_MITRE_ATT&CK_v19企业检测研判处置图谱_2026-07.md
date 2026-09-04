@@ -1,10 +1,10 @@
 ﻿# MITRE ATT&CK v19 企业检测、研判与处置图谱（2026-07）
 
-> 版本：ATT&CK v19.1 参考基线｜最后核验：2026-07-27｜资料属性：内部安全知识库。本文面向防御检测、调查和处置设计；不提供入侵操作、攻击载荷或绕过细节。ATT&CK 是行为知识框架，不是事件定性或归因的自动证明。
+> 版本：ATT&CK v19.2 参考基线｜最后核验：2026-09-02｜下次复核不晚于：2026-10-02｜复核角色：检测工程知识库管理员｜资料属性：内部安全知识库。本文面向防御检测、调查和处置设计；不提供入侵操作、攻击载荷或绕过细节。ATT&CK 是行为知识框架，不是事件定性或归因的自动证明。
 
 ## 1. 版本基线与使用原则
 
-MITRE ATT&CK 2026 年 4 月发布 v19，当前版本为 v19 系列。Enterprise 域包含 15 个战术、222 个技术、475 个子技术、44 项缓解措施、697 项检测策略、1758 项分析方法与 106 类数据组件。v19 的重要变化包括：Enterprise ATT&CK 中原“Defense Evasion（防御规避）”被拆分为 “Stealth（隐蔽）”和 “Defense Impairment（防御削弱）”。因此历史告警、数据模型和报表中若仍只用旧战术，应建立可追踪的迁移映射。
+MITRE ATT&CK 2026 年 4 月发布 v19，2026 年 8 月 6 日发布 v19.2，当前知识包以官方 v19.2 数据为版本基线。v19.2 是首次 Agile（敏捷）发布，重点更新 Enterprise 的 Groups、Software 与 Campaigns。对象数量会随官方内容发布变化，本手册不固化容易过期的数量统计；需要精确清单时应读取指定版本的官方 STIX 或 Excel 数据。v19 的重要变化包括：Enterprise ATT&CK 中原“Defense Evasion（防御规避）”被拆分为 “Stealth（隐蔽）”和 “Defense Impairment（防御削弱）”。因此历史告警、数据模型和报表中若仍只用旧战术，应建立可追踪的迁移映射。
 
 ATT&CK 的正确用途是把可观测行为、数据源、检测策略、调查问题和可逆处置动作建立共同语言。不要把“命中一个技术标签”解释为已发生攻击，也不要将 ATT&CK 技术直接等同于某个组织或恶意软件。分析结论必须以本地证据、时序、资产上下文和替代解释为基础。
 
@@ -146,9 +146,10 @@ v19 将旧的防御规避拆为隐蔽与防御削弱，使检测工程可以更�
 
 ## 11. 权威来源与更新规则
 
-1. MITRE ATT&CK Updates（v19/v19.1 与官方更新说明）：https://attack.mitre.org/resources/updates/
+1. MITRE ATT&CK v19.2 更新说明：https://attack.mitre.org/resources/updates/updates-august-2026/
 2. MITRE ATT&CK Changelog：https://attack.mitre.org/resources/changelog.html
 3. MITRE ATT&CK Enterprise：https://attack.mitre.org/matrices/enterprise/
 4. MITRE/CTI 官方数据仓库：https://github.com/mitre-attack/attack-stix-data
+5. MITRE ATT&CK 版本历史：https://attack.mitre.org/resources/versions/
 
 更新节奏：每次 ATT&CK 主版本或补丁发布后 10 个工作日内完成差异评估；关键技术、检测策略或数据组件发生变化时优先更新；每季度结合真实告警与演练复核覆盖矩阵。每次变更保留旧版本、新版本、影响规则、验证结果和负责人。

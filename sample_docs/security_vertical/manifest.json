@@ -1,0 +1,417 @@
+{
+  "schema_version": "1.0",
+  "pack_id": "shieldchain-security-vertical",
+  "name": "ShieldChain 高质量安全垂直知识库",
+  "version": "2026.09.3",
+  "usage_policy": "本知识包保存项目组整理的防御性摘要，并归档清单明确列出的官方公开 PDF 与 HTML 快照供比赛项目离线检索；不批量镜像第三方网站，原始资料的知识产权、许可与使用条件以发布机构页面为准。",
+  "verified_at": "2026-09-02",
+  "review_due_at": "2026-10-02",
+  "documents": [
+    {
+      "filename": "00_安全垂直知识库维护规范_2026-07.md",
+      "title": "安全垂直知识库维护规范（2026-07）",
+      "category": "maintenance_policy",
+      "media_type": "text/markdown",
+      "sha256": "95f7d477be327231ede5e10293043827b551d822e7cae3e0ac03fac70b72b5cd",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "knowledge-governance", "source-primary-authority"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/wxzw/zcfg/",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "CISA",
+          "source_tier": "primary_authority",
+          "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+          "published_at": "2021-11-03",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/resources/updates/",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/resources/versions/",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "01_中国网络与数据安全合规控制基线_2026-07.md",
+      "title": "中国网络与数据安全合规控制基线（2026-07）",
+      "category": "regulatory_policy",
+      "media_type": "text/markdown",
+      "sha256": "92d954e5b15b46958f2f20759fbd5c9bb6577b7385cd0e325593f2368e27c293",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "regulatory-policy", "china", "source-primary-authority"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "合规知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办/中国政府网",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2024-09/30/c_1729384452307680.htm",
+          "published_at": "2024-09-30",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/wxzw/zcfg/xzfg/A09370302index_1.htm",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2026-06/13/c_1783104511414074.htm",
+          "published_at": "2026-06-13",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2025-09/15/c_1759583017717009.htm",
+          "published_at": "2025-09-15",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "中央网信办_网络数据安全管理条例_2024-09-30.html",
+      "title": "网络数据安全管理条例（中央网信办官方原始页面）",
+      "category": "regulatory_policy",
+      "media_type": "text/html",
+      "sha256": "259b6ee82d250a4b6755b565e529554ea5e93ec4b837a9d1872e37264b77beff",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "regulatory-policy", "china", "source-primary-authority", "official-html"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "合规知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办/中国政府网",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2024-09/30/c_1729384452307680.htm",
+          "published_at": "2024-09-30",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "中央网信办_行政法规目录_访问于2026-09-02.html",
+      "title": "国家网信办行政法规目录（2026-09-02 官方页面快照）",
+      "category": "maintenance_policy",
+      "media_type": "text/html",
+      "sha256": "a19203a8bbc1057700ed2a4d788ed9eda5222af1503e2558acc21d04d07a6d58",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "knowledge-governance", "china", "source-primary-authority", "official-index"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "合规知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/wxzw/zcfg/xzfg/A09370302index_1.htm",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "中央网信办_金融信息服务数据分类分级指南答记者问_2026-06-13.html",
+      "title": "金融信息服务数据分类分级指南答记者问（中央网信办官方原始页面）",
+      "category": "regulatory_policy",
+      "media_type": "text/html",
+      "sha256": "ee404b7a274e556246ab4d9fe9e0c6052fa56470829c09cf8857e23fad45fab0",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "regulatory-policy", "finance", "china", "source-primary-authority", "official-html"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "合规知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2026-06/13/c_1783104511414074.htm",
+          "published_at": "2026-06-13",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "中央网信办_国家网络安全事件报告管理办法_2025-09-15.html",
+      "title": "国家网络安全事件报告管理办法（中央网信办官方原始页面）",
+      "category": "regulatory_policy",
+      "media_type": "text/html",
+      "sha256": "f1e2a6b18afac1c92b92e73421e082f02855ca705f083edfc5a2f391b3f0ba5f",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "regulatory-policy", "incident-reporting", "china", "source-primary-authority", "official-html"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "合规知识库管理员",
+      "sources": [
+        {
+          "publisher": "中央网信办",
+          "source_tier": "primary_authority",
+          "url": "https://www.cac.gov.cn/2025-09/15/c_1759583017717009.htm",
+          "published_at": "2025-09-15",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "02_0day与在野利用漏洞响应作战手册_2026-07.md",
+      "title": "0day 与在野利用漏洞响应作战手册（2026-07）",
+      "category": "vulnerability_intelligence",
+      "media_type": "text/markdown",
+      "sha256": "d0dbf3100097e50b1fbd4d94de92572551d5e55875518bbbf8b66f7c205dff30",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "vulnerability-intelligence", "blue-team", "source-primary-authority"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-09-09",
+      "reviewer_role": "漏洞情报管理员",
+      "sources": [
+        {
+          "publisher": "CISA",
+          "source_tier": "primary_authority",
+          "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+          "published_at": "2021-11-03",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "CISA",
+          "source_tier": "primary_authority",
+          "url": "https://www.cisa.gov/sites/default/files/publications/Reducing_the_Significant_Risk_of_Known_Exploited_Vulnerabilities_20211103.pdf",
+          "published_at": "2021-11-03",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "CISA",
+          "source_tier": "primary_authority",
+          "url": "https://www.cisa.gov/news-events/cybersecurity-advisories",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md",
+      "title": "MITRE ATT&CK v19 企业检测、研判与处置图谱（2026-07）",
+      "category": "attack_knowledge",
+      "media_type": "text/markdown",
+      "sha256": "ef81a6d08dac962f8d8e66d0144edcda2b5ef9a0fe5ca9831a8cc4b203e8c935",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "mitre-attack", "detection-engineering", "source-primary-authority"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "检测工程知识库管理员",
+      "sources": [
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/resources/updates/updates-august-2026/",
+          "published_at": "2026-08-06",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/resources/changelog.html",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/matrices/enterprise/",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE",
+          "source_tier": "primary_authority",
+          "url": "https://github.com/mitre-attack/attack-stix-data",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "MITRE ATT&CK",
+          "source_tier": "primary_authority",
+          "url": "https://attack.mitre.org/resources/versions/",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "04_深信服官方安全研究与知识运营基线_2026-09.md",
+      "title": "深信服官方安全研究与知识运营基线（2026-09）",
+      "category": "vendor_security_research",
+      "media_type": "text/markdown",
+      "sha256": "74d9b763c3cfde6705b3e24093f92ef15e4e902a65ffb17b71cff313a75d26d6",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "source-official-vendor"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "厂商安全研究管理员",
+      "sources": [
+        {
+          "publisher": "深信服千里目安全技术中心",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/security-tech",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服 PSIRT",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/sec_center/response",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服技术支持",
+          "source_tier": "official_vendor",
+          "url": "https://support.sangfor.com.cn/productSoftware/ruleBase?category_id=129",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服千里目安全技术中心-深瞳漏洞实验室",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/document/ee2d27a925d846efb0d56c55e203f756",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服千里目安全技术中心-深瞻情报实验室",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/document/7e5af03bab4f481eb47dbacb15886e44",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服千里目安全技术中心",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/document/a384e420e9e84d8abd52a6a3ffac541c",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服科技股份有限公司",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/document/5f49ac10c830449891aafb1674ef6025",
+          "published_at": "2026-03-27",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "publisher": "深信服 AI 安全平台",
+          "source_tier": "official_vendor",
+          "url": "https://www.sangfor.com.cn/AIfirst/AIsec",
+          "published_at": null,
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "深信服_2025年漏洞趋势分析报告.pdf",
+      "title": "深信服 2025 年漏洞趋势分析报告（官方原始 PDF）",
+      "category": "vendor_security_research",
+      "media_type": "application/pdf",
+      "sha256": "b349ffefcdd9cfca7b208424eaf8174a2c8be6ff875b780d8d0768e24a0c553a",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "official-pdf"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "厂商安全研究管理员",
+      "sources": [
+        {
+          "publisher": "深信服千里目安全技术中心-深瞳漏洞实验室",
+          "source_tier": "official_vendor",
+          "url": "https://download.sangfor.com.cn/pdf-file/01d60174-a4ac-4784-969a-33aeeec3bd3a.pdf",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "深信服_2025年APT趋势洞察报告.pdf",
+      "title": "深信服 2025 年 APT 趋势洞察报告（官方原始 PDF）",
+      "category": "vendor_security_research",
+      "media_type": "application/pdf",
+      "sha256": "b9c8ca273429bcea6ce15f4485a8665dde40435a4510555540b193c2ba2ff966",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "official-pdf"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "厂商安全研究管理员",
+      "sources": [
+        {
+          "publisher": "深信服千里目安全技术中心-深瞻情报实验室",
+          "source_tier": "official_vendor",
+          "url": "https://download.sangfor.com.cn/pdf-file/f5bdb611-1a73-4165-9447-aaec08539bb7.pdf",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "深信服_2025年网络安全状况特点及2026年趋势研判.pdf",
+      "title": "深信服 2025 年网络安全状况特点及 2026 年趋势研判（官方原始 PDF）",
+      "category": "vendor_security_research",
+      "media_type": "application/pdf",
+      "sha256": "459a7881d38fc2c132af27f52e9ee6424deef7100fc249bd569711fa9e689aa4",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "official-pdf"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "厂商安全研究管理员",
+      "sources": [
+        {
+          "publisher": "深信服千里目安全技术中心",
+          "source_tier": "official_vendor",
+          "url": "https://download.sangfor.com.cn/pdf-file/8b8d9226-250b-4fbb-87a2-238161479d56.pdf",
+          "published_at": "2026-05-29",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "深信服_网络安全半月刊_2026年03月上期.pdf",
+      "title": "深信服网络安全半月刊（2026 年 03 月上期，官方原始 PDF）",
+      "category": "vendor_security_research",
+      "media_type": "application/pdf",
+      "sha256": "d249040dd2b6684227745c9b8cfabf8f615f43f36ddd622cc6967556cd14874a",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "official-pdf"],
+      "reviewed_at": "2026-09-02",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "厂商安全研究管理员",
+      "sources": [
+        {
+          "publisher": "深信服科技股份有限公司",
+          "source_tier": "official_vendor",
+          "url": "https://download.sangfor.com.cn/69ffcd54a5944ccc9cf0a7b66cea88a2.pdf",
+          "published_at": "2026-03-27",
+          "accessed_at": "2026-09-02"
+        }
+      ]
+    }
+  ]
+}

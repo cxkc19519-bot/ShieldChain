@@ -7,6 +7,7 @@ successful cloud result.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 from uuid import UUID
 
@@ -58,6 +59,10 @@ class UploadedDocument:
     content: bytes
     sensitivity: Sensitivity
     permission_tags: tuple[str, ...]
+    verified_at: date | None = None
+    review_due_at: date | None = None
+    source_tiers: tuple[str, ...] = ()
+    source_urls: tuple[str, ...] = ()
 
 
 class KnowledgeApiService(Protocol):

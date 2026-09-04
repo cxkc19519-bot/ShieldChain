@@ -87,10 +87,45 @@ export interface RetrievalResult {
   degradations: Array<{ kind: DegradationKind; error_category: string; message: string }>
 }
 
+export interface EvaluationCaseResult {
+  case_id: string
+  language: 'zh' | 'en'
+  query: string
+  expected_document_ids: string[]
+  baseline_document_ids: string[]
+  retrieved_document_ids: string[]
+  cited_document_ids: string[]
+  expected_refusal: boolean
+  actual_refusal: boolean
+  recall_at_k: number | null
+  reciprocal_rank: number | null
+  citation_precision: number | null
+  expected_citation_recall: number | null
+  extractive_faithfulness: number | null
+  latency_ms: number
+  failed_call_count: number
+  passed: boolean
+  failure_reasons: string[]
+}
+
 export interface EvaluationSummary {
   dataset_id: string
   dataset_version: string
+  dataset_sha256: string | null
   case_count: number
   metrics: Record<string, number>
+  thresholds: Record<string, number>
+  case_results: EvaluationCaseResult[]
   quality_gate_passed: boolean
+}
+
+export interface CuratedPackImportSummary {
+  pack_id: string
+  pack_version: string
+  usage_policy: string
+  knowledge_base_id: string
+  verified_at: string
+  review_due_at: string
+  imported: string[]
+  skipped: string[]
 }

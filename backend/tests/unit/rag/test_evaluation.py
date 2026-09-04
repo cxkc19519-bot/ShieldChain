@@ -56,6 +56,8 @@ def test_metrics_report_is_exact_and_byte_stable() -> None:
             cited_ids=("zh-email-header", "zh-evidence-hash"),
             latency_ms=10,
             call_count=2,
+            answer_claims=("Preserve the email header.",),
+            cited_evidence_texts=("Preserve the email header.",),
         ),
         observation(
             "zh-vulnerability-closure",
@@ -65,6 +67,8 @@ def test_metrics_report_is_exact_and_byte_stable() -> None:
             latency_ms=20,
             estimated_cost_usd=0.001,
             call_count=2,
+            answer_claims=("Verify remediation before closure.",),
+            cited_evidence_texts=("Verify remediation before closure.",),
         ),
         observation(
             "zh-unsupported-attribution",
@@ -80,6 +84,8 @@ def test_metrics_report_is_exact_and_byte_stable() -> None:
             latency_ms=40,
             call_count=3,
             failed_call_count=1,
+            answer_claims=("Review the process tree.",),
+            cited_evidence_texts=("Review the process tree.",),
         ),
         observation(
             "en-credential-response",
@@ -89,6 +95,8 @@ def test_metrics_report_is_exact_and_byte_stable() -> None:
             latency_ms=50,
             estimated_cost_usd=0.002,
             call_count=2,
+            answer_claims=("Revoke active sessions.",),
+            cited_evidence_texts=("Revoke active sessions.",),
         ),
         observation(
             "en-unsupported-malware-author",
@@ -106,6 +114,9 @@ def test_metrics_report_is_exact_and_byte_stable() -> None:
     assert payload["quality"]["mrr_at_k"] == 1.0
     assert payload["quality"]["rerank_gain_at_k"] > 0
     assert payload["quality"]["citation_correctness"] == pytest.approx(6 / 8)
+    assert payload["quality"]["citation_precision"] == 0.875
+    assert payload["quality"]["expected_citation_recall"] == 0.875
+    assert payload["quality"]["extractive_faithfulness"] == 1.0
     assert payload["quality"]["refusal_accuracy"] == pytest.approx(5 / 6)
     assert payload["operations"] == {
         "call_count": 10,
@@ -130,6 +141,9 @@ def test_empty_rankings_score_zero_without_division_errors() -> None:
     assert quality["ndcg_at_k"] == 0.0
     assert quality["refusal_accuracy"] == 1.0
     assert quality["citation_correctness"] == 0.0
+    assert quality["citation_precision"] == 0.0
+    assert quality["expected_citation_recall"] == 0.0
+    assert quality["extractive_faithfulness"] == 0.0
 
 
 @pytest.mark.parametrize(

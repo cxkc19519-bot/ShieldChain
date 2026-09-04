@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
     rag_content_root: Path = Path("data/knowledge")
+    security_vertical_pack_root: Path = Path("sample_docs/security_vertical")
+    rag_evaluation_root: Path = Path("sample_docs/security_vertical/evaluation")
     assistant_data_root: Path = Path("data/assistant")
     rag_max_upload_bytes: int = Field(25 * 1024 * 1024, ge=1, le=25 * 1024 * 1024)
     rag_max_expanded_bytes: int = Field(100 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)

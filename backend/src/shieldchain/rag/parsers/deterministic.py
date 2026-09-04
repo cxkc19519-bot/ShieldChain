@@ -315,9 +315,10 @@ def _parse_html(content: bytes, filename: str, budget: ParserBudget) -> WorkerRe
     result = WorkerResult(
         title=_safe_title(title_node.get_text(" ") if title_node else None, filename)
     )
+    content_root = soup.select_one("#BodyLabel, .main-content, .side-right-column") or soup
     current_heading: str | None = None
     ordinal = 0
-    for node in soup.find_all(
+    for node in content_root.find_all(
         ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre", "code", "table"]
     ):
         ordinal += 1

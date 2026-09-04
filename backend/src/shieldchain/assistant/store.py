@@ -8,7 +8,13 @@ from pathlib import Path
 from threading import RLock
 from uuid import UUID, uuid4
 
-from .schemas import AssistantCitationView, AssistantMessageView
+from .schemas import (
+    AssistantCitationView,
+    AssistantDegradationView,
+    AssistantGroundingStatus,
+    AssistantMessageView,
+    AssistantRefusalReason,
+)
 
 
 class ConversationNotFound(Exception):
@@ -65,6 +71,9 @@ class LocalConversationStore:
         role: str,
         content: str,
         citations: list[AssistantCitationView] | None = None,
+        grounding_status: AssistantGroundingStatus = "not_applicable",
+        refusal_reason: AssistantRefusalReason | None = None,
+        degradations: list[AssistantDegradationView] | None = None,
         model: str | None = None,
     ) -> dict[str, object]:
         with self._lock:
@@ -80,6 +89,11 @@ class LocalConversationStore:
                         "role": role,
                         "content": content,
                         "citations": [item.model_dump(mode="json") for item in citations or []],
+                        "grounding_status": grounding_status,
+                        "refusal_reason": refusal_reason,
+                        "degradations": [
+                            item.model_dump(mode="json") for item in degradations or []
+                        ],
                         "model": model,
                         "created_at": datetime.now(UTC).isoformat(),
                     }

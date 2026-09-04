@@ -17,8 +17,10 @@ from shieldchain.rag.api_service import (
     KnowledgeServiceUnavailable,
     UploadedDocument,
 )
+from shieldchain.rag.curated_pack import CuratedPackError, import_curated_pack
 from shieldchain.rag.schemas import (
     CreateKnowledgeBaseRequest,
+    CuratedPackImportResponse,
     DocumentChunkListResponse,
     DocumentVersionListResponse,
     EvaluationRequest,
@@ -98,6 +100,38 @@ def create_knowledge_base(
 ) -> KnowledgeBaseView:
     return _call(
         lambda: _service(request).create_knowledge_base(payload, tenant_id=_tenant_id(request))
+    )
+
+
+@router.post(
+    "/knowledge-bases/imports/security-vertical",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=CuratedPackImportResponse,
+)
+def import_security_vertical_pack(request: Request) -> CuratedPackImportResponse:
+    try:
+        result = import_curated_pack(
+            _service(request),
+            request.app.state.settings.security_vertical_pack_root,
+            tenant_id=_tenant_id(request),
+        )
+    except (CuratedPackError, OSError):
+        raise ApiError(
+            "curated_pack_invalid",
+            "Bundled security knowledge pack failed integrity or review validation",
+            503,
+        ) from None
+    except Exception as error:
+        raise _public_error(error) from None
+    return CuratedPackImportResponse(
+        pack_id=result.pack.pack_id,
+        pack_version=result.pack.version,
+        usage_policy=result.pack.usage_policy,
+        knowledge_base_id=result.knowledge_base_id,
+        verified_at=result.pack.verified_at,
+        review_due_at=result.pack.review_due_at,
+        imported=list(result.imported),
+        skipped=list(result.skipped),
     )
 
 

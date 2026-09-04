@@ -6,7 +6,7 @@ import { KnowledgePage } from './KnowledgePage'
 
 const api = vi.hoisted(() => ({
   createKnowledgeBase: vi.fn(), deleteDocument: vi.fn(), deleteKnowledgeBase: vi.fn(), listDocumentChunks: vi.fn(), listDocuments: vi.fn(),
-  listKnowledgeBases: vi.fn(), publishVersion: vi.fn(), rebuildDocumentVersion: vi.fn(),
+  importSecurityVerticalPack: vi.fn(), listKnowledgeBases: vi.fn(), publishVersion: vi.fn(), rebuildDocumentVersion: vi.fn(),
   retrieveKnowledge: vi.fn(), rollbackVersion: vi.fn(), runEvaluation: vi.fn(), uploadDocument: vi.fn(),
 }))
 vi.mock('./api', () => api)
@@ -53,6 +53,60 @@ describe('KnowledgePage', () => {
     expect(api.uploadDocument).not.toHaveBeenCalled()
   })
 
+  it('imports the reviewed security vertical pack and shows its review window', async () => {
+    const user = userEvent.setup()
+    api.importSecurityVerticalPack.mockResolvedValue({
+      pack_id: 'shieldchain-security-vertical',
+      pack_version: '2026.09.3',
+      usage_policy: '归档清单明确列出的官方公开 PDF 与 HTML 快照。',
+      knowledge_base_id: ID,
+      verified_at: '2026-09-02',
+      review_due_at: '2026-10-02',
+      imported: ['policy.md', 'kev.md', 'attack.md'],
+      skipped: ['maintenance.md'],
+    })
+    render(<KnowledgePage />)
+    await screen.findByText('guide.pdf')
+
+    await user.click(screen.getByRole('button', { name: '导入安全垂直知识包' }))
+
+    expect(api.importSecurityVerticalPack).toHaveBeenCalledOnce()
+    expect(await screen.findByTestId('curated-pack-summary')).toHaveTextContent(
+      '权威知识包 2026.09.3 · 核验 2026-09-02 · 下次复核 2026-10-02 · 新增 3 · 已存在 1。归档清单明确列出的官方公开 PDF 与 HTML 快照。',
+    )
+  })
+
+  it('shows per-case RAG evaluation evidence and failure reasons', async () => {
+    const user = userEvent.setup()
+    api.runEvaluation.mockResolvedValue({
+      dataset_id: 'shieldchain-security-vertical-v1', dataset_version: '1.0.0',
+      dataset_sha256: 'a'.repeat(64), case_count: 1,
+      metrics: { recall_at_k: 0 }, thresholds: { recall_at_k: 0.75 },
+      quality_gate_passed: false,
+      case_results: [{
+        case_id: 'zh-policy', language: 'zh', query: '法规要求是什么？',
+        expected_document_ids: ['policy.md'], baseline_document_ids: ['noise.md'],
+        retrieved_document_ids: ['noise.md'], cited_document_ids: ['noise.md'],
+        expected_refusal: false, actual_refusal: false, recall_at_k: 0,
+        reciprocal_rank: 0, citation_precision: 0, expected_citation_recall: 0,
+        extractive_faithfulness: 0,
+        latency_ms: 4, failed_call_count: 1, passed: false,
+        failure_reasons: ['missing_relevant_document', 'unsupported_citation'],
+      }],
+    })
+    render(<KnowledgePage />)
+    await screen.findByText('guide.pdf')
+
+    await user.click(screen.getByRole('button', { name: '运行评测' }))
+    expect(await screen.findByText(/zh-policy/)).toBeVisible()
+    await user.click(screen.getByText(/zh-policy/))
+
+    expect(screen.getByText('法规要求是什么？')).toBeVisible()
+    expect(screen.getByText('missing_relevant_document；unsupported_citation')).toBeVisible()
+    expect(screen.getByText('policy.md')).toBeVisible()
+    expect(screen.getByText('抽取忠实度')).toBeVisible()
+  })
+
   it('aborts page-owned loading on unmount', async () => {
     let observed: AbortSignal | undefined
     api.listKnowledgeBases.mockImplementation((signal: AbortSignal) => {
@@ -82,6 +136,8 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />)
     await screen.findByText('guide.pdf')
 
+    await user.tab()
+    expect(screen.getByRole('button', { name: '导入安全垂直知识包' })).toHaveFocus()
     await user.tab()
     expect(screen.getByLabelText('新知识库名称')).toHaveFocus()
     await user.type(screen.getByLabelText('新知识库名称'), '应急手册')

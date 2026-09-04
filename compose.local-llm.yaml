@@ -30,7 +30,7 @@ services:
       - --gpu-memory-utilization
       - "0.86"
     ports:
-      - "127.0.0.1:8001:8000"
+      - "127.0.0.1:${LOCAL_LLM_HOST_PORT:-8001}:8000"
     healthcheck:
       test:
         - CMD

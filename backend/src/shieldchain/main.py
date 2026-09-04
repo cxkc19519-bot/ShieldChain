@@ -103,7 +103,10 @@ def create_app(
     session_factory = create_session_factory(engine)
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
-    knowledge_service = knowledge_api_service or LocalKnowledgeService(settings.rag_content_root)
+    knowledge_service = knowledge_api_service or LocalKnowledgeService(
+        settings.rag_content_root,
+        evaluation_root=settings.rag_evaluation_root,
+    )
     agent_tool_audit_store = AgentToolAuditStore(session_factory)
     mcp_remote_config = (
         load_mcp_remote_config(settings.mcp_remote_config_path)

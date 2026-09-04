@@ -1,4 +1,5 @@
 import type {
+  CuratedPackImportSummary,
   EvaluationSummary,
   KnowledgeBase,
   KnowledgeChunk,
@@ -143,9 +144,45 @@ function evaluation(value: unknown): EvaluationSummary {
   const item = record(value)
   return {
     dataset_id: text(item.dataset_id), dataset_version: text(item.dataset_version),
+    dataset_sha256: nullableText(item.dataset_sha256),
     case_count: number(item.case_count), metrics: Object.fromEntries(
       Object.entries(record(item.metrics)).map(([key, value]) => [key, number(value)]),
-    ), quality_gate_passed: boolean(item.quality_gate_passed),
+    ), thresholds: Object.fromEntries(
+      Object.entries(record(item.thresholds)).map(([key, value]) => [key, number(value)]),
+    ), case_results: array(item.case_results, (entry) => {
+      const result = record(entry)
+      return {
+        case_id: text(result.case_id), language: text(result.language) as 'zh' | 'en',
+        query: text(result.query),
+        expected_document_ids: array(result.expected_document_ids, text),
+        baseline_document_ids: array(result.baseline_document_ids, text),
+        retrieved_document_ids: array(result.retrieved_document_ids, text),
+        cited_document_ids: array(result.cited_document_ids, text),
+        expected_refusal: boolean(result.expected_refusal),
+        actual_refusal: boolean(result.actual_refusal),
+        recall_at_k: nullableNumber(result.recall_at_k),
+        reciprocal_rank: nullableNumber(result.reciprocal_rank),
+        citation_precision: nullableNumber(result.citation_precision),
+        expected_citation_recall: nullableNumber(result.expected_citation_recall),
+        extractive_faithfulness: nullableNumber(result.extractive_faithfulness),
+        latency_ms: number(result.latency_ms), failed_call_count: number(result.failed_call_count),
+        passed: boolean(result.passed), failure_reasons: array(result.failure_reasons, text),
+      }
+    }), quality_gate_passed: boolean(item.quality_gate_passed),
+  }
+}
+
+function curatedPackImport(value: unknown): CuratedPackImportSummary {
+  const item = record(value)
+  return {
+    pack_id: text(item.pack_id),
+    pack_version: text(item.pack_version),
+    usage_policy: text(item.usage_policy),
+    knowledge_base_id: text(item.knowledge_base_id),
+    verified_at: text(item.verified_at),
+    review_due_at: text(item.review_due_at),
+    imported: array(item.imported, text),
+    skipped: array(item.skipped, text),
   }
 }
 
@@ -203,6 +240,12 @@ export function createKnowledgeBase(name: string, signal?: AbortSignal): Promise
   return request('/knowledge-bases', knowledgeBase, {
     method: 'POST', headers: JSON_HEADERS,
     body: JSON.stringify({ name, default_sensitivity: 'internal', version_policy: 'immutable' }),
+  }, signal)
+}
+
+export function importSecurityVerticalPack(signal?: AbortSignal): Promise<CuratedPackImportSummary> {
+  return request('/knowledge-bases/imports/security-vertical', curatedPackImport, {
+    method: 'POST', headers: JSON_HEADERS, body: '{}',
   }, signal)
 }
 
@@ -266,6 +309,10 @@ export function retrieveKnowledge(knowledgeBaseId: string, query: string, signal
 export function runEvaluation(knowledgeBaseId: string, signal?: AbortSignal): Promise<EvaluationSummary> {
   return request('/rag/evaluations', evaluation, {
     method: 'POST', headers: JSON_HEADERS,
-    body: JSON.stringify({ dataset_id: 'phase3-security-baseline', max_cases: 100 }),
+    body: JSON.stringify({
+      dataset_id: 'shieldchain-security-vertical-v1',
+      knowledge_base_ids: [knowledgeBaseId],
+      max_cases: 100,
+    }),
   }, signal)
 }
