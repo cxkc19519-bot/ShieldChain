@@ -299,7 +299,7 @@ export function AssistantPage() {
       </div> : <>
       {empty ? <div className="gemini-welcome"><div className="gemini-orb"><img src={logoUrl} alt="ShieldChain" /></div><h1><span>你好，</span>有什么安全问题想聊聊？</h1><div className="gemini-suggestions">{starters.map((item) => <button type="button" onClick={() => void send(undefined, item)} disabled={pending} key={item}>{item}</button>)}</div></div> : <div className="gemini-thread">{active.messages.map((item) => <article className={`gemini-message gemini-message--${item.role}`} key={item.id}><div>
         <p>{displayAssistantText(item.content)}</p>
-        {item.role === 'assistant' && groundingLabel(item) && <small className="gemini-grounding-status">{groundingLabel(item)}</small>}
+        {item.role === 'assistant' && groundingLabel(item) && <details className="gemini-grounding-details"><summary>查看回答状态</summary><small className="gemini-grounding-status">{groundingLabel(item)}</small></details>}
         {item.role === 'assistant' && Boolean(item.degradations?.length) && <div className="gemini-degradations" role="status">{item.degradations?.map((entry) => <p key={`${entry.kind}-${entry.error_category}-${entry.message}`}>{entry.kind}/{entry.error_category}：{entry.message}</p>)}</div>}
         {item.role === 'assistant' && item.citations.length > 0 && <div className="gemini-citations"><b>引用证据（{item.citations.length}）</b>{item.citations.map((citation) => <details key={`${citation.index}-${citation.chunk_id ?? citation.document_title}`}>
           <summary>[{citation.index}] {citation.document_title}</summary>
