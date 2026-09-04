@@ -14,7 +14,7 @@ class FakeLlm:
     responses: list[ChatResponse] = []
     requests = []
 
-    def __init__(self, settings, client) -> None:
+    def __init__(self, settings, client, **_kwargs) -> None:
         del settings, client
 
     async def chat(self, request):

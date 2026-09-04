@@ -48,3 +48,22 @@ def test_local_semantic_chunking_retries_an_invalid_plan_once() -> None:
 
     assert attempts == 2
     assert [segment.text for segment in segments] == ["first source unit", "second source unit"]
+
+
+def test_local_semantic_chunking_splits_an_oversized_model_group_safely() -> None:
+    first = "a" * 500
+    second = "b" * 500
+
+    chunker = DeepSeekSemanticChunker(
+        api_key="test-key",
+        base_url="https://llm.invalid",
+        model="deepseek-v4-flash",
+        transport=lambda *_args: {
+            "choices": [{"message": {"content": '{"groups":[[0,1]]}'}}]
+        },
+    )
+
+    segments = chunker.chunk(f"{first}\n{second}")
+
+    assert [segment.text for segment in segments] == [first, second]
+    assert all(len(segment.text) <= 900 for segment in segments)

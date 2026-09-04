@@ -84,6 +84,19 @@ _QUALITY_THRESHOLDS = {
     "refusal_accuracy": 0.90,
 }
 _MAX_EVALUATION_FAILURE_RATE = 0.05
+_EMBED_BATCH_SIZE = 64
+_MIN_RERANK_RELEVANCE = 0.10
+_RELATIVE_RERANK_RELEVANCE = 0.05
+_GENERIC_TITLE_TERMS = {
+    "安全",
+    "事件",
+    "分析",
+    "报告",
+    "技术",
+    "数据",
+    "网络",
+    "管理",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,14 +407,17 @@ class LocalKnowledgeService:
                         message=str(error),
                     )
                 )
-            ordered = sorted(
-                candidates,
-                key=lambda item: (
-                    -reranked.get(item, -1.0),
-                    -candidates[item][2],
-                    str(item),
-                ),
-            )[: request.limit]
+            candidates = self._admit_candidates(bm25, candidates, reranked)
+            if not candidates:
+                reason = (
+                    "stale_evidence"
+                    if self._bm25(request.query, stale_chunks.values())
+                    else "insufficient_evidence"
+                )
+                return self._empty(request.query, degradations, reason=reason)
+            ordered = self._rank_candidates(
+                request.query, candidates, reranked, chunks, limit=request.limit
+            )
             hits = [
                 self._hit(
                     chunks[chunk_id],
@@ -412,6 +428,8 @@ class LocalKnowledgeService:
                 )
                 for chunk_id in ordered
             ]
+            evidence_ids = self._primary_evidence_ids(ordered, chunks)
+            evidence_hits = [hit for hit in hits if hit.chunk_id in evidence_ids]
             if any(contains_prompt_injection(hit.excerpt) for hit in hits):
                 return self._empty(
                     request.query,
@@ -430,10 +448,10 @@ class LocalKnowledgeService:
                 )
             return RetrievalResponse(
                 query=request.query,
-                answer=self._extractive_retrieval_answer(hits),
+                answer=self._extractive_retrieval_answer(evidence_hits),
                 refusal_reason=None,
                 hits=hits,
-                citations=[self._citation(hit) for hit in hits],
+                citations=[self._citation(hit) for hit in evidence_hits],
                 degradations=degradations,
             )
 
@@ -655,7 +673,6 @@ class LocalKnowledgeService:
                 )
             except LocalRagUnavailable:
                 failed_call_count += 1
-                availability["vector"] = False
         candidates = self._fuse(
             bm25,
             {chunk_id: score for chunk_id, score in vector.items() if chunk_id in chunks},
@@ -671,26 +688,27 @@ class LocalKnowledgeService:
                 )
             except LocalRagUnavailable:
                 failed_call_count += 1
-                availability["reranker"] = False
-        ordered = sorted(
-            candidates,
-            key=lambda item: (
-                -reranked.get(item, -1.0),
-                -candidates[item][2],
-                str(item),
-            ),
-        )[:_EVALUATION_K]
+        candidates = self._admit_candidates(bm25, candidates, reranked)
+        ordered = self._rank_candidates(
+            query, candidates, reranked, chunks, limit=_EVALUATION_K
+        )
+        evidence_ordered = self._primary_evidence_ids(ordered, chunks)
         reranked_ids = self._ranked_document_ids(
             ordered,
             chunks,
             limit=_EVALUATION_K,
         )
-        evidence_texts = tuple(str(chunks[chunk_id]["text"]) for chunk_id in ordered)
+        cited_ids = self._ranked_document_ids(
+            evidence_ordered,
+            chunks,
+            limit=_EVALUATION_K,
+        )
+        evidence_texts = tuple(str(chunks[chunk_id]["text"]) for chunk_id in evidence_ordered)
         return EvaluationObservation(
             case_id=case_id,
             baseline_ids=baseline_ids,
             reranked_ids=reranked_ids,
-            cited_ids=reranked_ids,
+            cited_ids=cited_ids,
             refused=not candidates,
             latency_ms=(time.perf_counter() - started) * 1_000,
             estimated_cost_usd=0.0,
@@ -786,7 +804,7 @@ class LocalKnowledgeService:
                 self._replace_version(
                     record,
                     version.id,
-                    index_status="succeeded",
+                    index_status="failed",
                     chunking_status="succeeded",
                     chunking_strategy=strategy,
                     chunking_failure_category=failure_category,
@@ -800,14 +818,18 @@ class LocalKnowledgeService:
                 raise
 
     def _embed(self, texts: Sequence[str]) -> list[list[float]]:
-        payload = self._model_request(
-            "/v1/embeddings", {"model": "BAAI/bge-m3", "input": list(texts)}
-        )
-        data = payload.get("data")
-        if not isinstance(data, list) or len(data) != len(texts):
-            raise LocalRagUnavailable(
-                "\u672c\u5730 Embedding \u670d\u52a1\u8fd4\u56de\u4e86\u65e0\u6548\u6570\u636e"
+        data: list[object] = []
+        for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = list(texts[start : start + _EMBED_BATCH_SIZE])
+            payload = self._model_request(
+                "/v1/embeddings", {"model": "BAAI/bge-m3", "input": batch}
             )
+            items = payload.get("data")
+            if not isinstance(items, list) or len(items) != len(batch):
+                raise LocalRagUnavailable(
+                    "\u672c\u5730 Embedding \u670d\u52a1\u8fd4\u56de\u4e86\u65e0\u6548\u6570\u636e"
+                )
+            data.extend(items)
         try:
             vectors = [[float(value) for value in item["embedding"]] for item in data]
         except (KeyError, TypeError, ValueError) as error:
@@ -819,6 +841,90 @@ class LocalKnowledgeService:
                 "\u672c\u5730 Embedding \u5411\u91cf\u7ef4\u5ea6\u4e0d\u662f 1024"
             )
         return vectors
+
+    @staticmethod
+    def _admit_candidates(
+        bm25: dict[UUID, float],
+        candidates: dict[UUID, tuple[float | None, float | None, float]],
+        reranked: dict[UUID, float],
+    ) -> dict[UUID, tuple[float | None, float | None, float]]:
+        """Reject unsupported vector neighbours instead of citing the nearest unrelated text."""
+        if not candidates:
+            return {}
+        if bm25:
+            return candidates
+        if not reranked:
+            return {}
+        maximum = max(reranked.values(), default=0.0)
+        threshold = max(_MIN_RERANK_RELEVANCE, maximum * _RELATIVE_RERANK_RELEVANCE)
+        return candidates if maximum >= threshold else {}
+
+    @classmethod
+    def _rank_candidates(
+        cls,
+        query: str,
+        candidates: dict[UUID, tuple[float | None, float | None, float]],
+        reranked: dict[UUID, float],
+        chunks: dict[UUID, dict[str, object]],
+        *,
+        limit: int,
+    ) -> list[UUID]:
+        ranked = sorted(
+            candidates,
+            key=lambda identifier: (
+                -cls._title_affinity(query, chunks[identifier]),
+                -reranked.get(identifier, -1.0),
+                -candidates[identifier][2],
+                str(identifier),
+            ),
+        )
+        diverse: list[UUID] = []
+        remaining: list[UUID] = []
+        seen_documents: set[UUID] = set()
+        for identifier in ranked:
+            document = chunks[identifier].get("document")
+            document_id = document.id if isinstance(document, KnowledgeDocumentView) else None
+            if document_id is not None and document_id not in seen_documents:
+                seen_documents.add(document_id)
+                diverse.append(identifier)
+            else:
+                remaining.append(identifier)
+        return (diverse + remaining)[:limit]
+
+    @classmethod
+    def _title_affinity(cls, query: str, chunk: dict[str, object]) -> int:
+        document = chunk.get("document")
+        if not isinstance(document, KnowledgeDocumentView):
+            return 0
+        query_terms = set(cls._lexical_terms(query)) | set(
+            re.findall(r"[a-z0-9]+", query.casefold())
+        )
+        title_terms = set(cls._lexical_terms(document.original_filename)) | set(
+            re.findall(r"[a-z0-9]+", document.original_filename.casefold())
+        )
+        return len(
+            {
+                term
+                for term in query_terms & title_terms
+                if len(term) >= 2 and term not in _GENERIC_TITLE_TERMS
+            }
+        )
+
+    @staticmethod
+    def _primary_evidence_ids(
+        ordered: Sequence[UUID], chunks: dict[UUID, dict[str, object]]
+    ) -> list[UUID]:
+        if not ordered:
+            return []
+        first = chunks[ordered[0]].get("document")
+        if not isinstance(first, KnowledgeDocumentView):
+            return [ordered[0]]
+        return [
+            identifier
+            for identifier in ordered
+            if isinstance(chunks[identifier].get("document"), KnowledgeDocumentView)
+            and chunks[identifier]["document"].id == first.id
+        ]
 
     def _rerank(self, query: str, chunks: Sequence[dict[str, object]]) -> dict[UUID, float]:
         if not chunks:

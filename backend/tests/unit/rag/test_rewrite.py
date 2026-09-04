@@ -152,6 +152,31 @@ async def test_duplicate_queries_and_entities_are_removed_stably() -> None:
 
 
 @pytest.mark.asyncio
+async def test_valid_model_expansions_are_bounded_without_degrading() -> None:
+    payload = json.dumps(
+        {
+            "normalized_query": "normalized",
+            "resolved_query": "resolved",
+            "security_entities": [],
+            "queries": ["one", "two", "three", "four", "five"],
+        }
+    )
+
+    result = await DeepSeekQueryRewriter(StubLlm([response(payload)])).rewrite("original")
+
+    assert result.rewrite_degraded is False
+    assert result.failure_category is None
+    assert result.queries == (
+        "original",
+        "normalized",
+        "resolved",
+        "one",
+        "two",
+        "three",
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "category"),
     [

@@ -194,14 +194,30 @@ def _validate_groups(value: object, units: Sequence[_SourceUnit]) -> list[list[_
             raise SemanticChunkingError("DeepSeek semantic chunk indexes are invalid")
         indexes.extend(raw_group)
         group = [units[index] for index in raw_group if 0 <= index < len(units)]
-        if (
-            len(group) != len(raw_group)
-            or len("\n\n".join(item.text for item in group)) > MAX_CHUNK_CHARACTERS
-        ):
+        if len(group) != len(raw_group):
             raise SemanticChunkingError("DeepSeek semantic chunks exceed local safety limits")
-        groups.append(group)
+        groups.extend(_fit_group(group))
     if indexes != list(range(len(units))):
         raise SemanticChunkingError(
             "DeepSeek semantic chunk plan does not cover source units safely"
         )
     return groups
+
+
+def _fit_group(group: list[_SourceUnit]) -> list[list[_SourceUnit]]:
+    """Keep model boundaries when safe, splitting only groups over the hard local limit."""
+    fitted: list[list[_SourceUnit]] = []
+    current: list[_SourceUnit] = []
+    current_size = 0
+    for unit in group:
+        separator = 2 if current else 0
+        if current and current_size + separator + len(unit.text) > MAX_CHUNK_CHARACTERS:
+            fitted.append(current)
+            current = []
+            current_size = 0
+            separator = 0
+        current.append(unit)
+        current_size += separator + len(unit.text)
+    if current:
+        fitted.append(current)
+    return fitted

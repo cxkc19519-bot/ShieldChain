@@ -84,7 +84,7 @@ def test_local_store_refuses_real_reparse_point_ancestor(tmp_path: Path) -> None
         assert error.value.__cause__ is None
     finally:
         if link.exists() or link.is_symlink():
-            link.rmdir()
+            link.unlink() if link.is_symlink() else link.rmdir()
 
 
 def test_local_store_best_effort_detects_reparse_swap_before_replace(

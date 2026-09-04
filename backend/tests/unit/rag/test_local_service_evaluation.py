@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -16,7 +16,9 @@ from shieldchain.rag.evaluation import (
 from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.rag.schemas import (
     CreateKnowledgeBaseRequest,
+    DocumentVersionView,
     EvaluationRequest,
+    KnowledgeDocumentView,
     RetrievalRequest,
 )
 
@@ -85,6 +87,84 @@ def test_local_lexical_terms_preserve_chinese_security_phrases() -> None:
     terms = LocalKnowledgeService._lexical_terms("网络安全事件报告热线")
 
     assert {"网络", "安全", "事件", "报告", "热线", "网络安"} <= set(terms)
+
+
+def test_local_embeddings_are_sent_in_bounded_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = LocalKnowledgeService(tmp_path / "content")
+    batch_sizes: list[int] = []
+
+    def model_request(_path: str, payload: dict[str, object]) -> dict[str, object]:
+        values = payload["input"]
+        assert isinstance(values, list)
+        batch_sizes.append(len(values))
+        return {"data": [{"embedding": [0.0] * 1024} for _ in values]}
+
+    monkeypatch.setattr(service, "_model_request", model_request)
+
+    assert len(service._embed([str(index) for index in range(130)])) == 130
+    assert batch_sizes == [64, 64, 2]
+
+
+def test_vector_only_candidates_require_minimum_reranker_support() -> None:
+    identifier = UUID(int=99)
+    candidates = {identifier: (None, 0.8, 0.44)}
+
+    assert LocalKnowledgeService._admit_candidates({}, candidates, {identifier: 0.0001}) == {}
+    assert LocalKnowledgeService._admit_candidates({}, candidates, {}) == {}
+    assert LocalKnowledgeService._admit_candidates(
+        {}, candidates, {identifier: 0.2}
+    ) == candidates
+    assert LocalKnowledgeService._admit_candidates(
+        {identifier: 1.0}, candidates, {identifier: 0.0001}
+    ) == candidates
+
+
+def test_candidate_ranking_prefers_distinctive_document_title_match() -> None:
+    first, second = UUID(int=101), UUID(int=102)
+    base = UUID(int=103)
+    now = datetime.now(UTC)
+
+    def document(identifier: UUID, title: str) -> KnowledgeDocumentView:
+        version = DocumentVersionView(
+            id=UUID(int=identifier.int + 100),
+            document_id=identifier,
+            version_number=1,
+            parsing_status="succeeded",
+            chunking_status="succeeded",
+            index_status="succeeded",
+            chunking_strategy="test",
+            created_at=now,
+        )
+        return KnowledgeDocumentView(
+            id=identifier,
+            knowledge_base_id=base,
+            original_filename=title,
+            media_type="text/markdown",
+            status="published",
+            current_version_id=version.id,
+            versions=[version],
+            created_at=now,
+            updated_at=now,
+        )
+
+    chunks = {
+        first: {"document": document(UUID(int=201), "安全知识维护规范.md")},
+        second: {"document": document(UUID(int=202), "MITRE_ATT&CK_检测图谱.md")},
+    }
+    candidates = {first: (1.0, 0.8, 0.9), second: (0.3, 0.7, 0.5)}
+
+    ordered = LocalKnowledgeService._rank_candidates(
+        "Which ATT&CK technique covers PowerShell?",
+        candidates,
+        {first: 0.95, second: 0.70},
+        chunks,
+        limit=2,
+    )
+
+    assert ordered == [second, first]
+    assert LocalKnowledgeService._primary_evidence_ids(ordered, chunks) == [second]
 
 
 def test_local_evaluation_executes_retrieval_metrics_and_honors_case_limit(
@@ -192,7 +272,7 @@ def test_local_retrieval_refuses_matching_expired_curated_evidence(
         CreateKnowledgeBaseRequest(name="stale", default_sensitivity="internal"),
         tenant_id=TENANT,
     )
-    due = date.today() - timedelta(days=1)
+    due = datetime.now(UTC).date() - timedelta(days=1)
     service.upload_document(
         base.id,
         UploadedDocument(

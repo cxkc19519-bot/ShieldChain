@@ -522,7 +522,17 @@ class GroundedAssistantService:
                     principal_id=self._principal_id,
                 )
             )
-        hits = tuple(hit for response in responses for hit in response.hits)
+        cited_chunk_ids = {
+            citation.chunk_id
+            for response in responses
+            for citation in response.citations
+        }
+        hits = tuple(
+            hit
+            for response in responses
+            for hit in response.hits
+            if hit.chunk_id in cited_chunk_ids
+        )
         reasons = {response.refusal_reason for response in responses}
         refusal_reason = next(
             (
