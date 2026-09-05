@@ -18,6 +18,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
 
   minio:
     image: minio/minio:RELEASE.2024-05-28T17-19-04Z
@@ -33,6 +34,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
 
   milvus:
     image: milvusdb/milvus:v2.6.16
@@ -54,9 +56,18 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    networks:
+      - default
+      - shieldchain
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
       start_period: 90s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
+
+networks:
+  shieldchain:
+    external: true
+    name: shieldchain_default

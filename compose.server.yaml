@@ -4,4 +4,6 @@ services:
       - .env
     environment:
       SHIELDCHAIN_LOCAL_KNOWLEDGE_ROOT: /var/lib/shieldchain/local-knowledge
+      SHIELDCHAIN_LOCAL_RAG_URL: http://shieldchain-rag-models:8000
+      SHIELDCHAIN_LOCAL_MILVUS_URI: http://shieldchain-milvus:19530
       ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant
