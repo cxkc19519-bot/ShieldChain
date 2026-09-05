@@ -44,7 +44,7 @@ def _authority(request: Request) -> tuple[UUID, UUID]:
 
 def _require_operator_control(request: Request) -> None:
     settings = cast(Settings, request.app.state.settings)
-    if settings.environment == "production":
+    if settings.environment == "production" and not settings.response_operator_controls_enabled:
         raise ApiError(
             "operator_auth_required",
             "Operator controls require an authenticated administrator boundary",

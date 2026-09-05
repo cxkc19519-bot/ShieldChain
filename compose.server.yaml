@@ -1,4 +1,38 @@
 services:
+  response-executor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.executor
+    image: shieldchain-response-executor:local
+    network_mode: host
+    environment:
+      SHIELDCHAIN_FIREWALL_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
+      SHIELDCHAIN_FIREWALL_EXECUTOR_SOCKET: /run/shieldchain-executor/executor.sock
+      SHIELDCHAIN_FIREWALL_ALLOWED_CIDRS: ${RESPONSE_FIREWALL_ALLOWED_CIDRS:-192.0.2.0/24,198.51.100.0/24,203.0.113.0/24}
+    volumes:
+      - shieldchain-executor-socket:/run/shieldchain-executor
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/shieldchain-executor/executor.sock'); s.close()"
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 6
+    restart: unless-stopped
+
   backend:
     env_file:
       - .env
@@ -7,6 +41,9 @@ services:
       SHIELDCHAIN_LOCAL_RAG_URL: http://shieldchain-rag-models:8000
       SHIELDCHAIN_LOCAL_MILVUS_URI: http://shieldchain-milvus:19530
       ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant
+    depends_on:
+      response-executor:
+        condition: service_healthy
 
   frontend:
     pids_limit: 256

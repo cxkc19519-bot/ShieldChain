@@ -33,6 +33,10 @@ x-backend-environment: &backend-environment
   MCP_REMOTE_PEER_CALLS_PER_MINUTE: ${MCP_REMOTE_PEER_CALLS_PER_MINUTE:-30}
   MCP_REMOTE_CIRCUIT_FAILURE_THRESHOLD: ${MCP_REMOTE_CIRCUIT_FAILURE_THRESHOLD:-5}
   MCP_REMOTE_CIRCUIT_OPEN_SECONDS: ${MCP_REMOTE_CIRCUIT_OPEN_SECONDS:-60}
+  RESPONSE_CONNECTOR_MODE: ${RESPONSE_CONNECTOR_MODE:-simulation}
+  RESPONSE_FIREWALL_EXECUTOR_URL: ${RESPONSE_FIREWALL_EXECUTOR_URL:-http+unix:///run/shieldchain-executor/executor.sock}
+  RESPONSE_FIREWALL_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
+  RESPONSE_OPERATOR_CONTROLS_ENABLED: ${RESPONSE_OPERATOR_CONTROLS_ENABLED:-false}
 
 x-backend-security: &backend-security
   read_only: true
@@ -73,6 +77,7 @@ services:
     environment: *backend-environment
     volumes:
       - shieldchain-data:/var/lib/shieldchain
+      - shieldchain-executor-socket:/run/shieldchain-executor
     expose:
       - "8000"
     depends_on:
@@ -126,3 +131,4 @@ services:
 
 volumes:
   shieldchain-data:
+  shieldchain-executor-socket:

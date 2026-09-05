@@ -25,6 +25,26 @@ def test_settings_use_safe_defaults() -> None:
     assert settings.mcp_remote_snapshot_ttl_seconds == 3600
     assert settings.mcp_remote_max_tools == 100
     assert settings.rag_evaluation_root == Path("sample_docs/security_vertical/evaluation")
+    assert settings.response_connector_mode == "simulation"
+    assert settings.response_operator_controls_enabled is False
+
+
+def test_real_firewall_connector_requires_a_valid_url_and_token() -> None:
+    with pytest.raises(ValidationError, match="24 characters"):
+        Settings(_env_file=None, response_connector_mode="nftables_http")
+    with pytest.raises(ValidationError, match="absolute Unix socket"):
+        Settings(
+            _env_file=None,
+            response_connector_mode="nftables_http",
+            response_firewall_executor_url="file:///tmp/executor",
+            response_firewall_executor_token="a-secure-test-token-with-24-characters",
+        )
+    settings = Settings(
+        _env_file=None,
+        response_connector_mode="nftables_http",
+        response_firewall_executor_token="a-secure-test-token-with-24-characters",
+    )
+    assert settings.response_connector_mode == "nftables_http"
 
 
 def test_remote_mcp_limits_are_bounded_and_empty_path_is_disabled() -> None:

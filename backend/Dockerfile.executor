@@ -1,0 +1,8 @@
+FROM python:3.14.6-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nftables \
+    && rm -rf /var/lib/apt/lists/*
+COPY backend/executor/server.py /app/server.py
+EXPOSE 9180
+CMD ["python", "/app/server.py"]

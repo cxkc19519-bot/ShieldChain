@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     wazuh_webhook_token: SecretStr = SecretStr("")
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
+    response_connector_mode: Literal["simulation", "nftables_http"] = "simulation"
+    response_firewall_executor_url: str = "http+unix:///run/shieldchain-executor/executor.sock"
+    response_firewall_executor_token: SecretStr = SecretStr("")
+    response_operator_controls_enabled: bool = False
     rag_content_root: Path = Path("data/knowledge")
     security_vertical_pack_root: Path = Path("sample_docs/security_vertical")
     rag_evaluation_root: Path = Path("sample_docs/security_vertical/evaluation")
@@ -123,6 +127,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_network_boundaries(self) -> Settings:
+        if self.response_connector_mode == "nftables_http":
+            parsed_executor = urlsplit(self.response_firewall_executor_url)
+            valid_http = parsed_executor.scheme == "http" and bool(parsed_executor.hostname)
+            valid_unix = self.response_firewall_executor_url.startswith("http+unix:///")
+            if not (valid_http or valid_unix):
+                raise ValueError(
+                    "response firewall executor must use HTTP or an absolute Unix socket URL"
+                )
+            if len(self.response_firewall_executor_token.get_secret_value()) < 24:
+                raise ValueError(
+                    "response firewall executor token must contain at least 24 characters"
+                )
         if self.environment == "production" and (
             "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins
         ):

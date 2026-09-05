@@ -52,7 +52,13 @@ from shieldchain.qwen_experience.service import QwenExperienceService
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
+from shieldchain.react.safety_loop import (
+    AdapterProvider,
+    ResponseSafetyLoopService,
+    SimulationAdapterPool,
+)
 from shieldchain.tools.api_service import TrustedToolApiService
+from shieldchain.tools.firewall_connector import NftablesAdapterProvider
 from shieldchain.wazuh.service import WazuhAlertService
 
 logger = structlog.get_logger(__name__)
@@ -134,7 +140,20 @@ def create_app(
         else None
     )
     mcp_http_app = create_mcp_http_app(mcp_server, settings) if mcp_server is not None else None
-    trusted_tools = trusted_tool_api_service or TrustedToolApiService(session_factory)
+    if trusted_tool_api_service is not None:
+        trusted_tools = trusted_tool_api_service
+    else:
+        adapter_provider: AdapterProvider = SimulationAdapterPool()
+        if settings.response_connector_mode == "nftables_http":
+            adapter_provider = NftablesAdapterProvider(
+                adapter_provider,
+                base_url=settings.response_firewall_executor_url,
+                token=settings.response_firewall_executor_token.get_secret_value(),
+            )
+        trusted_tools = TrustedToolApiService(
+            session_factory,
+            safety_loop=ResponseSafetyLoopService(session_factory, adapters=adapter_provider),
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
