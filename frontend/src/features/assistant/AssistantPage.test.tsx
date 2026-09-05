@@ -66,7 +66,7 @@ describe('AssistantPage composer', () => {
     expect(JSON.parse(String(chatCall?.[1]?.body))).toMatchObject({ message: '测试问题' })
   })
 
-  it('hides grounding state by default and preserves expandable citation provenance', async () => {
+  it('does not render grounding state or citation provenance', async () => {
     const conversation = {
       id: 'conversation-1', title: '引用测试', created_at: '2026-09-03T00:00:00Z',
       updated_at: '2026-09-03T00:00:01Z', memory_summary: '', summary: '引用测试',
@@ -102,18 +102,12 @@ describe('AssistantPage composer', () => {
     render(<MemoryRouter><AssistantPage /></MemoryRouter>)
     await user.click(await screen.findByRole('button', { name: '引用测试' }))
 
-    expect(await screen.findByText('有依据回答')).not.toBeVisible()
-    await user.click(screen.getByText('查看回答状态'))
-    expect(screen.getByText('有依据回答')).toBeVisible()
-    await user.click(screen.getByText('查看回答状态'))
-    expect(screen.getByText('有依据回答')).not.toBeVisible()
-    expect(screen.getByText('引用证据（1）')).toBeVisible()
-    await user.click(screen.getByText('[1] 安全处置手册.md'))
-    expect(screen.getAllByText('隔离前必须经过人工审批。')).toHaveLength(2)
-    expect(screen.getByText('version-1')).toBeVisible()
-    expect(screen.getByText('2026-09-02 / 2026-10-02')).toBeVisible()
-    expect(screen.getByRole('link', { name: 'https://www.cac.gov.cn/example' })).toBeVisible()
-    expect(screen.getByText('a'.repeat(64))).toBeVisible()
+    expect(await screen.findByText('隔离前必须经过人工审批。')).toBeVisible()
+    expect(screen.queryByText('查看回答状态')).not.toBeInTheDocument()
+    expect(screen.queryByText('有依据回答')).not.toBeInTheDocument()
+    expect(screen.queryByText('引用证据（1）')).not.toBeInTheDocument()
+    expect(screen.queryByText('[1] 安全处置手册.md')).not.toBeInTheDocument()
+    expect(screen.getAllByText('隔离前必须经过人工审批。')).toHaveLength(1)
   })
 
   it('runs and displays the fixed assistant evaluation', async () => {

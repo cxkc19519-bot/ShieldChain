@@ -97,16 +97,6 @@ function displayAssistantText(content: string) {
     .trim()
 }
 
-function groundingLabel(message: Message) {
-  const labels: Record<string, string> = {
-    conversational: '普通对话（未检索知识库）',
-    grounded: '有依据回答',
-    extractive_degraded: '生成降级（直接展示证据）',
-    refused: `已拒答${message.refusal_reason ? `：${message.refusal_reason}` : ''}`,
-    legacy: '历史记录（未保存依据状态）',
-  }
-  return message.grounding_status ? labels[message.grounding_status] : undefined
-}
 export function AssistantPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const navigate = useNavigate()
@@ -299,23 +289,7 @@ export function AssistantPage() {
       </div> : <>
       {empty ? <div className="gemini-welcome"><div className="gemini-orb"><img src={logoUrl} alt="ShieldChain" /></div><h1><span>你好，</span>有什么安全问题想聊聊？</h1><div className="gemini-suggestions">{starters.map((item) => <button type="button" onClick={() => void send(undefined, item)} disabled={pending} key={item}>{item}</button>)}</div></div> : <div className="gemini-thread">{active.messages.map((item) => <article className={`gemini-message gemini-message--${item.role}`} key={item.id}><div>
         <p>{displayAssistantText(item.content)}</p>
-        {item.role === 'assistant' && groundingLabel(item) && <details className="gemini-grounding-details"><summary>查看回答状态</summary><small className="gemini-grounding-status">{groundingLabel(item)}</small></details>}
         {item.role === 'assistant' && Boolean(item.degradations?.length) && <div className="gemini-degradations" role="status">{item.degradations?.map((entry) => <p key={`${entry.kind}-${entry.error_category}-${entry.message}`}>{entry.kind}/{entry.error_category}：{entry.message}</p>)}</div>}
-        {item.role === 'assistant' && item.citations.length > 0 && <div className="gemini-citations"><b>引用证据（{item.citations.length}）</b>{item.citations.map((citation) => <details key={`${citation.index}-${citation.chunk_id ?? citation.document_title}`}>
-          <summary>[{citation.index}] {citation.document_title}</summary>
-          <p>{citation.excerpt}</p>
-          <dl>
-            <dt>标题路径</dt><dd>{citation.heading_path.join(' / ') || '—'}</dd>
-            <dt>页码/位置</dt><dd>{citation.page_number ?? citation.structural_location ?? '—'}</dd>
-            <dt>文档版本</dt><dd>{citation.document_version_id ?? '旧记录未保存'}</dd>
-            <dt>内容块</dt><dd>{citation.chunk_id ?? '旧记录未保存'}</dd>
-            <dt>融合分数</dt><dd>{citation.fusion_score.toFixed(3)}</dd>
-            <dt>来源等级</dt><dd>{citation.source_tiers.join('；') || '未登记'}</dd>
-            <dt>核验/复核</dt><dd>{citation.verified_at ?? '未登记'} / {citation.review_due_at ?? '未登记'}</dd>
-            <dt>官方来源</dt><dd>{citation.source_urls.length ? citation.source_urls.map((url) => <a href={url} key={url} target="_blank" rel="noreferrer">{url}</a>) : '未登记'}</dd>
-            <dt>完整性摘要</dt><dd><code>{citation.integrity_sha256 ?? '旧记录未保存'}</code></dd>
-          </dl>
-        </details>)}</div>}
       </div></article>)}{pending && <article className="gemini-message gemini-message--assistant"><p className="gemini-loading"><i /><i /><i />思考中…</p></article>}</div>}
       {error && <p className="gemini-error" role="alert">{error}</p>}
       <form className="gemini-composer" onSubmit={(event) => void send(event)}><textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="询问 ShieldChain" rows={1} maxLength={4096} /><button type="submit" disabled={!draft.trim() || pending} aria-label="发送"><ArrowUp size={19} strokeWidth={2.8} /></button></form>
