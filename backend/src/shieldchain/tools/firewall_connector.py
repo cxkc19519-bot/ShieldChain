@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from shieldchain.tools.domain import (
@@ -21,6 +22,7 @@ from shieldchain.tools.domain import (
 )
 from shieldchain.tools.gateway import AdapterExecution, TrustedToolAdapter
 from shieldchain.tools.registry import BoundToolRequest
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 _FIREWALL_TOOLS = frozenset({"query_firewall_state", "block_ip"})
 
@@ -220,4 +222,12 @@ class NftablesAdapterProvider:
             run_id=run_id,
             now=now,
         )
-        return None if fallback is None else RoutedAdapter(self._firewall, fallback)
+        if fallback is not None:
+            return RoutedAdapter(self._firewall, fallback)
+        wazuh_run = session.execute(
+            select(WazuhCaseRunRow.run_id).where(
+                WazuhCaseRunRow.run_id == str(run_id),
+                WazuhCaseRunRow.tenant_id == str(tenant_id),
+            )
+        ).scalar_one_or_none()
+        return self._firewall if wazuh_run is not None else None

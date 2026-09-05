@@ -12,6 +12,8 @@ class OperationsReportRequest(BaseModel):
 
     start_at: datetime | None = None
     end_at: datetime | None = None
+    wazuh_case_id: UUID | None = None
+    rule_ttl_seconds: int = Field(default=60, ge=60, le=86_400)
 
     @model_validator(mode="after")
     def validate_range(self) -> OperationsReportRequest:

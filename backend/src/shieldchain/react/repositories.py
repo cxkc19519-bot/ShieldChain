@@ -27,6 +27,7 @@ from shieldchain.react.persistence import (
     ReactObservationRow,
     ReactPlanRevisionRow,
 )
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 
 class ReactLoopNotFound(RuntimeError):
@@ -94,13 +95,23 @@ class ReactStepBundle:
 
 class SqlAlchemyReactRepository:
     def create(self, session: Session, *, tenant_id: UUID, loop: ReactLoop) -> ReactLoop:
-        run = session.execute(
+        incident_run = session.execute(
             select(InvestigationRunRow).where(
                 InvestigationRunRow.id == str(loop.run_id),
                 InvestigationRunRow.tenant_id == str(tenant_id),
             )
         ).scalar_one_or_none()
-        if run is None or run.incident_id != str(loop.case_id):
+        wazuh_run = session.execute(
+            select(WazuhCaseRunRow).where(
+                WazuhCaseRunRow.run_id == str(loop.run_id),
+                WazuhCaseRunRow.tenant_id == str(tenant_id),
+            )
+        ).scalar_one_or_none()
+        incident_bound = (
+            incident_run is not None and incident_run.incident_id == str(loop.case_id)
+        )
+        wazuh_bound = wazuh_run is not None and wazuh_run.case_id == str(loop.case_id)
+        if not incident_bound and not wazuh_bound:
             raise ReactLoopNotFound("run not found in tenant")
         session.add(
             ReactLoopRow(

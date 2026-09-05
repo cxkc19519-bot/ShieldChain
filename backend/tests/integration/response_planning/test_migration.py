@@ -104,7 +104,7 @@ def test_response_plan_migration_safely_backfills_legacy_tool_plan_and_round_tri
     command.upgrade(configuration, "head")
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260824_08",
+            "20260905_01",
         )
     get_settings.cache_clear()
 

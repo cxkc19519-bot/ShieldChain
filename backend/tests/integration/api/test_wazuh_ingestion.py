@@ -21,6 +21,7 @@ def wazuh_client(tmp_path: Path) -> Iterator[TestClient]:
         simulation_step_delay_ms=0,
         wazuh_webhook_token="test-wazuh-token",
         wazuh_review_min_severity=12,
+        assistant_data_root=tmp_path / "assistant",
     )
     app = create_app(database_engine=engine, settings=settings)
     with TestClient(app) as client:
@@ -97,3 +98,34 @@ def test_lower_severity_alert_stays_in_inbox_without_review_case(wazuh_client: T
     assert response.json()["created"] is True
     assert response.json()["review_case"] is None
     assert wazuh_client.get("/api/v1/integrations/wazuh/cases").json()["items"] == []
+
+
+def test_operator_explicitly_starts_one_case_bound_agent_run(
+    wazuh_client: TestClient,
+) -> None:
+    created = wazuh_client.post(
+        "/api/v1/integrations/wazuh/alerts",
+        json=payload(external_id="wazuh-investigate"),
+        headers={"X-ShieldChain-Wazuh-Token": "test-wazuh-token"},
+    )
+    case_id = created.json()["review_case"]["id"]
+
+    investigated = wazuh_client.post(
+        f"/api/v1/integrations/wazuh/cases/{case_id}/investigate",
+        json={"rule_ttl_seconds": 60},
+    )
+
+    assert investigated.status_code == 201
+    assert investigated.json()["run_id"]
+    assert investigated.json()["response_plan"]["status"] == "completed_advisory"
+    assert investigated.json()["response_plan"]["action_count"] == 0
+    listed = wazuh_client.get("/api/v1/integrations/wazuh/cases").json()["items"]
+    assert listed[0]["status"] == "investigated"
+    assert listed[0]["run_id"] == investigated.json()["run_id"]
+
+    repeated = wazuh_client.post(
+        f"/api/v1/integrations/wazuh/cases/{case_id}/investigate",
+        json={"rule_ttl_seconds": 60},
+    )
+    assert repeated.status_code == 409
+    assert repeated.json()["error"]["code"] == "wazuh_investigation_rejected"

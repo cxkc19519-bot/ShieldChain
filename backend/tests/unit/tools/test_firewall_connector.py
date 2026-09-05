@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
 
 from shieldchain.agents.domain import AgentRole, EvidenceReference
 from shieldchain.tools.domain import ExecutionOutcome, TrustedToolRequest, VerificationOutcome
-from shieldchain.tools.firewall_connector import NftablesHttpAdapter
+from shieldchain.tools.firewall_connector import NftablesAdapterProvider, NftablesHttpAdapter
 from shieldchain.tools.registry import default_tool_registry
 
 NOW = datetime(2026, 9, 5, 8, tzinfo=UTC)
@@ -87,3 +88,38 @@ def test_real_firewall_adapter_accepts_an_absolute_unix_socket_url() -> None:
         token="a-secure-test-token-with-24-characters",
     )
     assert adapter._unix_socket == "/run/shieldchain-executor/executor.sock"
+
+
+def test_provider_routes_explicit_wazuh_run_to_firewall_without_simulation() -> None:
+    fallback = MagicMock()
+    fallback.for_run.return_value = None
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = str(RUN)
+    provider = NftablesAdapterProvider(
+        fallback,
+        base_url="http://executor.test:9180",
+        token="a-secure-test-token-with-24-characters",
+    )
+
+    adapter = provider.for_run(
+        session, tenant_id=UUID(int=1), run_id=RUN, now=NOW
+    )
+
+    assert isinstance(adapter, NftablesHttpAdapter)
+    session.execute.assert_called_once()
+
+
+def test_provider_rejects_unbound_non_simulation_run() -> None:
+    fallback = MagicMock()
+    fallback.for_run.return_value = None
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    provider = NftablesAdapterProvider(
+        fallback,
+        base_url="http://executor.test:9180",
+        token="a-secure-test-token-with-24-characters",
+    )
+
+    assert provider.for_run(
+        session, tenant_id=UUID(int=1), run_id=RUN, now=NOW
+    ) is None

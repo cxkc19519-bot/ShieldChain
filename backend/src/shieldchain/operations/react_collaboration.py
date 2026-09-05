@@ -388,6 +388,10 @@ class RealDataAgentTeam:
         audit_context: AgentToolAuditContext | None = None,
         run_id: UUID | None = None,
         now: datetime | None = None,
+        case_id: UUID | None = None,
+        target_evidence_id: UUID | None = None,
+        target_ip: str | None = None,
+        rule_ttl_seconds: int = 60,
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
         broker = AgentToolBroker(
             tools,
@@ -428,6 +432,10 @@ class RealDataAgentTeam:
                     ],
                     observation_summaries=broker.public_facts(),
                     now=now,
+                    case_id=case_id,
+                    target_evidence_id=target_evidence_id,
+                    target_ip=target_ip,
+                    rule_ttl_seconds=rule_ttl_seconds,
                 )
                 summary = plan_result.reference.public_summary
                 role_model = plan_result.model

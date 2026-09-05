@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhReviewCaseRow
+from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhCaseRunRow, WazuhReviewCaseRow
 from shieldchain.wazuh.schemas import WazuhAlertInput, WazuhAlertView, WazuhReviewCaseView
 
 
@@ -103,7 +103,7 @@ class WazuhAlertService:
             ):
                 continue
             shown[key] = self._utc(row.created_at)
-            result.append(self._review_case_view(row))
+            result.append(self._review_case_with_run(session, row))
             if len(result) == limit:
                 break
         return result
@@ -143,11 +143,15 @@ class WazuhAlertService:
         )
 
     @classmethod
-    def _review_case_view(cls, row: WazuhReviewCaseRow) -> WazuhReviewCaseView:
+    def _review_case_view(
+        cls, row: WazuhReviewCaseRow, run_id: str | None = None
+    ) -> WazuhReviewCaseView:
         return WazuhReviewCaseView(
             id=UUID(row.id),
             tracking_id=f"WAZ-{row.tracking_year}-{row.tracking_sequence:04d}",
             alert_id=UUID(row.alert_id),
+            status="investigated" if run_id else "needs_review",
+            run_id=UUID(run_id) if run_id else None,
             severity=row.severity,
             rule_id=row.rule_id,
             title=row.title,
@@ -163,7 +167,7 @@ class WazuhAlertService:
             select(WazuhReviewCaseRow).where(WazuhReviewCaseRow.alert_id == alert.id)
         )
         if direct is not None:
-            return self._review_case_view(direct)
+            return self._review_case_with_run(session, direct)
         row = session.scalar(
             select(WazuhReviewCaseRow)
             .where(
@@ -176,7 +180,19 @@ class WazuhAlertService:
             .order_by(WazuhReviewCaseRow.updated_at.desc())
             .limit(1)
         )
-        return self._review_case_view(row) if row is not None else None
+        return self._review_case_with_run(session, row) if row is not None else None
+
+    @classmethod
+    def _review_case_with_run(
+        cls, session: Session, row: WazuhReviewCaseRow
+    ) -> WazuhReviewCaseView:
+        run_id = session.scalar(
+            select(WazuhCaseRunRow.run_id).where(
+                WazuhCaseRunRow.case_id == row.id,
+                WazuhCaseRunRow.tenant_id == row.tenant_id,
+            )
+        )
+        return cls._review_case_view(row, run_id)
 
     def _find_or_create_review_case(
         self,

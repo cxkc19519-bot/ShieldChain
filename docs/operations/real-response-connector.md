@@ -27,7 +27,11 @@ RESPONSE_OPERATOR_CONTROLS_ENABLED=true
 使用服务器编排启动：
 
 ```bash
-docker compose -f compose.yaml -f compose.server.yaml up -d --build
+docker compose \
+  -f compose.yaml \
+  -f compose.local-llm.yaml \
+  -f compose.server.yaml \
+  up -d --build
 ```
 
 ## 验收顺序
@@ -39,6 +43,8 @@ docker compose -f compose.yaml -f compose.server.yaml up -d --build
 5. 查询接口返回 `firewall_status=blocked`。
 6. TTL 到期后查询返回 `firewall_status=not_blocked`。
 7. 从处置中心接受计划后，`block_ip` 仍需独立人工审批；审批后执行尝试和验证结果必须出现在可信轨迹中。
+
+完整 Wazuh 案件验收使用 `scripts/verify_wazuh_response_e2e.py`。脚本要求显式 `--execute`，每次生成唯一告警与规则 ID，目标固定为 `203.0.113.25`，并通过执行器 Unix socket 在 TTL 后独立确认规则已经自动清理。详细命令及阶段输出见 [Wazuh 只读告警接入](wazuh-read-only-ingestion.md)。2026-09-05 的服务器验收记录见 [Wazuh 案件真实处置闭环验收](../reports/wazuh-case-response-e2e-2026-09-05.md)。
 
 ## 扩大到真实地址前必须完成
 

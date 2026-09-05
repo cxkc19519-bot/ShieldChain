@@ -50,7 +50,8 @@ class WazuhReviewCaseView(StrictModel):
     tracking_id: str
     alert_id: UUID
     source: Literal["wazuh"] = "wazuh"
-    status: Literal["needs_review"] = "needs_review"
+    status: Literal["needs_review", "investigated"] = "needs_review"
+    run_id: UUID | None = None
     severity: int
     rule_id: str
     title: str
@@ -83,3 +84,9 @@ class WazuhAlertListResponse(StrictModel):
 
 class WazuhReviewCaseListResponse(StrictModel):
     items: list[WazuhReviewCaseView]
+
+
+class WazuhInvestigationRequest(StrictModel):
+    """Explicit operator request; alert ingestion never starts agents automatically."""
+
+    rule_ttl_seconds: int = Field(default=60, ge=60, le=86_400)

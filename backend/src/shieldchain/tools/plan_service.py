@@ -9,7 +9,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.agents.domain import AgentRole, EvidenceReference
-from shieldchain.incidents.persistence import EvidenceRecordRow
 from shieldchain.response_planning.persistence import (
     ResponsePlanActionRow,
     ResponsePlanEventRow,
@@ -36,6 +35,7 @@ from shieldchain.tools.registry import (
 )
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository, _call
 from shieldchain.tools.schemas import ResponsePlanMutationView, ResponsePlanToolCallView
+from shieldchain.wazuh.evidence import confirmed_evidence
 
 
 class ResponsePlanDecisionNotFound(RuntimeError):
@@ -374,13 +374,9 @@ class ResponsePlanToolService:
     ) -> tuple[EvidenceReference, ...]:
         references = []
         for evidence_id in action.evidence_ids_json:
-            row = session.execute(
-                select(EvidenceRecordRow).where(
-                    EvidenceRecordRow.id == str(evidence_id),
-                    EvidenceRecordRow.run_id == plan.run_id,
-                    EvidenceRecordRow.confirmed.is_(True),
-                )
-            ).scalar_one_or_none()
+            row = confirmed_evidence(
+                session, run_id=plan.run_id, evidence_id=evidence_id
+            )
             if row is None or plan.case_id is None:
                 raise ResponsePlanDecisionConflict("response plan evidence is no longer valid")
             observed_at = _utc(row.observed_at)
@@ -399,15 +395,11 @@ class ResponsePlanToolService:
             str(item.id) for item in references
         }:
             raise ResponsePlanDecisionConflict("response plan target evidence is missing")
-        target_row = next(
-            row
-            for row in session.scalars(
-                select(EvidenceRecordRow).where(
-                    EvidenceRecordRow.id == action.target_reference_id,
-                    EvidenceRecordRow.run_id == plan.run_id,
-                )
-            )
+        target_row = confirmed_evidence(
+            session, run_id=plan.run_id, evidence_id=action.target_reference_id
         )
+        if target_row is None:
+            raise ResponsePlanDecisionConflict("response plan target evidence is missing")
         target_fields = {
             "ipv4": ("target_ip", "source_ip", "destination_ip"),
             "endpoint": ("endpoint_id", "agent_id"),

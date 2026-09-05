@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     response_connector_mode: Literal["simulation", "nftables_http"] = "simulation"
     response_firewall_executor_url: str = "http+unix:///run/shieldchain-executor/executor.sock"
     response_firewall_executor_token: SecretStr = SecretStr("")
+    response_firewall_allowed_cidrs: str = (
+        "192.0.2.0/24,198.51.100.0/24,203.0.113.0/24"
+    )
     response_operator_controls_enabled: bool = False
     rag_content_root: Path = Path("data/knowledge")
     security_vertical_pack_root: Path = Path("sample_docs/security_vertical")

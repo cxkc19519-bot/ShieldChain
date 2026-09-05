@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
 from uuid import UUID, uuid4
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from shieldchain.agents.persistence import AgentRunRow
+from shieldchain.agents.persistence import AgentRunRow, CaseContextRow
 from shieldchain.core.config import Settings
 from shieldchain.llm.deepseek import DeepSeekClient
 from shieldchain.llm.ports import ChatMessage, ChatRequest, LlmError
@@ -20,6 +23,12 @@ from shieldchain.mcp_remote.runtime import McpRemoteRuntime, RemoteRunCatalog
 from shieldchain.operations.audit import AgentToolAuditContext, AgentToolAuditStore
 from shieldchain.operations.persistence import OperationsRunRow
 from shieldchain.response_planning.compiler import ResponsePlanCompiler
+from shieldchain.wazuh.persistence import (
+    WazuhAlertRow,
+    WazuhCaseEvidenceRow,
+    WazuhCaseRunRow,
+    WazuhReviewCaseRow,
+)
 
 from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
@@ -85,6 +94,17 @@ class OperationsReportStore:
         temporary.replace(self._path)
 
 
+@dataclass(frozen=True, slots=True)
+class WazuhCaseScope:
+    case_id: UUID
+    alert_id: UUID
+    evidence_id: UUID
+    source_ip: str | None
+    rule_ttl_seconds: int
+    occurred_at: datetime
+    title: str
+
+
 class SecurityOperationsReportAgent:
     """Grounded security-operations agent with model-selected read-only tools."""
 
@@ -144,7 +164,12 @@ class SecurityOperationsReportAgent:
             if self._remote_runtime is not None
             else RemoteRunCatalog("builtin-read-only-v1", (), ())
         )
-        self._create_run(run_id, report_id, start_at, end_at, now, remote_catalog)
+        case_scope = self._load_wazuh_case_scope(
+            payload.wazuh_case_id, run_id, now, payload.rule_ttl_seconds
+        )
+        self._create_run(
+            run_id, report_id, start_at, end_at, now, remote_catalog, case_scope=case_scope
+        )
         audit_context = AgentToolAuditContext(
             tenant_id=self._tenant_id,
             principal_id=self._principal_id,
@@ -161,6 +186,7 @@ class SecurityOperationsReportAgent:
                 end_at=end_at,
                 audit_context=audit_context,
                 tools=self._tools + remote_catalog.tools,
+                case_scope=case_scope,
             )
         except asyncio.CancelledError:
             self._finish_run(run_id, "cancelled", datetime.now(UTC))
@@ -181,6 +207,7 @@ class SecurityOperationsReportAgent:
         end_at: datetime,
         audit_context: AgentToolAuditContext,
         tools: tuple[ReadOnlyAgentTool, ...],
+        case_scope: WazuhCaseScope | None,
     ) -> OperationsReportView:
         stages = [
             ReportStageView(
@@ -198,6 +225,10 @@ class SecurityOperationsReportAgent:
             audit_context=audit_context,
             run_id=run_id,
             now=now,
+            case_id=case_scope.case_id if case_scope else None,
+            target_evidence_id=case_scope.evidence_id if case_scope else None,
+            target_ip=case_scope.source_ip if case_scope else None,
+            rule_ttl_seconds=case_scope.rule_ttl_seconds if case_scope else 60,
         )
         response_plan = next(
             (
@@ -344,6 +375,8 @@ class SecurityOperationsReportAgent:
         end_at: datetime,
         now: datetime,
         remote_catalog: RemoteRunCatalog,
+        *,
+        case_scope: WazuhCaseScope | None,
     ) -> None:
         with self._session_factory.begin() as session:
             session.add(
@@ -351,9 +384,14 @@ class SecurityOperationsReportAgent:
                     id=str(run_id),
                     tenant_id=str(self._tenant_id),
                     principal_id=str(self._principal_id),
-                    run_kind="operations_report",
+                    run_kind="incident_investigation" if case_scope else "operations_report",
                     status="running",
-                    goal="Generate a bounded security operations report.",
+                    goal=(
+                        f"Investigate Wazuh case {case_scope.case_id} "
+                        "and propose a bounded response."
+                        if case_scope
+                        else "Generate a bounded security operations report."
+                    ),
                     catalog_revision=remote_catalog.catalog_revision,
                     revision=0,
                     created_at=now,
@@ -370,6 +408,48 @@ class SecurityOperationsReportAgent:
                     created_at=now,
                 )
             )
+            if case_scope is not None:
+                session.add(
+                    WazuhCaseRunRow(
+                        run_id=str(run_id),
+                        case_id=str(case_scope.case_id),
+                        tenant_id=str(self._tenant_id),
+                        alert_id=str(case_scope.alert_id),
+                        created_at=now,
+                    )
+                )
+                session.add(
+                    CaseContextRow(
+                        id=str(case_scope.case_id),
+                        run_id=str(run_id),
+                        tenant_id=str(self._tenant_id),
+                        revision=0,
+                        phase="response_planning",
+                        user_goal="分析真实 Wazuh 告警并形成需要人工审批的受控响应计划。",
+                        hypotheses_json=[],
+                        risks_json=[],
+                        plan_json=["告警分诊", "威胁研判", "知识检索", "响应规划", "验证", "报告"],
+                        step_status_json={},
+                        disposition_status="等待多智能体研判",
+                        budget_json={
+                            "step_limit": 20,
+                            "steps_used": 0,
+                            "loop_limit": 8,
+                            "loops_used": 0,
+                            "time_limit_seconds": 300,
+                            "time_used_seconds": 0,
+                            "token_limit": 12000,
+                            "tokens_used": 0,
+                            "cost_limit_usd": 2.0,
+                            "cost_used_usd": 0.0,
+                            "tool_call_limit": 8,
+                            "tool_calls_used": 0,
+                        },
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                session.add(self._wazuh_evidence_row(case_scope, run_id, now))
             session.add_all(
                 AgentRunMcpSnapshotRow(
                     run_id=str(run_id),
@@ -380,6 +460,65 @@ class SecurityOperationsReportAgent:
                 )
                 for binding in remote_catalog.bindings
             )
+
+    def _load_wazuh_case_scope(
+        self,
+        case_id: UUID | None,
+        run_id: UUID,
+        now: datetime,
+        rule_ttl_seconds: int,
+    ) -> WazuhCaseScope | None:
+        if case_id is None:
+            return None
+        with self._session_factory() as session:
+            case = session.get(WazuhReviewCaseRow, str(case_id))
+            if case is None or case.tenant_id != str(self._tenant_id):
+                raise ValueError("Wazuh 待复核案件不存在")
+            existing = session.scalar(
+                select(WazuhCaseRunRow.run_id).where(
+                    WazuhCaseRunRow.case_id == str(case_id),
+                    WazuhCaseRunRow.tenant_id == str(self._tenant_id),
+                )
+            )
+            if existing is not None:
+                raise ValueError(f"该 Wazuh 案件已经生成调查运行：{existing}")
+            alert = session.get(WazuhAlertRow, case.alert_id)
+            if alert is None or alert.tenant_id != str(self._tenant_id):
+                raise ValueError("Wazuh 案件缺少原始规范化告警")
+            return WazuhCaseScope(
+                case_id=case_id,
+                alert_id=UUID(alert.id),
+                evidence_id=uuid4(),
+                source_ip=alert.source_ip,
+                rule_ttl_seconds=rule_ttl_seconds,
+                occurred_at=self._utc(alert.occurred_at),
+                title=alert.title,
+            )
+
+    def _wazuh_evidence_row(
+        self, scope: WazuhCaseScope, run_id: UUID, now: datetime
+    ) -> WazuhCaseEvidenceRow:
+        payload = {
+            "source_ip": scope.source_ip,
+            "alert_id": str(scope.alert_id),
+            "title": scope.title,
+        }
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return WazuhCaseEvidenceRow(
+            id=str(scope.evidence_id),
+            run_id=str(run_id),
+            case_id=str(scope.case_id),
+            tenant_id=str(self._tenant_id),
+            evidence_type="wazuh_alert",
+            source="wazuh",
+            observed_at=scope.occurred_at,
+            summary=f"Wazuh 已接收高风险告警：{scope.title}"[:512],
+            raw_reference=f"wazuh:alert:{scope.alert_id}",
+            integrity_sha256=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            confirmed=True,
+            payload_json=payload,
+            created_at=now,
+        )
 
     def _finish_run(self, run_id: UUID, status: str, now: datetime) -> None:
         with self._session_factory.begin() as session:

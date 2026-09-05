@@ -82,7 +82,29 @@ def append_incident_audit(
         .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     if next_sequence is None:
-        raise IncidentNotFound(incident_id)
+        from shieldchain.wazuh.persistence import WazuhCaseAuditRow, WazuhCaseRunRow
+
+        live = session.scalar(
+            select(WazuhCaseRunRow).where(
+                WazuhCaseRunRow.case_id == str(incident_id),
+                WazuhCaseRunRow.run_id == str(run_id),
+            )
+        )
+        if live is None:
+            raise IncidentNotFound(incident_id)
+        session.add(
+            WazuhCaseAuditRow(
+                id=str(uuid4()),
+                run_id=live.run_id,
+                case_id=live.case_id,
+                tenant_id=live.tenant_id,
+                event_type=event_type,
+                request_id=request_id,
+                occurred_at=occurred_at,
+                payload_json=payload,
+            )
+        )
+        return
     session.add(
         AuditEventRow(
             id=str(uuid4()),

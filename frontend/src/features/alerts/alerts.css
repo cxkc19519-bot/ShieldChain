@@ -9,4 +9,6 @@
 .alert-case dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .alert-case__status { white-space: nowrap; border-radius: 999px; padding: .3rem .55rem; background: #fff0cf; color: #975b00; font-size: .82rem; font-weight: 700; }
 .alert-case__note { margin: 0; color: var(--color-text-muted); font-size: .9rem; }
+.alert-case__actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.alert-case__actions button, .alert-case__actions a { white-space: nowrap; }
 @media (max-width: 760px) { .alert-case dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } .alert-case header { display: grid; } }

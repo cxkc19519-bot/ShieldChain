@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hmac
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
@@ -10,10 +10,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
+from shieldchain.operations.schemas import OperationsReportRequest, OperationsReportView
+from shieldchain.operations.service import SecurityOperationsReportAgent
+from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhReviewCaseRow
 from shieldchain.wazuh.schemas import (
     WazuhAlertInput,
     WazuhAlertListResponse,
     WazuhAlertView,
+    WazuhInvestigationRequest,
     WazuhReviewCaseListResponse,
 )
 from shieldchain.wazuh.service import WazuhAlertService
@@ -35,6 +39,10 @@ def _sessions(request: Request) -> sessionmaker[Session]:
 
 def _tenant_id(request: Request) -> UUID:
     return cast(UUID, request.app.state.rag_demo_tenant_id)
+
+
+def _operations_agent(request: Request) -> SecurityOperationsReportAgent:
+    return cast(SecurityOperationsReportAgent, request.app.state.security_operations_report_agent)
 
 
 def _authorized(request: Request, token: str | None) -> None:
@@ -94,3 +102,37 @@ def list_review_cases(
                 ).wazuh_review_correlation_window_seconds,
             )
         )
+
+
+@router.post(
+    "/cases/{case_id}/investigate",
+    status_code=status.HTTP_201_CREATED,
+    response_model=OperationsReportView,
+)
+async def investigate_review_case(
+    case_id: UUID,
+    payload: WazuhInvestigationRequest,
+    request: Request,
+) -> OperationsReportView:
+    """Start agents only after an explicit operator action; ingestion stays passive."""
+
+    with _sessions(request)() as session:
+        case = session.get(WazuhReviewCaseRow, str(case_id))
+        if case is None or case.tenant_id != str(_tenant_id(request)):
+            raise ApiError("wazuh_case_not_found", "Wazuh review case not found", 404)
+        alert = session.get(WazuhAlertRow, case.alert_id)
+        if alert is None or alert.tenant_id != case.tenant_id:
+            raise ApiError("wazuh_case_evidence_missing", "Wazuh case evidence is missing", 409)
+        occurred_at = _service(request)._utc(alert.occurred_at)
+    try:
+        return await _operations_agent(request).generate(
+            OperationsReportRequest(
+                start_at=occurred_at - timedelta(minutes=5),
+                end_at=occurred_at + timedelta(minutes=5),
+                wazuh_case_id=case_id,
+                rule_ttl_seconds=payload.rule_ttl_seconds,
+            ),
+            request_id=str(request.state.request_id),
+        )
+    except ValueError as error:
+        raise ApiError("wazuh_investigation_rejected", str(error), 409) from None

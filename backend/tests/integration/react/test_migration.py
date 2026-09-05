@@ -119,7 +119,7 @@ def test_react_completion_migration_round_trips_and_protects_new_categories(
             ),
         )
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260824_08",
+            "20260905_01",
         )
 
     with pytest.raises(RuntimeError, match="extended ReAct records exist"):

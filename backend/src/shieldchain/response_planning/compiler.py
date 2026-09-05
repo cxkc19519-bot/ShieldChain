@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.agents.domain import AgentRole, EvidenceReference
 from shieldchain.agents.persistence import AgentRunRow, CaseContextRow
-from shieldchain.incidents.persistence import EvidenceRecordRow, InvestigationRunRow
+from shieldchain.incidents.persistence import InvestigationRunRow
 from shieldchain.tools.domain import ToolTargetType, TrustedToolRequest
 from shieldchain.tools.registry import (
     ToolNotRegistered,
@@ -19,6 +19,8 @@ from shieldchain.tools.registry import (
     TrustedToolRegistry,
     default_tool_registry,
 )
+from shieldchain.wazuh.evidence import EvidenceRow, confirmed_evidence
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 from .candidate import CandidateAction, ResponsePlanCandidate, parse_response_plan_candidate
 from .domain import ResponsePlanStatus
@@ -149,7 +151,14 @@ class ResponsePlanCompiler:
                     InvestigationRunRow.incident_id == str(context.case_id),
                 )
             )
-            if investigation is None:
+            wazuh_run = session.scalar(
+                select(WazuhCaseRunRow).where(
+                    WazuhCaseRunRow.run_id == str(context.run_id),
+                    WazuhCaseRunRow.tenant_id == str(context.tenant_id),
+                    WazuhCaseRunRow.case_id == str(context.case_id),
+                )
+            )
+            if investigation is None and wazuh_run is None:
                 raise ResponsePlanScopeError("case is not bound to the investigation run")
 
     def _compile_actions(
@@ -161,7 +170,7 @@ class ResponsePlanCompiler:
         registrations = {
             action.client_action_id: self._registration(action.tool) for action in candidate.actions
         }
-        evidence_cache: dict[UUID, EvidenceRecordRow] = {}
+        evidence_cache: dict[UUID, EvidenceRow] = {}
         for assumption in candidate.assumptions:
             for evidence_id in assumption.evidence_ids:
                 self._evidence(session, evidence_id, context, evidence_cache)
@@ -201,7 +210,7 @@ class ResponsePlanCompiler:
         registration: ToolRegistration,
         action_ids: dict[str, UUID],
         context: ResponsePlanCompileContext,
-        evidence_cache: dict[UUID, EvidenceRecordRow],
+        evidence_cache: dict[UUID, EvidenceRow],
     ) -> _CompiledAction:
         definition = registration.definition
         evidence = self._evidence(session, candidate.target_reference_id, context, evidence_cache)
@@ -283,17 +292,11 @@ class ResponsePlanCompiler:
         session: Session,
         evidence_id: UUID,
         context: ResponsePlanCompileContext,
-        cache: dict[UUID, EvidenceRecordRow],
-    ) -> EvidenceRecordRow:
+        cache: dict[UUID, EvidenceRow],
+    ) -> EvidenceRow:
         if evidence_id in cache:
             return cache[evidence_id]
-        row = session.scalar(
-            select(EvidenceRecordRow).where(
-                EvidenceRecordRow.id == str(evidence_id),
-                EvidenceRecordRow.run_id == str(context.run_id),
-                EvidenceRecordRow.confirmed.is_(True),
-            )
-        )
+        row = confirmed_evidence(session, run_id=context.run_id, evidence_id=evidence_id)
         if row is None:
             raise _CompilationRejected("evidence_invalid")
         observed_at = _utc(row.observed_at)

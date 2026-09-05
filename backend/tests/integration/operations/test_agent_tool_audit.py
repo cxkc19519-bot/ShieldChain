@@ -346,7 +346,7 @@ def test_agent_tool_audit_migration_round_trips(
     _migrate(root, database, "head", monkeypatch)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20260824_08",
+            "20260905_01",
         )
 
 
