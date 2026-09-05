@@ -61,16 +61,20 @@ class OperationsResponsePlanAgent:
         case_id: UUID | None = None,
         target_evidence_id: UUID | None = None,
         target_ip: str | None = None,
+        target_endpoint_id: str | None = None,
         rule_ttl_seconds: int = 60,
     ) -> OperationsResponsePlanResult:
-        actionable = self._actionable_target(target_ip)
+        actionable_ip = self._actionable_target(target_ip)
+        actionable_endpoint = self._actionable_endpoint(target_endpoint_id)
         if not self._settings.deepseek_api_key.get_secret_value():
             return self._fallback(run_id, now, "model_unavailable", None, case_id=case_id)
 
         context = {
             "run_kind": "operations_report",
             "case_bound": case_id is not None,
-            "execution_allowed": bool(case_id and target_evidence_id and actionable),
+            "execution_allowed": bool(
+                case_id and target_evidence_id and (actionable_ip or actionable_endpoint)
+            ),
             "public_handoffs": [
                 {
                     "role": str(item.get("role", ""))[:64],
@@ -80,7 +84,16 @@ class OperationsResponsePlanAgent:
             ],
             "observation_summaries": observation_summaries[:3000],
             "allowed_actions": (
-                [
+                ([
+                    {
+                        "tool": "query_endpoint_state",
+                        "target_reference_id": str(target_evidence_id),
+                        "arguments": {},
+                        "expected_state": {"isolation_status": "connected"},
+                        "verification": None,
+                    }
+                ] if actionable_endpoint else [])
+                + ([
                     {
                         "tool": "block_ip",
                         "target_reference_id": str(target_evidence_id),
@@ -91,8 +104,8 @@ class OperationsResponsePlanAgent:
                             "expected_state": {"firewall_status": "blocked"},
                         },
                     }
-                ]
-                if case_id and target_evidence_id and actionable
+                ] if actionable_ip else [])
+                if case_id and target_evidence_id and (actionable_ip or actionable_endpoint)
                 else []
             ),
             "response_plan_schema": ResponsePlanCandidate.model_json_schema(),
@@ -124,7 +137,7 @@ class OperationsResponsePlanAgent:
         )
         valid_case_plan = (
             case_id is not None
-            and actionable
+            and (actionable_ip or actionable_endpoint)
             and compiled.status is ResponsePlanStatus.PROPOSED
             and bool(compiled.action_ids)
         )
@@ -215,6 +228,16 @@ class OperationsResponsePlanAgent:
         except ValueError:
             return False
         return any(address in network for network in networks)
+
+    def _actionable_endpoint(self, value: str | None) -> bool:
+        if not value:
+            return False
+        allowed = {
+            item.strip()
+            for item in self._settings.response_wazuh_allowed_agent_ids.split(",")
+            if item.strip()
+        }
+        return value.strip() in allowed
 
     def _reference(
         self,

@@ -55,12 +55,14 @@ def test_default_registry_contains_fixed_tools_and_read_only_verifiers() -> None
     assert {
         ("query_firewall_state", "1"),
         ("block_ip", "1"),
+        ("unblock_ip", "1"),
         ("query_endpoint_state", "1"),
         ("isolate_endpoint", "1"),
         ("query_account_state", "1"),
         ("disable_account", "1"),
     } == identities
     assert registry.resolve("block_ip", "1").definition.risk is ToolRisk.HIGH
+    assert registry.resolve("unblock_ip", "1").definition.risk is ToolRisk.HIGH
     assert registry.resolve("disable_account", "1").definition.risk is ToolRisk.CRITICAL
 
 
@@ -129,6 +131,24 @@ def test_endpoint_and_account_schemas_use_enumerated_reasons_and_exact_state() -
         )
 
 
+def test_unblock_requires_an_enumerated_rollback_reason() -> None:
+    registry = default_tool_registry()
+    restored = registry.bind(
+        tool_request(
+            tool_name="unblock_ip",
+            arguments={"target_ip": "203.0.113.8", "reason_code": "approved_rollback"},
+            expected_state={"firewall_status": "not_blocked"},
+        )
+    )
+    assert restored.request.arguments["reason_code"] == "approved_rollback"
+    with pytest.raises(ToolParameterRejected, match="reason_code"):
+        registry.bind(
+            tool_request(
+                tool_name="unblock_ip",
+                arguments={"target_ip": "203.0.113.8", "reason_code": "model_requested"},
+                expected_state={"firewall_status": "not_blocked"},
+            )
+        )
 def test_registry_rejects_duplicate_and_unsafe_verifier_relationships() -> None:
     query = default_tool_registry().resolve("query_firewall_state", "1")
     with pytest.raises(DuplicateToolRegistration):

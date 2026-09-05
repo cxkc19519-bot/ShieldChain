@@ -100,6 +100,7 @@ class WazuhCaseScope:
     alert_id: UUID
     evidence_id: UUID
     source_ip: str | None
+    agent_id: str | None
     rule_ttl_seconds: int
     occurred_at: datetime
     title: str
@@ -228,6 +229,7 @@ class SecurityOperationsReportAgent:
             case_id=case_scope.case_id if case_scope else None,
             target_evidence_id=case_scope.evidence_id if case_scope else None,
             target_ip=case_scope.source_ip if case_scope else None,
+            target_endpoint_id=case_scope.agent_id if case_scope else None,
             rule_ttl_seconds=case_scope.rule_ttl_seconds if case_scope else 60,
         )
         response_plan = next(
@@ -490,6 +492,7 @@ class SecurityOperationsReportAgent:
                 alert_id=UUID(alert.id),
                 evidence_id=uuid4(),
                 source_ip=alert.source_ip,
+                agent_id=alert.agent_id,
                 rule_ttl_seconds=rule_ttl_seconds,
                 occurred_at=self._utc(alert.occurred_at),
                 title=alert.title,
@@ -500,6 +503,7 @@ class SecurityOperationsReportAgent:
     ) -> WazuhCaseEvidenceRow:
         payload = {
             "source_ip": scope.source_ip,
+            "agent_id": scope.agent_id,
             "alert_id": str(scope.alert_id),
             "title": scope.title,
         }

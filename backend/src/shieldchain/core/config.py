@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     response_firewall_allowed_cidrs: str = (
         "192.0.2.0/24,198.51.100.0/24,203.0.113.0/24"
     )
+    response_wazuh_connector_enabled: bool = False
+    response_wazuh_executor_url: str = (
+        "http+unix:///run/shieldchain-wazuh-executor/executor.sock"
+    )
+    response_wazuh_executor_token: SecretStr = SecretStr("")
+    response_wazuh_allowed_agent_ids: str = "002"
     response_operator_controls_enabled: bool = False
     rag_content_root: Path = Path("data/knowledge")
     security_vertical_pack_root: Path = Path("sample_docs/security_vertical")
@@ -141,6 +147,13 @@ class Settings(BaseSettings):
             if len(self.response_firewall_executor_token.get_secret_value()) < 24:
                 raise ValueError(
                     "response firewall executor token must contain at least 24 characters"
+                )
+        if self.response_wazuh_connector_enabled:
+            if not self.response_wazuh_executor_url.startswith("http+unix:///"):
+                raise ValueError("response Wazuh executor must use an absolute Unix socket URL")
+            if len(self.response_wazuh_executor_token.get_secret_value()) < 24:
+                raise ValueError(
+                    "response Wazuh executor token must contain at least 24 characters"
                 )
         if self.environment == "production" and (
             "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins

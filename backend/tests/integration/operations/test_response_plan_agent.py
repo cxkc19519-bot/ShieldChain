@@ -290,3 +290,10 @@ def test_model_unavailable_uses_one_deterministic_advisory_revision(planner_cont
     assert result.reference.revision == 0
     with factory() as session:
         assert session.scalar(select(func.count()).select_from(ResponsePlanRevisionRow)) == 1
+
+
+def test_wazuh_endpoint_allowlist_is_server_owned(planner_context) -> None:
+    planner, _factory = planner_context
+    assert planner._actionable_endpoint("002") is True
+    assert planner._actionable_endpoint("001") is False
+    assert planner._actionable_endpoint(None) is False

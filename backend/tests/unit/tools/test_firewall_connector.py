@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -50,6 +51,18 @@ def bound_block():
     return default_tool_registry().bind(request)
 
 
+def bound_unblock():
+    return default_tool_registry().bind(
+        replace(
+            bound_block().request,
+            idempotency_key="real-firewall:unblock:9104",
+            tool_name="unblock_ip",
+            arguments={"target_ip": "203.0.113.25", "reason_code": "approved_rollback"},
+            expected_state={"firewall_status": "not_blocked"},
+        )
+    )
+
+
 def test_real_firewall_adapter_executes_and_independently_verifies(monkeypatch) -> None:
     requests = []
 
@@ -80,6 +93,32 @@ def test_real_firewall_adapter_executes_and_independently_verifies(monkeypatch) 
 def test_real_firewall_adapter_requires_a_nontrivial_token() -> None:
     with pytest.raises(ValueError, match="24 characters"):
         NftablesHttpAdapter(base_url="http://executor.test:9180", token="short")
+
+
+def test_real_firewall_adapter_unblocks_and_verifies(monkeypatch) -> None:
+    paths = []
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        paths.append(request.full_url)
+        return Response(
+            {"ok": True, "firewall_status": "not_blocked", "summary": "unblocked"}
+        )
+
+    monkeypatch.setattr("shieldchain.tools.firewall_connector.urlopen", fake_urlopen)
+    adapter = NftablesHttpAdapter(
+        base_url="http://executor.test:9180",
+        token="a-secure-test-token-with-24-characters",
+    )
+    execution = adapter.execute(bound_unblock())
+    verification = adapter.verify(bound_unblock(), execution, now=NOW)
+
+    assert execution.outcome is ExecutionOutcome.SUCCEEDED
+    assert verification.outcome is VerificationOutcome.VERIFIED
+    assert paths == [
+        "http://executor.test:9180/v1/firewall/unblock",
+        "http://executor.test:9180/v1/firewall/query",
+    ]
 
 
 def test_real_firewall_adapter_accepts_an_absolute_unix_socket_url() -> None:

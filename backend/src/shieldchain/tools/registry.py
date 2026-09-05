@@ -46,6 +46,7 @@ class UnsafeToolRegistration(ToolRegistryError):
 class ToolParameterSchema(StrEnum):
     FIREWALL_QUERY_V1 = "firewall_query_v1"
     BLOCK_IP_V1 = "block_ip_v1"
+    UNBLOCK_IP_V1 = "unblock_ip_v1"
     ENDPOINT_QUERY_V1 = "endpoint_query_v1"
     ISOLATE_ENDPOINT_V1 = "isolate_endpoint_v1"
     ACCOUNT_QUERY_V1 = "account_query_v1"
@@ -65,6 +66,7 @@ class ToolRegistration:
         expected_target = {
             ToolParameterSchema.FIREWALL_QUERY_V1: ToolTargetType.IPV4,
             ToolParameterSchema.BLOCK_IP_V1: ToolTargetType.IPV4,
+            ToolParameterSchema.UNBLOCK_IP_V1: ToolTargetType.IPV4,
             ToolParameterSchema.ENDPOINT_QUERY_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ISOLATE_ENDPOINT_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ACCOUNT_QUERY_V1: ToolTargetType.ACCOUNT,
@@ -144,6 +146,15 @@ def _parse_arguments(
             ),
             "target_ip": _ipv4(values["target_ip"]),
         }
+    elif schema is ToolParameterSchema.UNBLOCK_IP_V1:
+        _exact(values, frozenset({"target_ip", "reason_code"}), label="arguments")
+        result = {
+            "target_ip": _ipv4(values["target_ip"]),
+            "reason_code": _reason(
+                values["reason_code"],
+                frozenset({"approved_rollback", "false_positive", "containment_expired"}),
+            ),
+        }
     elif schema is ToolParameterSchema.ENDPOINT_QUERY_V1:
         _exact(values, frozenset({"endpoint_id"}), label="arguments")
         result = {"endpoint_id": _resource(values["endpoint_id"], "endpoint_id")}
@@ -174,7 +185,11 @@ def _parse_arguments(
 def _parse_expected_state(
     schema: ToolParameterSchema, values: Mapping[str, ToolScalar]
 ) -> Mapping[str, ToolScalar]:
-    if schema in {ToolParameterSchema.FIREWALL_QUERY_V1, ToolParameterSchema.BLOCK_IP_V1}:
+    if schema in {
+        ToolParameterSchema.FIREWALL_QUERY_V1,
+        ToolParameterSchema.BLOCK_IP_V1,
+        ToolParameterSchema.UNBLOCK_IP_V1,
+    }:
         field, allowed = "firewall_status", {"blocked", "not_blocked"}
     elif schema in {
         ToolParameterSchema.ENDPOINT_QUERY_V1,
@@ -289,6 +304,17 @@ def default_tool_registry() -> TrustedToolRegistry:
                 verifier="query_firewall_state",
             ),
             ToolParameterSchema.BLOCK_IP_V1,
+        ),
+        ToolRegistration(
+            _definition(
+                "unblock_ip",
+                ToolTargetType.IPV4,
+                ToolRisk.HIGH,
+                write_roles,
+                mutates=True,
+                verifier="query_firewall_state",
+            ),
+            ToolParameterSchema.UNBLOCK_IP_V1,
         ),
         ToolRegistration(
             _definition(

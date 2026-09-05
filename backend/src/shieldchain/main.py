@@ -59,6 +59,7 @@ from shieldchain.react.safety_loop import (
 )
 from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.tools.firewall_connector import NftablesAdapterProvider
+from shieldchain.tools.wazuh_connector import WazuhAdapterProvider
 from shieldchain.wazuh.service import WazuhAlertService
 
 logger = structlog.get_logger(__name__)
@@ -149,6 +150,12 @@ def create_app(
                 adapter_provider,
                 base_url=settings.response_firewall_executor_url,
                 token=settings.response_firewall_executor_token.get_secret_value(),
+            )
+        if settings.response_wazuh_connector_enabled:
+            adapter_provider = WazuhAdapterProvider(
+                adapter_provider,
+                base_url=settings.response_wazuh_executor_url,
+                token=settings.response_wazuh_executor_token.get_secret_value(),
             )
         trusted_tools = TrustedToolApiService(
             session_factory,

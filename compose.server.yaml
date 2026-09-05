@@ -1,4 +1,41 @@
 services:
+  wazuh-response-executor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.wazuh-executor
+    image: shieldchain-wazuh-response-executor:local
+    network_mode: host
+    env_file:
+      - ${WAZUH_ENV_FILE:-./secrets/wazuh-readonly.env}
+    environment:
+      SHIELDCHAIN_WAZUH_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
+      SHIELDCHAIN_WAZUH_EXECUTOR_SOCKET: /run/shieldchain-wazuh-executor/executor.sock
+      SHIELDCHAIN_WAZUH_ALLOWED_AGENT_IDS: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
+      WAZUH_API_URL: ${WAZUH_API_URL:-https://127.0.0.1:55000}
+      WAZUH_API_TLS_VERIFY: ${WAZUH_API_TLS_VERIFY:-false}
+    volumes:
+      - shieldchain-wazuh-executor-socket:/run/shieldchain-wazuh-executor
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/shieldchain-wazuh-executor/executor.sock'); s.close()"
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 6
+    restart: unless-stopped
+
   response-executor:
     build:
       context: .
@@ -41,8 +78,11 @@ services:
       SHIELDCHAIN_LOCAL_RAG_URL: http://shieldchain-rag-models:8000
       SHIELDCHAIN_LOCAL_MILVUS_URI: http://shieldchain-milvus:19530
       ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant
+      RESPONSE_WAZUH_CONNECTOR_ENABLED: "true"
     depends_on:
       response-executor:
+        condition: service_healthy
+      wazuh-response-executor:
         condition: service_healthy
 
   frontend:

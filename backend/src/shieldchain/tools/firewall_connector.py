@@ -24,7 +24,7 @@ from shieldchain.tools.gateway import AdapterExecution, TrustedToolAdapter
 from shieldchain.tools.registry import BoundToolRequest
 from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
-_FIREWALL_TOOLS = frozenset({"query_firewall_state", "block_ip"})
+_FIREWALL_TOOLS = frozenset({"query_firewall_state", "block_ip", "unblock_ip"})
 
 
 class AdapterProvider(Protocol):
@@ -67,6 +67,8 @@ class NftablesHttpAdapter:
         if name == "block_ip":
             path = "/v1/firewall/block"
             payload["ttl_seconds"] = int(request.request.arguments["rule_ttl_seconds"])
+        elif name == "unblock_ip":
+            path = "/v1/firewall/unblock"
         response = self._post(path, payload)
         return AdapterExecution(
             ExecutionOutcome.SUCCEEDED,
