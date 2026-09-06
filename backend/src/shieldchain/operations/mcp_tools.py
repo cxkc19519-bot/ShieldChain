@@ -8,9 +8,10 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.vulnerabilities.persistence import VulnerabilityFindingRow
 from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhReviewCaseRow
 
 from .schemas import McpToolCallView
@@ -191,6 +192,39 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
 
     def call(self, start_at: datetime, end_at: datetime) -> McpToolCallView:
         with self._session_factory() as session:
+            if inspect(session.get_bind()).has_table("vulnerability_findings"):
+                findings = session.scalars(
+                    select(VulnerabilityFindingRow)
+                    .where(
+                        VulnerabilityFindingRow.tenant_id == self._tenant_id,
+                        VulnerabilityFindingRow.last_seen_at >= start_at,
+                        VulnerabilityFindingRow.last_seen_at <= end_at,
+                    )
+                    .order_by(
+                        VulnerabilityFindingRow.last_seen_at.desc(),
+                        VulnerabilityFindingRow.id,
+                    )
+                    .limit(50)
+                ).all()
+                if findings:
+                    items = [
+                        (
+                            f"{row.cve_id}｜资产 {row.asset_name}｜{row.severity}｜"
+                            f"闭环状态 {row.status}｜来源 {row.scanner}"
+                        )
+                        for row in findings
+                    ]
+                    return self._view(
+                        name=self.name,
+                        label=self.label,
+                        start_at=start_at,
+                        end_at=end_at,
+                        items=items,
+                        summary=(
+                            f"真实漏洞发现台账返回 {len(items)} 条扫描器发现；"
+                            "状态为 closed 才表示已有复测通过或人工确认不受影响的审计记录。"
+                        ),
+                    )
             rows = session.scalars(
                 select(WazuhAlertRow)
                 .where(

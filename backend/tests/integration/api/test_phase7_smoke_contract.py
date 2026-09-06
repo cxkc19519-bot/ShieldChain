@@ -39,5 +39,5 @@ def test_phase7_smoke_checks_sensitive_rendering_boundary() -> None:
         "principal_id",
     ):
         assert forbidden in smoke
-    assert "fetchMock).toHaveBeenCalledTimes(3)" in smoke
+    assert "fetchMock).toHaveBeenCalledTimes(4)" in smoke
     assert "expect.stringMatching(/^\\/api\\/v1\\//)" in smoke

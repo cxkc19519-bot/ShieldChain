@@ -1,12 +1,13 @@
 # ShieldChain 文档中心
 
-> 文档状态：当前入口（更新于 2026-09-04）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
+> 文档状态：当前入口（更新于 2026-09-07）。本页与仓库当前代码、根目录 `README.md` 共同定义现行能力；历史计划和验收快照仅用于追溯。
 
 ## 当前系统
 
 ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的多智能体系统：
 
 - Wazuh 接收、持久化并展示真实高风险告警；
+- 漏洞闭环支持扫描器鉴权接入、幂等去重、智能体分诊、人工决策、变更登记、实施回执、复测关闭和追加式审计；智能体只给建议，不直接执行修复；
 - 七个专业角色通过 ReAct 循环按任务自主选择受授权工具；
 - 安全运营报告智能体可直接使用事件、告警、漏洞、弱密码四类进程内只读工具；同一 Provider 已通过默认关闭的标准 MCP 2026-07-28 `/mcp` 适配器发布，生产启用必须配置外部 issuer/JWKS、固定 subject 映射、最小 scope 和上游 TLS；
 - 新安全运营报告拥有租户化通用运行 ID；历史 JSON 报告明确标记 `legacy_without_run`，不会伪造不存在的轨迹或执行事实；
@@ -40,6 +41,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 13. [安全知识库、RAG 与智能助手实施方案](plans/security-knowledge-rag-assistant-implementation.md)
 14. [助手固定基线](reports/assistant-security-vertical-baseline-2026-09-04.md)
 15. [完整模型预检](reports/full-model-preflight-2026-09-04.md)
+16. [漏洞排查与闭环操作说明](operations/vulnerability-remediation.md)
 
 ## 文档状态约定
 

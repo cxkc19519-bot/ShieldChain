@@ -14,6 +14,7 @@ import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { AssistantPage } from '../features/assistant/AssistantPage'
 import { QwenChatPage } from '../features/qwen/QwenChatPage'
 import { AlertsPage } from '../features/alerts/AlertsPage'
+import { VulnerabilitiesPage } from '../features/vulnerabilities/VulnerabilitiesPage'
 import { App } from './App'
 import { RouteErrorPage } from './RouteErrorPage'
 import { RunContextProvider } from './RunContext'
@@ -32,6 +33,7 @@ export const appRoutes: RouteObject[] = [
       { path: 'changelog', element: <ChangelogPage /> },
       { path: 'operations-report', element: <OperationsReportPage /> },
       { path: 'alerts', element: <AlertsPage /> },
+      { path: 'vulnerabilities', element: <VulnerabilitiesPage /> },
       { path: 'agents', element: <AgentsPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
       { path: 'assistant', element: <AssistantPage /> },

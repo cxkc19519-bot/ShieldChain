@@ -20,6 +20,7 @@ from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
 from shieldchain.api.wazuh import router as wazuh_router
+from shieldchain.api.vulnerabilities import router as vulnerabilities_router
 from shieldchain.assistant.api import router as assistant_router
 from shieldchain.assistant.service import GroundedAssistantService
 from shieldchain.assistant.store import LocalConversationStore
@@ -61,6 +62,8 @@ from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.tools.firewall_connector import NftablesAdapterProvider
 from shieldchain.tools.wazuh_connector import WazuhAdapterProvider
 from shieldchain.wazuh.service import WazuhAlertService
+from shieldchain.vulnerabilities.agent import VulnerabilityTriageAgent
+from shieldchain.vulnerabilities.service import VulnerabilityWorkflowService
 
 logger = structlog.get_logger(__name__)
 _SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
@@ -233,6 +236,18 @@ def create_app(
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
     app.state.wazuh_alert_service = WazuhAlertService()
+    app.state.vulnerability_workflow_service = VulnerabilityWorkflowService(
+        session_factory,
+        VulnerabilityTriageAgent(
+            settings,
+            knowledge_service,
+            tenant_id=settings.rag_demo_tenant_id,
+            principal_id=settings.rag_demo_principal_id,
+        ),
+        scanner_token=settings.vulnerability_scanner_token.get_secret_value(),
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+    )
     app.state.security_operations_report_agent = SecurityOperationsReportAgent(
         session_factory,
         settings=settings,
@@ -249,7 +264,7 @@ def create_app(
         allow_origins=list(settings.http_allowed_origins),
         allow_credentials=False,
         allow_methods=["DELETE", "GET", "POST"],
-        allow_headers=["Content-Type", "X-Request-ID"],
+        allow_headers=["Content-Type", "X-Request-ID", "X-ShieldChain-Vulnerability-Token"],
         expose_headers=["X-Request-ID"],
         max_age=600,
     )
@@ -278,6 +293,7 @@ def create_app(
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(react_router, prefix="/api/v1")
     app.include_router(wazuh_router, prefix="/api/v1")
+    app.include_router(vulnerabilities_router, prefix="/api/v1")
     app.include_router(operations_router, prefix="/api/v1")
     if mcp_http_app is not None:
         app.mount("/", mcp_http_app)

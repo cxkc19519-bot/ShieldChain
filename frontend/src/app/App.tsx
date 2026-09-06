@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, Bot, ShieldCheck, Server } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, FileText, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, Bot, ShieldCheck, Server, Bug } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -11,6 +11,7 @@ const navigation = [
   { label: '智能体与 ReAct', icon: Bot, to: '/agents' },
   { label: '处置中心', icon: ShieldCheck, to: '/response' },
   { label: '实时告警', icon: AlertTriangle, to: '/alerts' },
+  { label: '漏洞闭环', icon: Bug, to: '/vulnerabilities' },
   { label: '知识库', icon: Database, to: '/knowledge' },
   { label: '历史报告', icon: FileText, to: '/reports' },
   { label: '智能助手', icon: MessageCircle, to: '/assistant' },

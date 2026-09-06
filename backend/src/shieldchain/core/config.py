@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     wazuh_webhook_token: SecretStr = SecretStr("")
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
+    vulnerability_scanner_token: SecretStr = SecretStr("")
     response_connector_mode: Literal["simulation", "nftables_http"] = "simulation"
     response_firewall_executor_url: str = "http+unix:///run/shieldchain-executor/executor.sock"
     response_firewall_executor_token: SecretStr = SecretStr("")
