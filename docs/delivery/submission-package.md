@@ -32,7 +32,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
 - Wazuh 与 OpenSearch 已在学校服务器 Docker 环境实际部署和验证，不再属于“未验证 Docker”状态；
 - 本地 vLLM Compose 配置和镜像链路已经准备，Qwen 模型权重下载与常驻服务启动取决于代理连通性和共享 RTX 4090 的可用时段；
 - 外部 DeepSeek 与本地 OpenAI 兼容模型均属于可配置模型后端；
-- 真实告警读取为只读路径，真实防火墙封禁、终端隔离等高风险设备写操作仍未纳入当前自动执行范围；
+- 真实告警读取保持只读；实验室已纳入测试地址封禁、演示 Agent 网络隔离和限定文件隔离，但高风险写操作必须逐项人工审批，且不能表述为生产设备能力；
 - 历史报告中的测试数量和 `*_TESTED` 标志只代表生成报告时的版本，不应覆盖本节状态。
 
 ## 提交前检查

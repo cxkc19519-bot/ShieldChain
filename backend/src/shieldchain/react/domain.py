@@ -21,7 +21,7 @@ from shieldchain.agents.domain import (
 _CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _ACTION = re.compile(
     r"^proposed:(query_firewall_state|block_ip|unblock_ip|query_endpoint_state|isolate_endpoint|restore_endpoint|"
-    r"query_account_state|disable_account)$"
+    r"query_file_state|quarantine_file|restore_file|query_account_state|disable_account)$"
 )
 _MAX_ITEMS = 100
 _MAX_TEXT = 512

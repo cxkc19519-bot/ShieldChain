@@ -75,6 +75,9 @@ _HIGH_RISK_ACTIONS = frozenset(
         "unblock_ip",
         "isolate_endpoint",
         "restore_endpoint",
+        "query_file_state",
+        "quarantine_file",
+        "restore_file",
         "disable_account",
         "quarantine_file",
     }

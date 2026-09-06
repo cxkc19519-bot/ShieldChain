@@ -71,3 +71,32 @@ def test_restore_deletes_only_the_endpoint_set_element(monkeypatch) -> None:
         "172.20.0.5",
         "}",
     ] in calls
+
+
+def test_file_quarantine_and_restore_preserve_digest(monkeypatch, tmp_path) -> None:
+    module = _module(monkeypatch)
+    monkeypatch.setattr(module, "FILE_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "ALLOWED_FILE_IDS", frozenset({"marker"}))
+    active = tmp_path / "marker.active"
+    active.write_bytes(b"benign verification marker")
+
+    before = module.query_file("marker")
+    quarantined = module.quarantine_file("marker")
+    restored = module.restore_file("marker")
+
+    assert before["file_status"] == "present"
+    assert quarantined["file_status"] == "quarantined"
+    assert restored["file_status"] == "present"
+    assert before["sha256"] == quarantined["sha256"] == restored["sha256"]
+
+
+def test_file_operations_reject_non_allowlisted_ids(monkeypatch, tmp_path) -> None:
+    module = _module(monkeypatch)
+    monkeypatch.setattr(module, "FILE_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "ALLOWED_FILE_IDS", frozenset({"marker"}))
+    try:
+        module.query_file("../../etc/passwd")
+    except ValueError as error:
+        assert "allowlist" in str(error)
+    else:
+        raise AssertionError("path-like file id was accepted")

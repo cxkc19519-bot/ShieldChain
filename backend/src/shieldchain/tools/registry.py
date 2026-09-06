@@ -50,6 +50,9 @@ class ToolParameterSchema(StrEnum):
     ENDPOINT_QUERY_V1 = "endpoint_query_v1"
     ISOLATE_ENDPOINT_V1 = "isolate_endpoint_v1"
     RESTORE_ENDPOINT_V1 = "restore_endpoint_v1"
+    FILE_QUERY_V1 = "file_query_v1"
+    QUARANTINE_FILE_V1 = "quarantine_file_v1"
+    RESTORE_FILE_V1 = "restore_file_v1"
     ACCOUNT_QUERY_V1 = "account_query_v1"
     DISABLE_ACCOUNT_V1 = "disable_account_v1"
 
@@ -71,6 +74,9 @@ class ToolRegistration:
             ToolParameterSchema.ENDPOINT_QUERY_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ISOLATE_ENDPOINT_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.RESTORE_ENDPOINT_V1: ToolTargetType.ENDPOINT,
+            ToolParameterSchema.FILE_QUERY_V1: ToolTargetType.ENDPOINT,
+            ToolParameterSchema.QUARANTINE_FILE_V1: ToolTargetType.ENDPOINT,
+            ToolParameterSchema.RESTORE_FILE_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ACCOUNT_QUERY_V1: ToolTargetType.ACCOUNT,
             ToolParameterSchema.DISABLE_ACCOUNT_V1: ToolTargetType.ACCOUNT,
         }[self.parameter_schema]
@@ -188,6 +194,27 @@ def _parse_arguments(
                 frozenset({"approved_rollback", "false_positive", "containment_expired"}),
             ),
         }
+    elif schema is ToolParameterSchema.FILE_QUERY_V1:
+        _exact(values, frozenset({"endpoint_id", "file_id"}), label="arguments")
+        result = {
+            "endpoint_id": _resource(values["endpoint_id"], "endpoint_id"),
+            "file_id": _resource(values["file_id"], "file_id"),
+        }
+    elif schema in {
+        ToolParameterSchema.QUARANTINE_FILE_V1,
+        ToolParameterSchema.RESTORE_FILE_V1,
+    }:
+        _exact(values, frozenset({"endpoint_id", "file_id", "reason_code"}), label="arguments")
+        allowed = (
+            frozenset({"confirmed_malicious", "containment_required"})
+            if schema is ToolParameterSchema.QUARANTINE_FILE_V1
+            else frozenset({"approved_rollback", "false_positive", "analysis_complete"})
+        )
+        result = {
+            "endpoint_id": _resource(values["endpoint_id"], "endpoint_id"),
+            "file_id": _resource(values["file_id"], "file_id"),
+            "reason_code": _reason(values["reason_code"], allowed),
+        }
     elif schema is ToolParameterSchema.ACCOUNT_QUERY_V1:
         _exact(values, frozenset({"account_id"}), label="arguments")
         result = {"account_id": _resource(values["account_id"], "account_id")}
@@ -218,6 +245,12 @@ def _parse_expected_state(
         ToolParameterSchema.RESTORE_ENDPOINT_V1,
     }:
         field, allowed = "isolation_status", {"isolated", "connected"}
+    elif schema in {
+        ToolParameterSchema.FILE_QUERY_V1,
+        ToolParameterSchema.QUARANTINE_FILE_V1,
+        ToolParameterSchema.RESTORE_FILE_V1,
+    }:
+        field, allowed = "file_status", {"present", "quarantined"}
     else:
         field, allowed = "account_status", {"disabled", "enabled"}
     _exact(values, frozenset({field}), label="expected_state")
@@ -370,6 +403,39 @@ def default_tool_registry() -> TrustedToolRegistry:
                 verifier="query_endpoint_state",
             ),
             ToolParameterSchema.RESTORE_ENDPOINT_V1,
+        ),
+        ToolRegistration(
+            _definition(
+                "query_file_state",
+                ToolTargetType.ENDPOINT,
+                ToolRisk.READ_ONLY,
+                read_roles,
+                mutates=False,
+                verifier=None,
+            ),
+            ToolParameterSchema.FILE_QUERY_V1,
+        ),
+        ToolRegistration(
+            _definition(
+                "quarantine_file",
+                ToolTargetType.ENDPOINT,
+                ToolRisk.HIGH,
+                write_roles,
+                mutates=True,
+                verifier="query_file_state",
+            ),
+            ToolParameterSchema.QUARANTINE_FILE_V1,
+        ),
+        ToolRegistration(
+            _definition(
+                "restore_file",
+                ToolTargetType.ENDPOINT,
+                ToolRisk.HIGH,
+                write_roles,
+                mutates=True,
+                verifier="query_file_state",
+            ),
+            ToolParameterSchema.RESTORE_FILE_V1,
         ),
         ToolRegistration(
             _definition(

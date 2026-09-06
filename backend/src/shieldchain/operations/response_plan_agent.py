@@ -62,10 +62,12 @@ class OperationsResponsePlanAgent:
         target_evidence_id: UUID | None = None,
         target_ip: str | None = None,
         target_endpoint_id: str | None = None,
+        target_file_id: str | None = None,
         rule_ttl_seconds: int = 60,
     ) -> OperationsResponsePlanResult:
         actionable_ip = self._actionable_target(target_ip)
         actionable_endpoint = self._actionable_endpoint(target_endpoint_id)
+        actionable_file = actionable_endpoint and self._actionable_file(target_file_id)
         if not self._settings.deepseek_api_key.get_secret_value():
             return self._fallback(run_id, now, "model_unavailable", None, case_id=case_id)
 
@@ -105,7 +107,29 @@ class OperationsResponsePlanAgent:
                             "expected_state": {"isolation_status": "isolated"},
                         },
                     },
-                ] if actionable_endpoint else [])
+                ] if actionable_endpoint and not actionable_file else [])
+                + ([
+                    {
+                        "tool": "query_file_state",
+                        "target_reference_id": str(target_evidence_id),
+                        "arguments": {"file_id": target_file_id},
+                        "expected_state": {"file_status": "present"},
+                        "verification": None,
+                    },
+                    {
+                        "tool": "quarantine_file",
+                        "target_reference_id": str(target_evidence_id),
+                        "arguments": {
+                            "file_id": target_file_id,
+                            "reason_code": "confirmed_malicious",
+                        },
+                        "expected_state": {"file_status": "quarantined"},
+                        "verification": {
+                            "tool": "query_file_state",
+                            "expected_state": {"file_status": "quarantined"},
+                        },
+                    },
+                ] if actionable_file else [])
                 + ([
                     {
                         "tool": "block_ip",
@@ -248,6 +272,16 @@ class OperationsResponsePlanAgent:
         allowed = {
             item.strip()
             for item in self._settings.response_wazuh_allowed_agent_ids.split(",")
+            if item.strip()
+        }
+        return value.strip() in allowed
+
+    def _actionable_file(self, value: str | None) -> bool:
+        if not value:
+            return False
+        allowed = {
+            item.strip()
+            for item in self._settings.response_allowed_file_ids.split(",")
             if item.strip()
         }
         return value.strip() in allowed

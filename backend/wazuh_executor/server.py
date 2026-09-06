@@ -167,6 +167,13 @@ def restore_endpoint(agent_id: str) -> dict[str, object]:
     return endpoint_request("/v1/endpoint/restore", {"agent_id": agent_id})
 
 
+def file_request(operation: str, agent_id: str, file_id: str) -> dict[str, object]:
+    return endpoint_request(
+        f"/v1/endpoint/file/{operation}",
+        {"agent_id": agent_id, "file_id": file_id},
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ShieldChainWazuhExecutor/1"
 
@@ -207,6 +214,17 @@ class Handler(BaseHTTPRequestHandler):
                 result = isolate_endpoint(agent_id, ttl)
             elif self.path == "/v1/wazuh/agent/restore" and set(payload) == {"agent_id"}:
                 result = restore_endpoint(agent_id)
+            elif self.path in {
+                "/v1/wazuh/file/query",
+                "/v1/wazuh/file/quarantine",
+                "/v1/wazuh/file/restore",
+            } and set(payload) == {"agent_id", "file_id"}:
+                file_id = payload["file_id"]
+                if not isinstance(file_id, str) or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", file_id
+                ):
+                    raise ValueError("file_id is invalid")
+                result = file_request(self.path.rsplit("/", 1)[-1], agent_id, file_id)
             else:
                 self._send(HTTPStatus.NOT_FOUND, {"ok": False})
                 return

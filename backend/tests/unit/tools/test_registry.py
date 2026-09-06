@@ -59,6 +59,9 @@ def test_default_registry_contains_fixed_tools_and_read_only_verifiers() -> None
         ("query_endpoint_state", "1"),
         ("isolate_endpoint", "1"),
         ("restore_endpoint", "1"),
+        ("query_file_state", "1"),
+        ("quarantine_file", "1"),
+        ("restore_file", "1"),
         ("query_account_state", "1"),
         ("disable_account", "1"),
     } == identities
@@ -185,6 +188,34 @@ def test_endpoint_ttl_and_restore_reason_are_bounded() -> None:
                     "isolation_ttl_seconds": 59,
                 },
                 expected_state={"isolation_status": "isolated"},
+            )
+        )
+
+
+def test_file_tools_require_opaque_file_id_and_enumerated_reason() -> None:
+    registry = default_tool_registry()
+    quarantined = registry.bind(
+        tool_request(
+            tool_name="quarantine_file",
+            arguments={
+                "endpoint_id": "002",
+                "file_id": "demo-suspicious-marker",
+                "reason_code": "confirmed_malicious",
+            },
+            expected_state={"file_status": "quarantined"},
+        )
+    )
+    assert quarantined.request.arguments["file_id"] == "demo-suspicious-marker"
+    with pytest.raises(ToolParameterRejected):
+        registry.bind(
+            tool_request(
+                tool_name="quarantine_file",
+                arguments={
+                    "endpoint_id": "002",
+                    "file_id": "../../etc/passwd",
+                    "reason_code": "model_requested",
+                },
+                expected_state={"file_status": "quarantined"},
             )
         )
 

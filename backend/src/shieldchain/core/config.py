@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     )
     response_wazuh_executor_token: SecretStr = SecretStr("")
     response_wazuh_allowed_agent_ids: str = "002"
+    response_allowed_file_ids: str = "demo-suspicious-marker"
     response_operator_controls_enabled: bool = False
     rag_content_root: Path = Path("data/knowledge")
     security_vertical_pack_root: Path = Path("sample_docs/security_vertical")

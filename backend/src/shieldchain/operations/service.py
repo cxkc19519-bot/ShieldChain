@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import html
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -101,6 +102,7 @@ class WazuhCaseScope:
     evidence_id: UUID
     source_ip: str | None
     agent_id: str | None
+    file_id: str | None
     rule_ttl_seconds: int
     occurred_at: datetime
     title: str
@@ -230,6 +232,7 @@ class SecurityOperationsReportAgent:
             target_evidence_id=case_scope.evidence_id if case_scope else None,
             target_ip=case_scope.source_ip if case_scope else None,
             target_endpoint_id=case_scope.agent_id if case_scope else None,
+            target_file_id=case_scope.file_id if case_scope else None,
             rule_ttl_seconds=case_scope.rule_ttl_seconds if case_scope else 60,
         )
         response_plan = next(
@@ -487,12 +490,20 @@ class SecurityOperationsReportAgent:
             alert = session.get(WazuhAlertRow, case.alert_id)
             if alert is None or alert.tenant_id != str(self._tenant_id):
                 raise ValueError("Wazuh 案件缺少原始规范化告警")
+            raw_file_id = alert.evidence_json.get("file_id")
+            file_id = (
+                raw_file_id.strip()
+                if isinstance(raw_file_id, str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", raw_file_id.strip())
+                else None
+            )
             return WazuhCaseScope(
                 case_id=case_id,
                 alert_id=UUID(alert.id),
                 evidence_id=uuid4(),
                 source_ip=alert.source_ip,
                 agent_id=alert.agent_id,
+                file_id=file_id,
                 rule_ttl_seconds=rule_ttl_seconds,
                 occurred_at=self._utc(alert.occurred_at),
                 title=alert.title,
@@ -504,6 +515,7 @@ class SecurityOperationsReportAgent:
         payload = {
             "source_ip": scope.source_ip,
             "agent_id": scope.agent_id,
+            "file_id": scope.file_id,
             "alert_id": str(scope.alert_id),
             "title": scope.title,
         }

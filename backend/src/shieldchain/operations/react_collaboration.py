@@ -392,6 +392,7 @@ class RealDataAgentTeam:
         target_evidence_id: UUID | None = None,
         target_ip: str | None = None,
         target_endpoint_id: str | None = None,
+        target_file_id: str | None = None,
         rule_ttl_seconds: int = 60,
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
         broker = AgentToolBroker(
@@ -437,6 +438,7 @@ class RealDataAgentTeam:
                     target_evidence_id=target_evidence_id,
                     target_ip=target_ip,
                     target_endpoint_id=target_endpoint_id,
+                    target_file_id=target_file_id,
                     rule_ttl_seconds=rule_ttl_seconds,
                 )
                 summary = plan_result.reference.public_summary

@@ -22,7 +22,10 @@ from shieldchain.tools.registry import BoundToolRequest
 from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 _WAZUH_TOOLS = frozenset(
-    {"query_endpoint_state", "isolate_endpoint", "restore_endpoint"}
+    {
+        "query_endpoint_state", "isolate_endpoint", "restore_endpoint",
+        "query_file_state", "quarantine_file", "restore_file",
+    }
 )
 
 
@@ -51,6 +54,9 @@ class WazuhHttpAdapter:
             "query_endpoint_state": "/v1/wazuh/agent/query",
             "isolate_endpoint": "/v1/wazuh/agent/isolate",
             "restore_endpoint": "/v1/wazuh/agent/restore",
+            "query_file_state": "/v1/wazuh/file/query",
+            "quarantine_file": "/v1/wazuh/file/quarantine",
+            "restore_file": "/v1/wazuh/file/restore",
         }[tool]
         payload: dict[str, object] = {
             "agent_id": str(request.request.arguments["endpoint_id"])
@@ -59,6 +65,8 @@ class WazuhHttpAdapter:
             payload["ttl_seconds"] = int(
                 request.request.arguments["isolation_ttl_seconds"]
             )
+        if tool in {"query_file_state", "quarantine_file", "restore_file"}:
+            payload["file_id"] = str(request.request.arguments["file_id"])
         response = self._post(path, payload)
         return AdapterExecution(
             ExecutionOutcome.SUCCEEDED,
@@ -74,11 +82,16 @@ class WazuhHttpAdapter:
     ) -> ToolVerification:
         del execution
         try:
-            response = self._post(
-                "/v1/wazuh/agent/query",
-                {"agent_id": str(request.request.arguments["endpoint_id"])},
-            )
-            observed = {"isolation_status": str(response["isolation_status"])}
+            is_file = request.registration.definition.name in {
+                "query_file_state", "quarantine_file", "restore_file"
+            }
+            path = "/v1/wazuh/file/query" if is_file else "/v1/wazuh/agent/query"
+            payload = {"agent_id": str(request.request.arguments["endpoint_id"])}
+            if is_file:
+                payload["file_id"] = str(request.request.arguments["file_id"])
+            response = self._post(path, payload)
+            field = "file_status" if is_file else "isolation_status"
+            observed = {field: str(response[field])}
             verified = observed == dict(request.request.expected_state)
             outcome = VerificationOutcome.VERIFIED if verified else VerificationOutcome.FAILED
             reason = None if verified else PolicyReason.VERIFICATION_FAILED

@@ -30,6 +30,7 @@
 - Agent `002` 状态依次为 `connected → isolated → connected`，隔离期间 Wazuh 状态保持 `Active`。
 - Agent `001` 请求被白名单拒绝。
 - 第二次隔离未调用恢复接口，60 秒 TTL 到期后自动返回 `connected`，Agent 仍为 `Active`。
+- 完整应用控制面验收已通过：规范化 Wazuh 告警入库后，Qwen3-30B 自主选择 `isolate_endpoint`；另一次运行选择“先查询、再隔离”的依赖链。计划接受后仍停在逐动作人工审批；批准后执行状态为 `succeeded`、验证为 `verified`，60 秒后独立查询恢复为 `connected`。
 - 后端和 Wazuh 桥为只读根文件系统且无额外 capability；只有端点执行器具备 `CAP_NET_ADMIN`，网络模式绑定到演示 Agent 容器。
 
 验收命令：
@@ -40,3 +41,12 @@ docker exec -i shieldchain-backend-1 python - --execute --verify-ttl \
 ```
 
 首次部署时服务器 Docker 镜像仓库代理不可用，因此先使用带 `pre-stage2` 备份标签的离线镜像补丁完成实机验收。随后建立 `127.0.0.1:17897 → SSH 反向隧道 → 本机 Clash 7897` 链路，镜像站探测返回正常的 HTTP 401，并成功完成标准 Compose 重建。切换到标准镜像后再次通过即时“查询—隔离—恢复—越权拒绝”验收。
+
+完整控制面验收命令：
+
+```bash
+docker compose -f compose.yaml -f compose.server.yaml -f compose.local-llm.yaml \
+  exec -T -e PYTHONDONTWRITEBYTECODE=1 backend \
+  sh -c 'cd /app/scripts && /opt/venv/bin/python \
+  verify_wazuh_endpoint_control_plane_e2e.py --execute --ttl 60'
+```

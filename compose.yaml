@@ -40,6 +40,7 @@ x-backend-environment: &backend-environment
   RESPONSE_WAZUH_EXECUTOR_URL: ${RESPONSE_WAZUH_EXECUTOR_URL:-http+unix:///run/shieldchain-wazuh-executor/executor.sock}
   RESPONSE_WAZUH_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
   RESPONSE_WAZUH_ALLOWED_AGENT_IDS: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
+  RESPONSE_ALLOWED_FILE_IDS: ${RESPONSE_ALLOWED_FILE_IDS:-demo-suspicious-marker}
   RESPONSE_OPERATOR_CONTROLS_ENABLED: ${RESPONSE_OPERATOR_CONTROLS_ENABLED:-false}
 
 x-backend-security: &backend-security
@@ -83,6 +84,7 @@ services:
       - shieldchain-data:/var/lib/shieldchain
       - shieldchain-executor-socket:/run/shieldchain-executor
       - shieldchain-wazuh-executor-socket:/run/shieldchain-wazuh-executor
+      - ./scripts:/app/scripts:ro
     expose:
       - "8000"
     depends_on:
@@ -139,3 +141,4 @@ volumes:
   shieldchain-executor-socket:
   shieldchain-wazuh-executor-socket:
   shieldchain-endpoint-executor-socket:
+  shieldchain-file-response-lab:

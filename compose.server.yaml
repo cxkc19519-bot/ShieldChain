@@ -11,8 +11,11 @@ services:
       SHIELDCHAIN_ENDPOINT_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
       SHIELDCHAIN_ENDPOINT_EXECUTOR_SOCKET: /run/shieldchain-endpoint-executor/executor.sock
       SHIELDCHAIN_ENDPOINT_AGENT_ID: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
+      SHIELDCHAIN_FILE_LAB_ROOT: /var/lib/shieldchain-file-lab
+      SHIELDCHAIN_ALLOWED_FILE_IDS: ${RESPONSE_ALLOWED_FILE_IDS:-demo-suspicious-marker}
     volumes:
       - shieldchain-endpoint-executor-socket:/run/shieldchain-endpoint-executor
+      - shieldchain-file-response-lab:/var/lib/shieldchain-file-lab
     read_only: true
     cap_drop:
       - ALL

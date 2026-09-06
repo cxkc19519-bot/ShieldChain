@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import socket
 import socketserver
 import subprocess
@@ -21,6 +23,15 @@ AGENT_ID = os.environ.get("SHIELDCHAIN_ENDPOINT_AGENT_ID", "002")
 TABLE = "shieldchain_endpoint"
 SET = "isolated_ipv4"
 LOCK = RLock()
+FILE_ROOT = os.environ.get("SHIELDCHAIN_FILE_LAB_ROOT", "/var/lib/shieldchain-file-lab")
+ALLOWED_FILE_IDS = frozenset(
+    item.strip()
+    for item in os.environ.get(
+        "SHIELDCHAIN_ALLOWED_FILE_IDS", "demo-suspicious-marker"
+    ).split(",")
+    if item.strip()
+)
+FILE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _run(arguments: list[str], *, input_text: str | None = None, check: bool = True) -> str:
@@ -121,6 +132,76 @@ def restore() -> dict[str, object]:
     return result
 
 
+def _file_paths(file_id: str) -> tuple[str, str]:
+    if file_id not in ALLOWED_FILE_IDS or not FILE_ID.fullmatch(file_id):
+        raise ValueError("file_id is outside the configured allowlist")
+    return (
+        os.path.join(FILE_ROOT, f"{file_id}.active"),
+        os.path.join(FILE_ROOT, f"{file_id}.quarantined"),
+    )
+
+
+def _regular_file(path: str) -> bool:
+    return os.path.isfile(path) and not os.path.islink(path)
+
+
+def query_file(file_id: str) -> dict[str, object]:
+    active, quarantined = _file_paths(file_id)
+    with LOCK:
+        active_exists = _regular_file(active)
+        quarantined_exists = _regular_file(quarantined)
+        if active_exists == quarantined_exists:
+            raise ValueError("file state is missing or ambiguous")
+        path = quarantined if quarantined_exists else active
+        size = os.path.getsize(path)
+        if size > 10 * 1024 * 1024:
+            raise ValueError("file exceeds the 10 MiB laboratory limit")
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(64 * 1024), b""):
+                digest.update(chunk)
+    return {
+        "ok": True,
+        "agent_id": AGENT_ID,
+        "file_id": file_id,
+        "file_status": "quarantined" if quarantined_exists else "present",
+        "sha256": digest.hexdigest(),
+        "size_bytes": size,
+        "summary": f"Allowlisted file {file_id} state queried.",
+    }
+
+
+def quarantine_file(file_id: str) -> dict[str, object]:
+    active, quarantined = _file_paths(file_id)
+    with LOCK:
+        if _regular_file(quarantined) and not os.path.exists(active):
+            return query_file(file_id)
+        if not _regular_file(active) or os.path.lexists(quarantined):
+            raise ValueError("file is not in a quarantinable state")
+        os.replace(active, quarantined)
+        # The executor has every Linux capability dropped, including DAC_OVERRIDE.
+        # Keep owner-read permission so it can hash the quarantined artifact while
+        # removing write and execute access for all principals.
+        os.chmod(quarantined, 0o400)
+        result = query_file(file_id)
+    result["summary"] = f"Allowlisted file {file_id} quarantined atomically."
+    return result
+
+
+def restore_file(file_id: str) -> dict[str, object]:
+    active, quarantined = _file_paths(file_id)
+    with LOCK:
+        if _regular_file(active) and not os.path.exists(quarantined):
+            return query_file(file_id)
+        if not _regular_file(quarantined) or os.path.lexists(active):
+            raise ValueError("file is not in a restorable state")
+        os.chmod(quarantined, 0o600)
+        os.replace(quarantined, active)
+        result = query_file(file_id)
+    result["summary"] = f"Allowlisted file {file_id} restored atomically."
+    return result
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ShieldChainEndpointExecutor/1"
 
@@ -154,13 +235,25 @@ class Handler(BaseHTTPRequestHandler):
                 result = isolate(ttl)
             elif self.path == "/v1/endpoint/restore" and set(payload) == {"agent_id"}:
                 result = restore()
+            elif self.path == "/v1/endpoint/file/query" and set(payload) == {
+                "agent_id", "file_id"
+            }:
+                result = query_file(str(payload["file_id"]))
+            elif self.path == "/v1/endpoint/file/quarantine" and set(payload) == {
+                "agent_id", "file_id"
+            }:
+                result = quarantine_file(str(payload["file_id"]))
+            elif self.path == "/v1/endpoint/file/restore" and set(payload) == {
+                "agent_id", "file_id"
+            }:
+                result = restore_file(str(payload["file_id"]))
             else:
                 self._send(HTTPStatus.NOT_FOUND, {"ok": False})
                 return
             self._send(HTTPStatus.OK, result)
         except (ValueError, json.JSONDecodeError) as error:
             self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)[:256]})
-        except (RuntimeError, subprocess.TimeoutExpired):
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
             self._send(
                 HTTPStatus.BAD_GATEWAY,
                 {"ok": False, "error": "endpoint_firewall_failure"},
@@ -188,6 +281,9 @@ if __name__ == "__main__":
         raise SystemExit("SHIELDCHAIN_ENDPOINT_EXECUTOR_TOKEN must contain at least 24 characters")
     if AGENT_ID != "002":
         raise SystemExit("only the isolated demo agent 002 is supported")
+    if not ALLOWED_FILE_IDS or any(not FILE_ID.fullmatch(item) for item in ALLOWED_FILE_IDS):
+        raise SystemExit("SHIELDCHAIN_ALLOWED_FILE_IDS contains an invalid id")
+    os.makedirs(FILE_ROOT, mode=0o700, exist_ok=True)
     os.makedirs(os.path.dirname(SOCKET_PATH), mode=0o755, exist_ok=True)
     if os.path.exists(SOCKET_PATH):
         os.unlink(SOCKET_PATH)
