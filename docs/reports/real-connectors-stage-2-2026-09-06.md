@@ -39,4 +39,4 @@ docker exec -i shieldchain-backend-1 python - --execute --verify-ttl \
   < scripts/verify_endpoint_response_e2e.py
 ```
 
-服务器 Docker 镜像仓库代理当时不可用，因此端点执行器复用了已缓存的 nftables 基础镜像，后端和 Wazuh 桥采用带 `pre-stage2` 备份标签的离线镜像补丁部署。源码与 Dockerfile 均已同步；代理恢复后可再执行标准 Compose 重建。
+首次部署时服务器 Docker 镜像仓库代理不可用，因此先使用带 `pre-stage2` 备份标签的离线镜像补丁完成实机验收。随后建立 `127.0.0.1:17897 → SSH 反向隧道 → 本机 Clash 7897` 链路，镜像站探测返回正常的 HTTP 401，并成功完成标准 Compose 重建。切换到标准镜像后再次通过即时“查询—隔离—恢复—越权拒绝”验收。
