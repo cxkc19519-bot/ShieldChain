@@ -58,6 +58,7 @@ class OfflineSimulationAdapter:
             "unblock_ip",
             "query_endpoint_state",
             "isolate_endpoint",
+            "restore_endpoint",
             "query_account_state",
             "disable_account",
         }
@@ -83,6 +84,8 @@ class OfflineSimulationAdapter:
                 )
             if name == "isolate_endpoint":
                 return self._isolate_endpoint(request)
+            if name == "restore_endpoint":
+                return self._restore_endpoint(request)
             if name == "query_account_state":
                 self._account_state(request)
                 return AdapterExecution(
@@ -166,6 +169,15 @@ class OfflineSimulationAdapter:
             "Firewall simulation rollback completed.",
         )
 
+    def _restore_endpoint(self, request: BoundToolRequest) -> AdapterExecution:
+        target = str(request.request.arguments["endpoint_id"])
+        self._require_target(self._endpoints, target, "endpoint")
+        self._endpoints[target] = "connected"
+        return AdapterExecution(
+            ExecutionOutcome.SUCCEEDED,
+            "Endpoint simulation rollback completed.",
+        )
+
     def _disable_account(self, request: BoundToolRequest) -> AdapterExecution:
         target = str(request.request.arguments["account_id"])
         self._require_target(self._accounts, target, "account")
@@ -183,7 +195,7 @@ class OfflineSimulationAdapter:
         if name in {"query_firewall_state", "block_ip", "unblock_ip"}:
             state = self._firewall_state(request)
             return {"firewall_status": state.firewall_status}
-        if name in {"query_endpoint_state", "isolate_endpoint"}:
+        if name in {"query_endpoint_state", "isolate_endpoint", "restore_endpoint"}:
             return {"isolation_status": self._endpoint_state(request)}
         if name in {"query_account_state", "disable_account"}:
             return {"account_status": self._account_state(request)}

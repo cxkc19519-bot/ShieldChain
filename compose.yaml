@@ -138,3 +138,4 @@ volumes:
   shieldchain-data:
   shieldchain-executor-socket:
   shieldchain-wazuh-executor-socket:
+  shieldchain-endpoint-executor-socket:

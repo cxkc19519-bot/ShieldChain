@@ -1,4 +1,40 @@
 services:
+  endpoint-response-executor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.endpoint-executor
+      args:
+        BASE_IMAGE: ${ENDPOINT_EXECUTOR_BASE_IMAGE:-shieldchain-response-executor:local}
+    image: shieldchain-endpoint-response-executor:local
+    network_mode: "container:${WAZUH_AGENT_CONTAINER:-shieldchain-demo-agent-wazuh.agent-1}"
+    environment:
+      SHIELDCHAIN_ENDPOINT_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
+      SHIELDCHAIN_ENDPOINT_EXECUTOR_SOCKET: /run/shieldchain-endpoint-executor/executor.sock
+      SHIELDCHAIN_ENDPOINT_AGENT_ID: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
+    volumes:
+      - shieldchain-endpoint-executor-socket:/run/shieldchain-endpoint-executor
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/shieldchain-endpoint-executor/executor.sock'); s.close()"
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 6
+    restart: unless-stopped
+
   wazuh-response-executor:
     build:
       context: .
@@ -10,11 +46,13 @@ services:
     environment:
       SHIELDCHAIN_WAZUH_EXECUTOR_TOKEN: ${RESPONSE_FIREWALL_EXECUTOR_TOKEN:-}
       SHIELDCHAIN_WAZUH_EXECUTOR_SOCKET: /run/shieldchain-wazuh-executor/executor.sock
+      SHIELDCHAIN_ENDPOINT_EXECUTOR_SOCKET: /run/shieldchain-endpoint-executor/executor.sock
       SHIELDCHAIN_WAZUH_ALLOWED_AGENT_IDS: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
       WAZUH_API_URL: ${WAZUH_API_URL:-https://127.0.0.1:55000}
       WAZUH_API_TLS_VERIFY: ${WAZUH_API_TLS_VERIFY:-false}
     volumes:
       - shieldchain-wazuh-executor-socket:/run/shieldchain-wazuh-executor
+      - shieldchain-endpoint-executor-socket:/run/shieldchain-endpoint-executor
     read_only: true
     user: "10001:10001"
     cap_drop:
@@ -35,6 +73,9 @@ services:
       start_period: 5s
       retries: 6
     restart: unless-stopped
+    depends_on:
+      endpoint-response-executor:
+        condition: service_healthy
 
   response-executor:
     build:

@@ -21,7 +21,9 @@ from shieldchain.tools.gateway import AdapterExecution, TrustedToolAdapter
 from shieldchain.tools.registry import BoundToolRequest
 from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
-_WAZUH_TOOLS = frozenset({"query_endpoint_state"})
+_WAZUH_TOOLS = frozenset(
+    {"query_endpoint_state", "isolate_endpoint", "restore_endpoint"}
+)
 
 
 class WazuhHttpAdapter:
@@ -44,10 +46,20 @@ class WazuhHttpAdapter:
                 "The real Wazuh connector does not support this tool.",
                 "unsupported_real_tool",
             )
-        response = self._post(
-            "/v1/wazuh/agent/query",
-            {"agent_id": str(request.request.arguments["endpoint_id"])},
-        )
+        tool = request.registration.definition.name
+        path = {
+            "query_endpoint_state": "/v1/wazuh/agent/query",
+            "isolate_endpoint": "/v1/wazuh/agent/isolate",
+            "restore_endpoint": "/v1/wazuh/agent/restore",
+        }[tool]
+        payload: dict[str, object] = {
+            "agent_id": str(request.request.arguments["endpoint_id"])
+        }
+        if tool == "isolate_endpoint":
+            payload["ttl_seconds"] = int(
+                request.request.arguments["isolation_ttl_seconds"]
+            )
+        response = self._post(path, payload)
         return AdapterExecution(
             ExecutionOutcome.SUCCEEDED,
             str(response.get("summary") or "Wazuh agent state query completed."),

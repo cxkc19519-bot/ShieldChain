@@ -40,6 +40,8 @@ def bound(tool: str, *, expected: str | None = None, target: str | None = None):
         arguments = {"endpoint_id": target or "endpoint-42"}
         if tool == "isolate_endpoint":
             arguments["reason_code"] = "confirmed_compromise"
+        elif tool == "restore_endpoint":
+            arguments["reason_code"] = "approved_rollback"
         expected_state = {"isolation_status": expected or "isolated"}
     else:
         arguments = {"account_id": target or "user-42"}
@@ -96,6 +98,17 @@ def test_verification_fails_when_observed_state_does_not_match_expected() -> Non
     execution = simulation.execute(request)
     verification = simulation.verify(request, execution, now=NOW)
     assert verification.outcome is VerificationOutcome.FAILED
+    assert verification.observed_state == {"isolation_status": "connected"}
+
+
+def test_endpoint_restore_reverses_isolation() -> None:
+    simulation = adapter()
+    simulation.execute(bound("isolate_endpoint"))
+    request = bound("restore_endpoint", expected="connected")
+    execution = simulation.execute(request)
+    verification = simulation.verify(request, execution, now=NOW)
+    assert execution.outcome is ExecutionOutcome.SUCCEEDED
+    assert verification.outcome is VerificationOutcome.VERIFIED
     assert verification.observed_state == {"isolation_status": "connected"}
 
 

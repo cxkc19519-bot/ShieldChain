@@ -1,4 +1,4 @@
-"""Authenticated, read-only bridge to the local Wazuh API."""
+"""Authenticated bridge for Wazuh metadata and bounded endpoint containment."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import base64
 import json
 import os
 import re
+import socket
 import socketserver
 import ssl
 from hmac import compare_digest
 from http import HTTPStatus
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -18,6 +20,10 @@ from urllib.request import Request, urlopen
 TOKEN = os.environ.get("SHIELDCHAIN_WAZUH_EXECUTOR_TOKEN", "")
 SOCKET_PATH = os.environ.get(
     "SHIELDCHAIN_WAZUH_EXECUTOR_SOCKET", "/run/shieldchain-wazuh-executor/executor.sock"
+)
+ENDPOINT_SOCKET_PATH = os.environ.get(
+    "SHIELDCHAIN_ENDPOINT_EXECUTOR_SOCKET",
+    "/run/shieldchain-endpoint-executor/executor.sock",
 )
 API_URL = os.environ.get("WAZUH_API_URL", "https://127.0.0.1:55000").rstrip("/")
 API_USERNAME = os.environ.get("WAZUH_API_USERNAME") or os.environ.get("API_USERNAME", "")
@@ -79,7 +85,6 @@ def query_agent(agent_id: str) -> dict[str, object]:
         raise ValueError("allowed Wazuh agent was not found")
     item = items[0]
     status = str(item.get("status", "unknown")).casefold()
-    isolation_status = "connected" if status == "active" else "disconnected"
     return {
         "ok": True,
         "agent_id": str(item.get("id", agent_id)),
@@ -88,9 +93,78 @@ def query_agent(agent_id: str) -> dict[str, object]:
         "agent_ip": str(item.get("ip", ""))[:64],
         "agent_version": str(item.get("version", ""))[:128],
         "last_keepalive": str(item.get("lastKeepAlive", ""))[:64],
-        "isolation_status": isolation_status,
         "summary": f"Wazuh agent {agent_id} state query completed.",
     }
+
+
+class UnixHTTPConnection(HTTPConnection):
+    def __init__(self, socket_path: str) -> None:
+        super().__init__("localhost", timeout=4)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout)
+        connection.connect(self._socket_path)
+        self.sock = connection
+
+
+def endpoint_request(path: str, payload: dict[str, object]) -> dict[str, object]:
+    connection = UnixHTTPConnection(ENDPOINT_SOCKET_PATH)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=json.dumps(payload, separators=(",", ":")),
+            headers={
+                "Authorization": f"Bearer {TOKEN}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        raw = response.read(16_385)
+        if response.status >= 400:
+            raise RuntimeError(f"endpoint executor rejected the request ({response.status})")
+    except (OSError, TimeoutError):
+        raise RuntimeError("endpoint executor is unavailable") from None
+    finally:
+        connection.close()
+    if len(raw) > 16_384:
+        raise RuntimeError("endpoint executor response is too large")
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise RuntimeError("endpoint executor returned invalid JSON") from None
+    if not isinstance(decoded, dict) or decoded.get("ok") is not True:
+        raise RuntimeError("endpoint executor did not confirm the request")
+    return decoded
+
+
+def query_endpoint(agent_id: str) -> dict[str, object]:
+    containment = endpoint_request("/v1/endpoint/query", {"agent_id": agent_id})
+    try:
+        metadata = query_agent(agent_id)
+    except RuntimeError:
+        containment["agent_status"] = "unavailable"
+        containment["summary"] = (
+            f"Endpoint {agent_id} containment state queried; Wazuh API is unavailable."
+        )
+        return containment
+    metadata.update(containment)
+    metadata["summary"] = f"Wazuh agent {agent_id} and containment state queried."
+    return metadata
+
+
+def isolate_endpoint(agent_id: str, ttl_seconds: int) -> dict[str, object]:
+    query_agent(agent_id)
+    return endpoint_request(
+        "/v1/endpoint/isolate",
+        {"agent_id": agent_id, "ttl_seconds": ttl_seconds},
+    )
+
+
+def restore_endpoint(agent_id: str) -> dict[str, object]:
+    return endpoint_request("/v1/endpoint/restore", {"agent_id": agent_id})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -100,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self._send(HTTPStatus.NOT_FOUND, {"ok": False})
             return
-        self._send(HTTPStatus.OK, {"ok": True, "mode": "wazuh-read-only"})
+        self._send(HTTPStatus.OK, {"ok": True, "mode": "wazuh-endpoint-bridge"})
 
     def do_POST(self) -> None:
         supplied = self.headers.get("Authorization", "")
@@ -112,19 +186,31 @@ class Handler(BaseHTTPRequestHandler):
             if length < 2 or length > 2048:
                 raise ValueError("request size is invalid")
             payload = json.loads(self.rfile.read(length))
-            if not isinstance(payload, dict) or set(payload) != {"agent_id"}:
-                raise ValueError("request body must contain only agent_id")
-            agent_id = payload["agent_id"]
+            if not isinstance(payload, dict) or "agent_id" not in payload:
+                raise ValueError("request body must contain agent_id")
+            agent_id = payload.get("agent_id")
             if (
                 not isinstance(agent_id, str)
                 or not _AGENT_ID.fullmatch(agent_id)
                 or agent_id not in ALLOWED_AGENT_IDS
             ):
                 raise ValueError("agent_id is outside the configured allowlist")
-            if self.path != "/v1/wazuh/agent/query":
+            if self.path == "/v1/wazuh/agent/query" and set(payload) == {"agent_id"}:
+                result = query_endpoint(agent_id)
+            elif self.path == "/v1/wazuh/agent/isolate" and set(payload) == {
+                "agent_id",
+                "ttl_seconds",
+            }:
+                ttl = payload["ttl_seconds"]
+                if not isinstance(ttl, int) or isinstance(ttl, bool) or not 60 <= ttl <= 86_400:
+                    raise ValueError("ttl_seconds must be between 60 and 86400")
+                result = isolate_endpoint(agent_id, ttl)
+            elif self.path == "/v1/wazuh/agent/restore" and set(payload) == {"agent_id"}:
+                result = restore_endpoint(agent_id)
+            else:
                 self._send(HTTPStatus.NOT_FOUND, {"ok": False})
                 return
-            self._send(HTTPStatus.OK, query_agent(agent_id))
+            self._send(HTTPStatus.OK, result)
         except (ValueError, json.JSONDecodeError) as error:
             self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)[:256]})
         except RuntimeError:

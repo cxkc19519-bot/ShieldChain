@@ -58,6 +58,7 @@ def test_default_registry_contains_fixed_tools_and_read_only_verifiers() -> None
         ("unblock_ip", "1"),
         ("query_endpoint_state", "1"),
         ("isolate_endpoint", "1"),
+        ("restore_endpoint", "1"),
         ("query_account_state", "1"),
         ("disable_account", "1"),
     } == identities
@@ -113,6 +114,7 @@ def test_endpoint_and_account_schemas_use_enumerated_reasons_and_exact_state() -
         )
     )
     assert isolated.request.arguments["endpoint_id"] == "host-42"
+    assert isolated.request.arguments["isolation_ttl_seconds"] == 300
     with pytest.raises(ToolParameterRejected, match="reason_code"):
         registry.bind(
             tool_request(
@@ -149,6 +151,44 @@ def test_unblock_requires_an_enumerated_rollback_reason() -> None:
                 expected_state={"firewall_status": "not_blocked"},
             )
         )
+
+
+def test_endpoint_ttl_and_restore_reason_are_bounded() -> None:
+    registry = default_tool_registry()
+    isolated = registry.bind(
+        tool_request(
+            tool_name="isolate_endpoint",
+            arguments={
+                "endpoint_id": "002",
+                "reason_code": "containment_required",
+                "isolation_ttl_seconds": 60,
+            },
+            expected_state={"isolation_status": "isolated"},
+        )
+    )
+    assert isolated.request.arguments["isolation_ttl_seconds"] == 60
+    restored = registry.bind(
+        tool_request(
+            tool_name="restore_endpoint",
+            arguments={"endpoint_id": "002", "reason_code": "approved_rollback"},
+            expected_state={"isolation_status": "connected"},
+        )
+    )
+    assert restored.request.arguments["reason_code"] == "approved_rollback"
+    with pytest.raises(ToolParameterRejected, match="isolation_ttl_seconds"):
+        registry.bind(
+            tool_request(
+                tool_name="isolate_endpoint",
+                arguments={
+                    "endpoint_id": "002",
+                    "reason_code": "containment_required",
+                    "isolation_ttl_seconds": 59,
+                },
+                expected_state={"isolation_status": "isolated"},
+            )
+        )
+
+
 def test_registry_rejects_duplicate_and_unsafe_verifier_relationships() -> None:
     query = default_tool_registry().resolve("query_firewall_state", "1")
     with pytest.raises(DuplicateToolRegistration):

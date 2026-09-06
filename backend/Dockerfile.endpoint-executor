@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=python:3.14.6-slim-bookworm
+FROM ${BASE_IMAGE}
+
+RUN if ! command -v nft >/dev/null 2>&1; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends nftables \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && mkdir -p /run/shieldchain-endpoint-executor
+COPY backend/endpoint_executor/server.py /app/server.py
+CMD ["python", "/app/server.py"]

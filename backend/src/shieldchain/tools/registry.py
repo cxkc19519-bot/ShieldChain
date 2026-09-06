@@ -49,6 +49,7 @@ class ToolParameterSchema(StrEnum):
     UNBLOCK_IP_V1 = "unblock_ip_v1"
     ENDPOINT_QUERY_V1 = "endpoint_query_v1"
     ISOLATE_ENDPOINT_V1 = "isolate_endpoint_v1"
+    RESTORE_ENDPOINT_V1 = "restore_endpoint_v1"
     ACCOUNT_QUERY_V1 = "account_query_v1"
     DISABLE_ACCOUNT_V1 = "disable_account_v1"
 
@@ -69,6 +70,7 @@ class ToolRegistration:
             ToolParameterSchema.UNBLOCK_IP_V1: ToolTargetType.IPV4,
             ToolParameterSchema.ENDPOINT_QUERY_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ISOLATE_ENDPOINT_V1: ToolTargetType.ENDPOINT,
+            ToolParameterSchema.RESTORE_ENDPOINT_V1: ToolTargetType.ENDPOINT,
             ToolParameterSchema.ACCOUNT_QUERY_V1: ToolTargetType.ACCOUNT,
             ToolParameterSchema.DISABLE_ACCOUNT_V1: ToolTargetType.ACCOUNT,
         }[self.parameter_schema]
@@ -159,12 +161,31 @@ def _parse_arguments(
         _exact(values, frozenset({"endpoint_id"}), label="arguments")
         result = {"endpoint_id": _resource(values["endpoint_id"], "endpoint_id")}
     elif schema is ToolParameterSchema.ISOLATE_ENDPOINT_V1:
+        if set(values) not in (
+            {"endpoint_id", "reason_code"},
+            {"endpoint_id", "reason_code", "isolation_ttl_seconds"},
+        ):
+            raise ToolParameterRejected("arguments fields do not match the registered schema")
+        result = {
+            "endpoint_id": _resource(values["endpoint_id"], "endpoint_id"),
+            "isolation_ttl_seconds": _positive_int(
+                values.get("isolation_ttl_seconds", 300),
+                "isolation_ttl_seconds",
+                minimum=60,
+                maximum=86_400,
+            ),
+            "reason_code": _reason(
+                values["reason_code"],
+                frozenset({"confirmed_compromise", "containment_required"}),
+            ),
+        }
+    elif schema is ToolParameterSchema.RESTORE_ENDPOINT_V1:
         _exact(values, frozenset({"endpoint_id", "reason_code"}), label="arguments")
         result = {
             "endpoint_id": _resource(values["endpoint_id"], "endpoint_id"),
             "reason_code": _reason(
                 values["reason_code"],
-                frozenset({"confirmed_compromise", "containment_required"}),
+                frozenset({"approved_rollback", "false_positive", "containment_expired"}),
             ),
         }
     elif schema is ToolParameterSchema.ACCOUNT_QUERY_V1:
@@ -194,6 +215,7 @@ def _parse_expected_state(
     elif schema in {
         ToolParameterSchema.ENDPOINT_QUERY_V1,
         ToolParameterSchema.ISOLATE_ENDPOINT_V1,
+        ToolParameterSchema.RESTORE_ENDPOINT_V1,
     }:
         field, allowed = "isolation_status", {"isolated", "connected"}
     else:
@@ -337,6 +359,17 @@ def default_tool_registry() -> TrustedToolRegistry:
                 verifier="query_endpoint_state",
             ),
             ToolParameterSchema.ISOLATE_ENDPOINT_V1,
+        ),
+        ToolRegistration(
+            _definition(
+                "restore_endpoint",
+                ToolTargetType.ENDPOINT,
+                ToolRisk.HIGH,
+                write_roles,
+                mutates=True,
+                verifier="query_endpoint_state",
+            ),
+            ToolParameterSchema.RESTORE_ENDPOINT_V1,
         ),
         ToolRegistration(
             _definition(

@@ -91,7 +91,20 @@ class OperationsResponsePlanAgent:
                         "arguments": {},
                         "expected_state": {"isolation_status": "connected"},
                         "verification": None,
-                    }
+                    },
+                    {
+                        "tool": "isolate_endpoint",
+                        "target_reference_id": str(target_evidence_id),
+                        "arguments": {
+                            "reason_code": "containment_required",
+                            "isolation_ttl_seconds": rule_ttl_seconds,
+                        },
+                        "expected_state": {"isolation_status": "isolated"},
+                        "verification": {
+                            "tool": "query_endpoint_state",
+                            "expected_state": {"isolation_status": "isolated"},
+                        },
+                    },
                 ] if actionable_endpoint else [])
                 + ([
                     {

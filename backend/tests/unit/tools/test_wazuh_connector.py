@@ -15,7 +15,7 @@ NOW = datetime(2026, 9, 6, 8, tzinfo=UTC)
 CASE, RUN, PLAN, REQUEST_ID, EVIDENCE = (UUID(int=value) for value in range(9201, 9206))
 
 
-def bound_query():
+def bound_request(tool="query_endpoint_state"):
     evidence = EvidenceReference(EVIDENCE, CASE, "wazuh:002", NOW, "b" * 64)
     request = TrustedToolRequest(
         id=REQUEST_ID,
@@ -24,10 +24,24 @@ def bound_query():
         plan_id=PLAN,
         idempotency_key="real-wazuh:query:9204",
         caller_role=AgentRole.RESPONSE_PLANNING,
-        tool_name="query_endpoint_state",
+        tool_name=tool,
         tool_version="1",
-        arguments={"endpoint_id": "002"},
-        expected_state={"isolation_status": "connected"},
+        arguments=(
+            {
+                "endpoint_id": "002",
+                "reason_code": "containment_required",
+                "isolation_ttl_seconds": 60,
+            }
+            if tool == "isolate_endpoint"
+            else (
+                {"endpoint_id": "002", "reason_code": "approved_rollback"}
+                if tool == "restore_endpoint"
+                else {"endpoint_id": "002"}
+            )
+        ),
+        expected_state={
+            "isolation_status": "isolated" if tool == "isolate_endpoint" else "connected"
+        },
         rollback_strategy="Read-only query requires no rollback.",
         evidence=(evidence,),
         created_at=NOW,
@@ -52,13 +66,56 @@ def test_wazuh_adapter_queries_and_independently_verifies(monkeypatch) -> None:
         base_url="http+unix:///run/shieldchain-wazuh-executor/executor.sock",
         token="a-secure-test-token-with-24-characters",
     )
-    execution = adapter.execute(bound_query())
-    verification = adapter.verify(bound_query(), execution, now=NOW)
+    execution = adapter.execute(bound_request())
+    verification = adapter.verify(bound_request(), execution, now=NOW)
 
     assert execution.outcome is ExecutionOutcome.SUCCEEDED
     assert verification.outcome is VerificationOutcome.VERIFIED
     assert calls == [
         ("/v1/wazuh/agent/query", {"agent_id": "002"}),
+        ("/v1/wazuh/agent/query", {"agent_id": "002"}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool", "path", "payload", "status"),
+    [
+        (
+            "isolate_endpoint",
+            "/v1/wazuh/agent/isolate",
+            {"agent_id": "002", "ttl_seconds": 60},
+            "isolated",
+        ),
+        (
+            "restore_endpoint",
+            "/v1/wazuh/agent/restore",
+            {"agent_id": "002"},
+            "connected",
+        ),
+    ],
+)
+def test_wazuh_adapter_routes_fixed_endpoint_mutations(
+    monkeypatch, tool, path, payload, status
+) -> None:
+    calls = []
+
+    def fake_post(self, request_path, request_payload):
+        del self
+        calls.append((request_path, request_payload))
+        return {"ok": True, "isolation_status": status, "summary": "changed"}
+
+    monkeypatch.setattr(WazuhHttpAdapter, "_post", fake_post)
+    adapter = WazuhHttpAdapter(
+        base_url="http+unix:///run/shieldchain-wazuh-executor/executor.sock",
+        token="a-secure-test-token-with-24-characters",
+    )
+    request = bound_request(tool)
+    execution = adapter.execute(request)
+    verification = adapter.verify(request, execution, now=NOW)
+    assert execution.outcome is ExecutionOutcome.SUCCEEDED
+    assert verification.outcome is VerificationOutcome.VERIFIED
+    assert calls == [
+        (path, payload),
         ("/v1/wazuh/agent/query", {"agent_id": "002"}),
     ]
 
