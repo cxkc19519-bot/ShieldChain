@@ -609,11 +609,14 @@ class SecurityOperationsReportAgent:
             ("identity", "身份认证", "security.weak_passwords.list", "弱口令 MCP"),
             ("knowledge", "知识依据", "knowledge.rag.retrieve", "本地知识库 RAG"),
         )
-        by_name = {item.name: item for item in tool_calls}
+        by_name: dict[str, list[McpToolCallView]] = {}
+        for item in tool_calls:
+            by_name.setdefault(item.name, []).append(item)
         result: list[CrossDomainEvidenceView] = []
         for key, label, tool_name, source in definitions:
-            item = by_name.get(tool_name)
-            if item is None or item.status == "failed":
+            items = by_name.get(tool_name, [])
+            observed = [item for item in items if item.status != "failed"]
+            if not observed:
                 result.append(
                     CrossDomainEvidenceView(
                         key=key,
@@ -622,8 +625,8 @@ class SecurityOperationsReportAgent:
                         result_count=0,
                         status="not_observed",
                         summary=(
-                            item.summary
-                            if item is not None
+                            items[-1].summary
+                            if items
                             else "本次 ReAct 未选择该域；不能据此判断无风险。"
                         ),
                     )
@@ -634,9 +637,9 @@ class SecurityOperationsReportAgent:
                     key=key,
                     label=label,
                     source=source,
-                    result_count=item.result_count,
+                    result_count=sum(item.result_count for item in observed),
                     status="observed",
-                    summary=item.summary,
+                    summary="；".join(dict.fromkeys(item.summary for item in observed))[:1800],
                 )
             )
         return result

@@ -321,6 +321,7 @@ def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
         "security.alerts.list",
         "security.vulnerabilities.list",
         "security.weak_passwords.list",
+        "knowledge.rag.retrieve",
     ]
     for item in catalog:
         assert item["label"]
@@ -335,6 +336,64 @@ def test_tool_catalog_gives_model_usage_and_evidence_boundaries() -> None:
         item for item in catalog if item["name"] == "security.vulnerabilities.list"
     )
     assert "不等同于资产版本已确认受影响" in vulnerability["limitations"]
+
+
+@pytest.mark.parametrize("role", sorted(_SPECIALISTS))
+def test_every_specialist_can_autonomously_select_rag(role: str) -> None:
+    assert "knowledge.rag.retrieve" in _SPECIALISTS[role].allowed_tools
+
+
+def test_rag_calls_from_different_specialists_keep_independent_queries() -> None:
+    team = _team(Settings(_env_file=None, deepseek_api_key="test-key"))
+    broker = AgentToolBroker(
+        _tools(),
+        datetime(2026, 8, 1, tzinfo=UTC),
+        datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    responses = iter(
+        [
+            {
+                "action": "call_tool",
+                "tool": "knowledge.rag.retrieve",
+                "query": "如何区分暴力破解告警和误报",
+                "public_reason": "补充分诊依据",
+            },
+            {
+                "action": "finish",
+                "summary": "已结合知识依据完成分诊。",
+                "public_reason": "依据已经足够",
+            },
+            {
+                "action": "call_tool",
+                "tool": "knowledge.rag.retrieve",
+                "query": "隔离后应该验证哪些指标",
+                "public_reason": "补充验收规范",
+            },
+            {
+                "action": "finish",
+                "summary": "已形成验证指标。",
+                "public_reason": "依据已经足够",
+            },
+        ]
+    )
+
+    async def chat(_system, _user, **_kwargs):
+        return SimpleNamespace(
+            content=json.dumps(next(responses), ensure_ascii=False), model="deepseek-test"
+        )
+
+    team._chat = chat  # type: ignore[method-assign]
+    team._retrieve = lambda query: f"知识依据：{query}"  # type: ignore[method-assign]
+
+    asyncio.run(team._run_role(_SPECIALISTS["alert_triage"], broker, []))
+    asyncio.run(team._run_role(_SPECIALISTS["verification"], broker, []))
+
+    rag_calls = [item for item in broker.results if item.name == "knowledge.rag.retrieve"]
+    assert len(rag_calls) == 2
+    assert [item.arguments["query"] for item in rag_calls] == [
+        "如何区分暴力破解告警和误报",
+        "隔离后应该验证哪些指标",
+    ]
 
 
 def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> None:
@@ -416,6 +475,32 @@ def test_failed_tool_is_not_analyzed_as_zero_risk() -> None:
     assert trace[0].status == "blocked"
     assert trace[0].confidence == 0
     assert trace[1].status == "pending"
+
+
+def test_cross_domain_aggregates_repeated_rag_observations() -> None:
+    calls = [
+        McpToolCallView(
+            name="knowledge.rag.retrieve",
+            label="本地知识库 RAG",
+            status="succeeded",
+            arguments={"query": query, "limit": 3},
+            result_count=1,
+            summary=summary,
+            items=[],
+        )
+        for query, summary in (
+            ("分诊规范", "检索到分诊规范。"),
+            ("验证规范", "检索到验证规范。"),
+        )
+    ]
+
+    domains = SecurityOperationsReportAgent._cross_domain(calls)
+
+    knowledge = next(item for item in domains if item.key == "knowledge")
+    assert knowledge.status == "observed"
+    assert knowledge.result_count == 2
+    assert "分诊规范" in knowledge.summary
+    assert "验证规范" in knowledge.summary
 
 
 def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(

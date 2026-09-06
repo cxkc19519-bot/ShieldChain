@@ -154,14 +154,14 @@ _SPECIALISTS = {
             "alert_triage",
             "告警分诊智能体",
             "对事件和告警分级、归并并指出优先项。",
-            (_ALERTS, _EVENTS),
+            (_ALERTS, _EVENTS, _RAG),
             (_ALERTS, _EVENTS),
         ),
         RoleDefinition(
             "threat_investigation",
             "威胁研判智能体",
             "关联证据与漏洞、认证线索，区分事实和待核实假设。",
-            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS, _RAG),
             (_EVENTS, _ALERTS),
         ),
         RoleDefinition(
@@ -175,19 +175,19 @@ _SPECIALISTS = {
             "response_planning",
             "响应规划智能体",
             "依据已有结论按需补充事实，并提出需人工批准的响应建议。",
-            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS, _RAG),
         ),
         RoleDefinition(
             "verification",
             "验证智能体",
             "按需复查事件或告警，并制定建议实施后的观测指标和验收条件。",
-            (_EVENTS, _ALERTS),
+            (_EVENTS, _ALERTS, _RAG),
         ),
         RoleDefinition(
             "reporting",
             "报告智能体",
             "按报告完整性需要选择数据工具，汇总事实、线索、局限性，并形成概括总结和面向人工复核的分级处置建议。",
-            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
+            (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS, _RAG),
             (_EVENTS, _ALERTS, _VULNERABILITIES, _WEAK_PASSWORDS),
         ),
     )
@@ -213,7 +213,7 @@ class AgentToolBroker:
         self._start_at = start_at
         self._end_at = end_at
         self._cache: dict[str, McpToolCallView] = {}
-        self._order: list[str] = []
+        self._history: list[McpToolCallView] = []
         self._audit_store = audit_store
         self._audit_context = audit_context
         if (audit_store is None) != (audit_context is None):
@@ -221,7 +221,7 @@ class AgentToolBroker:
 
     @property
     def results(self) -> list[McpToolCallView]:
-        return [self._cache[name] for name in self._order]
+        return list(self._history)
 
     def catalog(self, allowed: tuple[str, ...]) -> list[dict[str, object]]:
         items = []
@@ -333,19 +333,17 @@ class AgentToolBroker:
                     truncated=truncated,
                 )
             self._cache[name] = result
-            self._order.append(name)
+            self._history.append(result)
         return self._cache[name]
 
     def record(self, item: McpToolCallView) -> McpToolCallView:
         """Record a read-only observation produced by a non-windowed tool such as RAG."""
 
-        if item.name not in self._cache:
-            self._cache[item.name] = item
-            self._order.append(item.name)
-        return self._cache[item.name]
+        self._history.append(item)
+        return item
 
     def public_facts(self, limit: int = 4500) -> str:
-        if not self._order:
+        if not self._history:
             return "尚未调用运营数据工具。"
         return "\n".join(f"{item.label}：{item.summary}" for item in self.results)[:limit]
 
@@ -427,10 +425,19 @@ class RealDataAgentTeam:
             if definition.key == "response_planning" and self._response_plan_agent is not None:
                 if run_id is None or now is None:
                     raise ValueError("run_id and now are required for response planning")
+                preparation_summary, preparation_model, preparation_reason = await self._run_role(
+                    definition, broker, results
+                )
                 plan_result = await self._response_plan_agent.generate(
                     run_id=run_id,
                     public_handoffs=[
                         {"role": item.role, "summary": item.summary} for item in results
+                    ]
+                    + [
+                        {
+                            "role": "response_planning_context",
+                            "summary": preparation_summary,
+                        }
                     ],
                     observation_summaries=broker.public_facts(),
                     now=now,
@@ -442,8 +449,8 @@ class RealDataAgentTeam:
                     rule_ttl_seconds=rule_ttl_seconds,
                 )
                 summary = plan_result.reference.public_summary
-                role_model = plan_result.model
-                tool_reason = plan_result.decision_reason
+                role_model = preparation_model or plan_result.model
+                tool_reason = f"{preparation_reason}；规划决策：{plan_result.decision_reason}"
                 response_plan = plan_result.reference
                 role_fallback = plan_result.used_fallback
             else:
