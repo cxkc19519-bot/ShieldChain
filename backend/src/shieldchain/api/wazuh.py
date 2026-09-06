@@ -6,10 +6,12 @@ from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
+from shieldchain.operations.persistence import OperationsRunRow
 from shieldchain.operations.schemas import OperationsReportRequest, OperationsReportView
 from shieldchain.operations.service import SecurityOperationsReportAgent
 from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhReviewCaseRow
@@ -17,8 +19,13 @@ from shieldchain.wazuh.schemas import (
     WazuhAlertInput,
     WazuhAlertListResponse,
     WazuhAlertView,
+    WazuhCaseDispositionRequest,
+    WazuhCaseDispositionView,
+    WazuhFalsePositiveMetricsView,
     WazuhInvestigationRequest,
     WazuhReviewCaseListResponse,
+    WazuhReviewCaseView,
+    WazuhTriageAssessmentView,
 )
 from shieldchain.wazuh.service import WazuhAlertService
 
@@ -41,8 +48,41 @@ def _tenant_id(request: Request) -> UUID:
     return cast(UUID, request.app.state.rag_demo_tenant_id)
 
 
+def _principal_id(request: Request) -> UUID:
+    return cast(UUID, request.app.state.rag_demo_principal_id)
+
+
 def _operations_agent(request: Request) -> SecurityOperationsReportAgent:
     return cast(SecurityOperationsReportAgent, request.app.state.security_operations_report_agent)
+
+
+def _with_triage_assessment(
+    request: Request, session: Session, item: WazuhReviewCaseView
+) -> WazuhReviewCaseView:
+    if item.run_id is None:
+        return item
+    report_id = session.scalar(
+        select(OperationsRunRow.report_id).where(
+            OperationsRunRow.run_id == str(item.run_id),
+            OperationsRunRow.tenant_id == str(_tenant_id(request)),
+        )
+    )
+    report = _operations_agent(request).get(report_id) if report_id else None
+    if report is None:
+        return item
+    triage = next((role for role in report.collaboration if role.role == "alert_triage"), None)
+    if triage is None:
+        return item
+    return item.model_copy(
+        update={
+            "triage_assessment": WazuhTriageAssessmentView(
+                run_id=item.run_id,
+                model=report.model,
+                summary=triage.summary,
+                decision_reason=triage.decision_reason,
+            )
+        }
+    )
 
 
 def _authorized(request: Request, token: str | None) -> None:
@@ -92,16 +132,49 @@ def list_review_cases(
     request: Request, limit: int = Query(default=50, ge=1, le=200)
 ) -> WazuhReviewCaseListResponse:
     with _sessions(request)() as session:
-        return WazuhReviewCaseListResponse(
-            items=_service(request).list_review_cases(
-                session,
-                tenant_id=_tenant_id(request),
-                limit=limit,
-                correlation_window_seconds=_settings(
-                    request
-                ).wazuh_review_correlation_window_seconds,
-            )
+        items = _service(request).list_review_cases(
+            session,
+            tenant_id=_tenant_id(request),
+            limit=limit,
+            correlation_window_seconds=_settings(
+                request
+            ).wazuh_review_correlation_window_seconds,
         )
+        return WazuhReviewCaseListResponse(
+            items=[_with_triage_assessment(request, session, item) for item in items]
+        )
+
+
+@router.get("/false-positive-metrics", response_model=WazuhFalsePositiveMetricsView)
+def false_positive_metrics(request: Request) -> WazuhFalsePositiveMetricsView:
+    with _sessions(request)() as session:
+        return _service(request).false_positive_metrics(session, tenant_id=_tenant_id(request))
+
+
+@router.post(
+    "/cases/{case_id}/disposition",
+    status_code=status.HTTP_201_CREATED,
+    response_model=WazuhCaseDispositionView,
+)
+def record_case_disposition(
+    case_id: UUID,
+    payload: WazuhCaseDispositionRequest,
+    request: Request,
+) -> WazuhCaseDispositionView:
+    try:
+        with _sessions(request).begin() as session:
+            return _service(request).record_disposition(
+                session,
+                case_id=case_id,
+                tenant_id=_tenant_id(request),
+                reviewer_id=_principal_id(request),
+                payload=payload,
+                now=datetime.now(UTC),
+            )
+    except LookupError:
+        raise ApiError("wazuh_case_not_found", "Wazuh review case not found", 404) from None
+    except ValueError as error:
+        raise ApiError("wazuh_disposition_rejected", str(error), 409) from None
 
 
 @router.post(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -129,3 +130,76 @@ def test_operator_explicitly_starts_one_case_bound_agent_run(
     )
     assert repeated.status_code == 409
     assert repeated.json()["error"]["code"] == "wazuh_investigation_rejected"
+
+
+def test_false_positive_feedback_requires_agent_evidence_and_remains_proposal_only(
+    wazuh_client: TestClient,
+) -> None:
+    created = wazuh_client.post(
+        "/api/v1/integrations/wazuh/alerts",
+        json=payload(external_id="wazuh-false-positive"),
+        headers={"X-ShieldChain-Wazuh-Token": "test-wazuh-token"},
+    )
+    case_id = created.json()["review_case"]["id"]
+    disposition = {
+        "decision": "false_positive",
+        "reason_code": "authorized_test",
+        "rationale": "已核对变更窗口和终端日志，确认这是经过授权的测试活动。",
+        "suppression_scope": "same_rule_endpoint",
+        "suppression_expires_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
+    }
+
+    premature = wazuh_client.post(
+        f"/api/v1/integrations/wazuh/cases/{case_id}/disposition",
+        json=disposition,
+    )
+    assert premature.status_code == 409
+    assert premature.json()["error"]["code"] == "wazuh_disposition_rejected"
+
+    investigated = wazuh_client.post(
+        f"/api/v1/integrations/wazuh/cases/{case_id}/investigate",
+        json={"rule_ttl_seconds": 60},
+    )
+    assert investigated.status_code == 201
+
+    reviewed = wazuh_client.post(
+        f"/api/v1/integrations/wazuh/cases/{case_id}/disposition",
+        json=disposition,
+    )
+    assert reviewed.status_code == 201
+    assert reviewed.json()["decision"] == "false_positive"
+    assert reviewed.json()["suppression_status"] == "proposed_only"
+
+    case = wazuh_client.get("/api/v1/integrations/wazuh/cases").json()["items"][0]
+    assert case["triage_assessment"]["agent_name"] == "告警分诊智能体"
+    assert case["triage_assessment"]["run_id"] == investigated.json()["run_id"]
+    assert case["triage_assessment"]["limitation"].startswith("智能体输出是研判建议")
+    assert case["disposition"]["id"] == reviewed.json()["id"]
+
+    metrics = wazuh_client.get(
+        "/api/v1/integrations/wazuh/false-positive-metrics"
+    ).json()
+    assert metrics == {
+        "reviewed_cases": 1,
+        "false_positives": 1,
+        "true_positives": 0,
+        "needs_more_evidence": 0,
+        "false_positive_rate": 1.0,
+        "proposed_suppressions": 1,
+    }
+
+
+def test_disposition_rejects_mismatched_reason(
+    wazuh_client: TestClient,
+) -> None:
+    mismatch = wazuh_client.post(
+        "/api/v1/integrations/wazuh/cases/00000000-0000-4000-8000-000000000001/disposition",
+        json={
+            "decision": "true_positive",
+            "reason_code": "expected_activity",
+            "rationale": "已完成必要的人工证据复核。",
+            "suppression_scope": "none",
+            "suppression_expires_at": None,
+        },
+    )
+    assert mismatch.status_code == 422

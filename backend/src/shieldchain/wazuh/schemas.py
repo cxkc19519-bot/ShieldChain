@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -45,6 +45,92 @@ class WazuhAlertInput(StrictModel):
         return cleaned
 
 
+class WazuhTriageAssessmentView(StrictModel):
+    """Public, reviewable output from the existing alert-triage specialist."""
+
+    run_id: UUID
+    agent_name: Literal["告警分诊智能体"] = "告警分诊智能体"
+    model: str | None = None
+    summary: str
+    decision_reason: str
+    limitation: str = "智能体输出是研判建议，不是误报结论；最终定性必须由分析员确认。"
+
+
+class WazuhCaseDispositionView(StrictModel):
+    id: UUID
+    case_id: UUID
+    run_id: UUID
+    decision: Literal["false_positive", "true_positive", "needs_more_evidence"]
+    reason_code: Literal[
+        "expected_activity",
+        "authorized_test",
+        "duplicate_detection",
+        "rule_too_broad",
+        "confirmed_malicious",
+        "insufficient_context",
+        "other",
+    ]
+    rationale: str
+    suppression_scope: Literal["none", "same_rule_endpoint", "same_rule"] = "none"
+    suppression_status: Literal["not_requested", "proposed_only"] = "not_requested"
+    suppression_expires_at: datetime | None = None
+    reviewer_id: UUID
+    created_at: datetime
+
+
+class WazuhCaseDispositionRequest(StrictModel):
+    decision: Literal["false_positive", "true_positive", "needs_more_evidence"]
+    reason_code: Literal[
+        "expected_activity",
+        "authorized_test",
+        "duplicate_detection",
+        "rule_too_broad",
+        "confirmed_malicious",
+        "insufficient_context",
+        "other",
+    ]
+    rationale: str = Field(min_length=10, max_length=1000)
+    suppression_scope: Literal["none", "same_rule_endpoint", "same_rule"] = "none"
+    suppression_expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_disposition(self) -> WazuhCaseDispositionRequest:
+        allowed_reasons = {
+            "false_positive": {
+                "expected_activity",
+                "authorized_test",
+                "duplicate_detection",
+                "rule_too_broad",
+                "other",
+            },
+            "true_positive": {"confirmed_malicious", "other"},
+            "needs_more_evidence": {"insufficient_context", "other"},
+        }
+        if self.reason_code not in allowed_reasons[self.decision]:
+            raise ValueError("reason_code does not match the selected decision")
+        if self.suppression_scope != "none" and self.decision != "false_positive":
+            raise ValueError("suppression can only be proposed for a confirmed false positive")
+        if self.suppression_scope == "none" and self.suppression_expires_at is not None:
+            raise ValueError("suppression expiry requires a suppression scope")
+        if self.suppression_expires_at is not None:
+            if (
+                self.suppression_expires_at.tzinfo is None
+                or self.suppression_expires_at.utcoffset() is None
+            ):
+                raise ValueError("suppression_expires_at must include a timezone")
+            self.suppression_expires_at = self.suppression_expires_at.astimezone(UTC)
+        return self
+
+
+class WazuhFalsePositiveMetricsView(StrictModel):
+    reviewed_cases: int = Field(ge=0)
+    false_positives: int = Field(ge=0)
+    true_positives: int = Field(ge=0)
+    needs_more_evidence: int = Field(ge=0)
+    false_positive_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    proposed_suppressions: int = Field(ge=0)
+
+
 class WazuhReviewCaseView(StrictModel):
     id: UUID
     tracking_id: str
@@ -58,6 +144,8 @@ class WazuhReviewCaseView(StrictModel):
     endpoint: str
     created_at: datetime
     updated_at: datetime
+    triage_assessment: WazuhTriageAssessmentView | None = None
+    disposition: WazuhCaseDispositionView | None = None
 
 
 class WazuhAlertView(StrictModel):

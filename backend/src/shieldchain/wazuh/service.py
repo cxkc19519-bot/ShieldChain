@@ -6,8 +6,20 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhCaseRunRow, WazuhReviewCaseRow
-from shieldchain.wazuh.schemas import WazuhAlertInput, WazuhAlertView, WazuhReviewCaseView
+from shieldchain.wazuh.persistence import (
+    WazuhAlertRow,
+    WazuhCaseDispositionRow,
+    WazuhCaseRunRow,
+    WazuhReviewCaseRow,
+)
+from shieldchain.wazuh.schemas import (
+    WazuhAlertInput,
+    WazuhAlertView,
+    WazuhCaseDispositionRequest,
+    WazuhCaseDispositionView,
+    WazuhFalsePositiveMetricsView,
+    WazuhReviewCaseView,
+)
 
 
 class WazuhAlertService:
@@ -108,6 +120,84 @@ class WazuhAlertService:
                 break
         return result
 
+    def record_disposition(
+        self,
+        session: Session,
+        *,
+        case_id: UUID,
+        tenant_id: UUID,
+        reviewer_id: UUID,
+        payload: WazuhCaseDispositionRequest,
+        now: datetime,
+    ) -> WazuhCaseDispositionView:
+        case = session.get(WazuhReviewCaseRow, str(case_id))
+        if case is None or case.tenant_id != str(tenant_id):
+            raise LookupError("Wazuh review case not found")
+        run_id = session.scalar(
+            select(WazuhCaseRunRow.run_id).where(
+                WazuhCaseRunRow.case_id == str(case_id),
+                WazuhCaseRunRow.tenant_id == str(tenant_id),
+            )
+        )
+        if run_id is None:
+            raise ValueError("必须先完成智能体调查，才能提交人工定性")
+        if payload.suppression_scope != "none" and payload.suppression_expires_at is None:
+            raise ValueError("抑制建议必须设置到期时间")
+        if payload.suppression_expires_at is not None:
+            expires_at = self._utc(payload.suppression_expires_at)
+            current = now.astimezone(UTC)
+            if expires_at <= current:
+                raise ValueError("抑制建议到期时间必须晚于当前时间")
+            if expires_at > current + timedelta(days=90):
+                raise ValueError("单次抑制建议有效期不能超过 90 天")
+        row = WazuhCaseDispositionRow(
+            id=str(uuid4()),
+            case_id=str(case_id),
+            run_id=run_id,
+            tenant_id=str(tenant_id),
+            decision=payload.decision,
+            reason_code=payload.reason_code,
+            rationale=payload.rationale.strip(),
+            suppression_scope=payload.suppression_scope,
+            suppression_expires_at=payload.suppression_expires_at,
+            reviewer_id=str(reviewer_id),
+            created_at=now.astimezone(UTC),
+        )
+        session.add(row)
+        session.flush()
+        return self._disposition_view(row)
+
+    def false_positive_metrics(
+        self, session: Session, *, tenant_id: UUID
+    ) -> WazuhFalsePositiveMetricsView:
+        rows = session.scalars(
+            select(WazuhCaseDispositionRow)
+            .where(WazuhCaseDispositionRow.tenant_id == str(tenant_id))
+            .order_by(
+                WazuhCaseDispositionRow.created_at.desc(),
+                WazuhCaseDispositionRow.id.desc(),
+            )
+        ).all()
+        latest: dict[str, WazuhCaseDispositionRow] = {}
+        for row in rows:
+            latest.setdefault(row.case_id, row)
+        decisions = tuple(latest.values())
+        false_positives = sum(row.decision == "false_positive" for row in decisions)
+        true_positives = sum(row.decision == "true_positive" for row in decisions)
+        conclusive = false_positives + true_positives
+        return WazuhFalsePositiveMetricsView(
+            reviewed_cases=len(decisions),
+            false_positives=false_positives,
+            true_positives=true_positives,
+            needs_more_evidence=sum(
+                row.decision == "needs_more_evidence" for row in decisions
+            ),
+            false_positive_rate=false_positives / conclusive if conclusive else None,
+            proposed_suppressions=sum(
+                row.suppression_scope != "none" for row in decisions
+            ),
+        )
+
     @staticmethod
     def _utc(value: datetime) -> datetime:
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
@@ -144,7 +234,11 @@ class WazuhAlertService:
 
     @classmethod
     def _review_case_view(
-        cls, row: WazuhReviewCaseRow, run_id: str | None = None
+        cls,
+        row: WazuhReviewCaseRow,
+        run_id: str | None = None,
+        *,
+        disposition: WazuhCaseDispositionView | None = None,
     ) -> WazuhReviewCaseView:
         return WazuhReviewCaseView(
             id=UUID(row.id),
@@ -158,6 +252,7 @@ class WazuhAlertService:
             endpoint=row.endpoint,
             created_at=cls._utc(row.created_at),
             updated_at=cls._utc(row.updated_at),
+            disposition=disposition,
         )
 
     def _review_case_for_alert(
@@ -182,9 +277,8 @@ class WazuhAlertService:
         )
         return self._review_case_with_run(session, row) if row is not None else None
 
-    @classmethod
     def _review_case_with_run(
-        cls, session: Session, row: WazuhReviewCaseRow
+        self, session: Session, row: WazuhReviewCaseRow
     ) -> WazuhReviewCaseView:
         run_id = session.scalar(
             select(WazuhCaseRunRow.run_id).where(
@@ -192,7 +286,45 @@ class WazuhAlertService:
                 WazuhCaseRunRow.tenant_id == row.tenant_id,
             )
         )
-        return cls._review_case_view(row, run_id)
+        disposition = session.scalar(
+            select(WazuhCaseDispositionRow)
+            .where(
+                WazuhCaseDispositionRow.case_id == row.id,
+                WazuhCaseDispositionRow.tenant_id == row.tenant_id,
+            )
+            .order_by(
+                WazuhCaseDispositionRow.created_at.desc(),
+                WazuhCaseDispositionRow.id.desc(),
+            )
+            .limit(1)
+        )
+        return self._review_case_view(
+            row,
+            run_id,
+            disposition=self._disposition_view(disposition) if disposition else None,
+        )
+
+    @classmethod
+    def _disposition_view(cls, row: WazuhCaseDispositionRow) -> WazuhCaseDispositionView:
+        return WazuhCaseDispositionView(
+            id=UUID(row.id),
+            case_id=UUID(row.case_id),
+            run_id=UUID(row.run_id),
+            decision=row.decision,
+            reason_code=row.reason_code,
+            rationale=row.rationale,
+            suppression_scope=row.suppression_scope,
+            suppression_status=(
+                "proposed_only" if row.suppression_scope != "none" else "not_requested"
+            ),
+            suppression_expires_at=(
+                cls._utc(row.suppression_expires_at)
+                if row.suppression_expires_at
+                else None
+            ),
+            reviewer_id=UUID(row.reviewer_id),
+            created_at=cls._utc(row.created_at),
+        )
 
     def _find_or_create_review_case(
         self,

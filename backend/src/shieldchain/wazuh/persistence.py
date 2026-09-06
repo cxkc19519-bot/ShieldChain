@@ -183,3 +183,46 @@ Index(
     WazuhCaseAuditRow.occurred_at,
     WazuhCaseAuditRow.id,
 )
+
+
+class WazuhCaseDispositionRow(Base):
+    """Append-only human disposition; suppression fields are proposals, never execution."""
+
+    __tablename__ = "wazuh_case_dispositions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id", "tenant_id"],
+            ["wazuh_case_runs.run_id", "wazuh_case_runs.tenant_id"],
+            name="fk_wazuh_disposition_run_tenant",
+        ),
+        CheckConstraint(
+            "decision IN ('false_positive','true_positive','needs_more_evidence')",
+            name="ck_wazuh_disposition_decision",
+        ),
+        CheckConstraint(
+            "suppression_scope IN ('none','same_rule_endpoint','same_rule')",
+            name="ck_wazuh_disposition_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    rationale: Mapped[str] = mapped_column(String(1000), nullable=False)
+    suppression_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    suppression_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewer_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+Index(
+    "ix_wazuh_disposition_case_created",
+    WazuhCaseDispositionRow.tenant_id,
+    WazuhCaseDispositionRow.case_id,
+    WazuhCaseDispositionRow.created_at,
+)
