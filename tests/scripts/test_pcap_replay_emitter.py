@@ -47,3 +47,16 @@ def test_iter_frames_rejects_truncated_frame() -> None:
 def test_replay_rejects_any_interface_except_isolated_eth0() -> None:
     with pytest.raises(ValueError, match="only permits eth0"):
         emitter.replay(Path("unused.pcap"), "ens3", 500, 1)
+
+
+def test_frame_for_isolated_bridge_broadcasts_only_destination_mac() -> None:
+    frame = bytes.fromhex("00112233445566778899aabb0800") + b"payload"
+
+    assert emitter.frame_for_isolated_bridge(frame) == (
+        b"\xff\xff\xff\xff\xff\xff" + frame[6:]
+    )
+
+
+def test_frame_for_isolated_bridge_rejects_short_frame() -> None:
+    with pytest.raises(ValueError, match="shorter than an Ethernet header"):
+        emitter.frame_for_isolated_bridge(b"too-short")

@@ -17,6 +17,8 @@ MAGIC_ENDIAN = {
     b"\x4d\x3c\xb2\xa1": "<",
 }
 MAX_FRAME_BYTES = 262_144
+ETHERNET_HEADER_BYTES = 14
+BROADCAST_MAC = b"\xff\xff\xff\xff\xff\xff"
 
 
 def iter_frames(path: Path) -> Iterator[bytes]:
@@ -40,6 +42,19 @@ def iter_frames(path: Path) -> Iterator[bytes]:
             yield frame
 
 
+def frame_for_isolated_bridge(frame: bytes) -> bytes:
+    """Deliver a captured Ethernet frame to the isolated bridge sensor.
+
+    Captures retain their original destination MAC address, which is not
+    present on the disposable Docker bridge.  Broadcasting only the Ethernet
+    destination keeps the IP/TCP payload intact while making the frame visible
+    to the sensor; the replay network itself is internal and removed on exit.
+    """
+    if len(frame) < ETHERNET_HEADER_BYTES:
+        raise ValueError("PCAP frame is shorter than an Ethernet header")
+    return BROADCAST_MAC + frame[len(BROADCAST_MAC) :]
+
+
 def replay(path: Path, interface: str, pps: int, loops: int) -> dict[str, object]:
     if interface != "eth0":
         raise ValueError("the isolated replay image only permits eth0")
@@ -55,7 +70,7 @@ def replay(path: Path, interface: str, pps: int, loops: int) -> dict[str, object
                 now = time.monotonic()
                 if deadline > now:
                     time.sleep(deadline - now)
-                bytes_sent += sender.send(frame)
+                bytes_sent += sender.send(frame_for_isolated_bridge(frame))
                 packets += 1
                 deadline += interval
     return {
