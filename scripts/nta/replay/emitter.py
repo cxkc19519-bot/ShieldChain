@@ -10,7 +10,6 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
-
 MAGIC_ENDIAN = {
     b"\xa1\xb2\xc3\xd4": ">",
     b"\xd4\xc3\xb2\xa1": "<",
