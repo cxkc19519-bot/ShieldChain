@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "nta" / "pcap_replay_lab.py"
 SPEC = importlib.util.spec_from_file_location("pcap_replay_lab", MODULE_PATH)

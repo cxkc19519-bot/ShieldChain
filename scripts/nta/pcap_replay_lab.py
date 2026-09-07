@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Replay one authorized PCAP inside an isolated Docker network namespace.
 
 Packets are emitted only on a disposable, Docker-internal interface shared by a
@@ -19,7 +18,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "data" / "nta-replay"
@@ -403,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.acknowledgement != ACKNOWLEDGEMENT:
         print("Refusing replay without the exact isolation acknowledgement.", file=sys.stderr)
         return 2
-    if not os.environ.get("SHIELDCHAIN_NTA_REPLAY_ENABLED") == "true":
+    if os.environ.get("SHIELDCHAIN_NTA_REPLAY_ENABLED") != "true":
         print("Set SHIELDCHAIN_NTA_REPLAY_ENABLED=true to enable replay.", file=sys.stderr)
         return 2
     execute(
