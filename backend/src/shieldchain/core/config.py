@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     wazuh_webhook_token: SecretStr = SecretStr("")
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
+    nta_demo_replay_enabled: bool = False
+    nta_demo_replay_runner_url: AnyHttpUrl | None = None
+    nta_demo_replay_runner_token: SecretStr = SecretStr("")
     vulnerability_scanner_token: SecretStr = SecretStr("")
     response_connector_mode: Literal["simulation", "nftables_http"] = "simulation"
     response_firewall_executor_url: str = "http+unix:///run/shieldchain-executor/executor.sock"
@@ -157,6 +160,11 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "response Wazuh executor token must contain at least 24 characters"
                 )
+        if self.nta_demo_replay_enabled:
+            if self.nta_demo_replay_runner_url is None:
+                raise ValueError("NTA demo replay runner URL is required when enabled")
+            if len(self.nta_demo_replay_runner_token.get_secret_value()) < 24:
+                raise ValueError("NTA demo replay runner token must contain at least 24 characters")
         if self.environment == "production" and (
             "*" in self.http_allowed_hosts or "*" in self.http_allowed_origins
         ):

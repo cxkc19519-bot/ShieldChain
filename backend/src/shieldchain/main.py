@@ -12,6 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shieldchain.agents.trajectory import CollaborationTrajectoryQuery
 from shieldchain.api.agents import router as agents_router
+from shieldchain.api.demo_replay import router as demo_replay_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
@@ -218,6 +219,7 @@ def create_app(
         session_factory
     )
     app.include_router(agents_router, prefix="/api/v1")
+    app.include_router(demo_replay_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
     app.include_router(qwen_experience_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory

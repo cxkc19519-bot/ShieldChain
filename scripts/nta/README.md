@@ -169,6 +169,32 @@ python3 scripts/nta/ingest_nta_events.py data/nta-replay/run-<id>/events.jsonl
 Suricata 容器只保留抓包所需的 `NET_RAW` 和读取镜像内受限配置所需的
 `DAC_READ_SEARCH`，根文件系统保持只读，不挂载宿主机密钥或业务目录。
 
+### 前端随机演示回放
+
+“实时告警”页面的“随机演示回放”按钮不接受浏览器提交的 PCAP 文件名、网卡、
+速率或循环次数。它只能请求一个宿主机回放服务从本地清单中随机选择已验收样本；
+该服务检查预期 Suricata 规则命中后才自动导入 ShieldChain。先复制
+`config/nta/demo-replay-samples.example.json` 到服务器私有目录，填入短 PCAP 的相对
+路径、SHA-256 记录和已验证规则 ID；原始 PCAP 与实际清单不能提交 Git。
+
+宿主机服务只应绑定 Docker gateway 地址（例如 `172.18.0.1`），并使用独立的 24 位
+以上随机令牌。启动命令示例：
+
+```bash
+export SHIELDCHAIN_NTA_REPLAY_RUNNER_TOKEN=replace-with-a-long-random-token
+export WAZUH_WEBHOOK_TOKEN=replace-with-existing-ingestion-token
+export SHIELDCHAIN_NTA_INGEST_ENDPOINT=http://127.0.0.1:8080/api/v1/integrations/wazuh/alerts
+python3 scripts/nta/replay/demo_runner.py \
+  --manifest /srv/shieldchain-private/demo-replay-samples.json \
+  --pcap-root /srv/shieldchain-private/demo-pcap \
+  --runtime-root /srv/shieldchain-runtime/demo-replay
+```
+
+随后在 ShieldChain `.env` 中同时设置 `NTA_DEMO_REPLAY_ENABLED=true`、
+`NTA_DEMO_REPLAY_RUNNER_URL=http://172.18.0.1:18082/` 和相同的
+`NTA_DEMO_REPLAY_RUNNER_TOKEN`，重启后端。未完成这些服务器端配置时，前端按钮会
+明确显示服务不可用，而不会回放任意文件。
+
 运行不需要 Docker 的分类单元测试：
 
 ```bash

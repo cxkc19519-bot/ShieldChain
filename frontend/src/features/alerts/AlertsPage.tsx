@@ -36,6 +36,14 @@ type FalsePositiveMetrics = {
   needs_more_evidence: number; false_positive_rate: number | null; proposed_suppressions: number
 }
 
+type DemoReplayStatus = {
+  state: 'idle' | 'running' | 'completed' | 'failed'
+  sample: { id: string; title: string } | null
+  run_id: string | null
+  alert_count?: number
+  reason?: string
+}
+
 function asCase(value: unknown): ReviewCase {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('告警服务返回了无效数据')
   const item = value as Record<string, unknown>
@@ -98,6 +106,24 @@ async function investigateCase(caseId: string): Promise<string> {
   return runId
 }
 
+async function startDemoReplay(): Promise<DemoReplayStatus> {
+  const response = await fetch('/api/v1/nta/demo-replay/start', { method: 'POST' })
+  const payload: unknown = await response.json()
+  if (!response.ok || typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('演示回放服务不可用')
+  }
+  return payload as DemoReplayStatus
+}
+
+async function getDemoReplayStatus(): Promise<DemoReplayStatus> {
+  const response = await fetch('/api/v1/nta/demo-replay/status')
+  const payload: unknown = await response.json()
+  if (!response.ok || typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('无法读取演示回放状态')
+  }
+  return payload as DemoReplayStatus
+}
+
 export function AlertsPage() {
   const navigate = useNavigate()
   const [items, setItems] = useState<ReviewCase[]>([])
@@ -112,6 +138,8 @@ export function AlertsPage() {
   const [rationale, setRationale] = useState('')
   const [suppressionScope, setSuppressionScope] = useState<CaseDisposition['suppression_scope']>('none')
   const [saving, setSaving] = useState(false)
+  const [demoReplay, setDemoReplay] = useState<DemoReplayStatus | null>(null)
+  const [startingDemoReplay, setStartingDemoReplay] = useState(false)
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -130,6 +158,25 @@ export function AlertsPage() {
     void refresh(controller.signal)
     return () => controller.abort()
   }, [attempt, refresh])
+
+  useEffect(() => {
+    if (demoReplay?.state !== 'running') return
+    const timer = window.setTimeout(() => {
+      void getDemoReplayStatus().then((next) => {
+        setDemoReplay(next)
+        if (next.state === 'completed') setAttempt((value) => value + 1)
+      }).catch((reason) => setError(reason instanceof Error ? reason.message : '无法读取演示回放状态'))
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [demoReplay?.state])
+
+  const runDemoReplay = async () => {
+    setStartingDemoReplay(true)
+    setError(null)
+    try { setDemoReplay(await startDemoReplay()) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : '演示回放服务不可用') }
+    finally { setStartingDemoReplay(false) }
+  }
 
   const investigate = async (item: ReviewCase) => {
     setRunningCase(item.id)
@@ -176,8 +223,9 @@ export function AlertsPage() {
       eyebrow="Wazuh · 人工复核队列"
       title="实时告警"
       description="达到阈值的 Wazuh 告警先进入人工复核队列；只有操作员点击启动，智能体才会调查并生成需再次审批的响应计划。"
-      actions={<button type="button" onClick={() => setAttempt((value) => value + 1)}>刷新列表</button>}
+      actions={<div className="alert-case__buttons"><button type="button" disabled={startingDemoReplay || demoReplay?.state === 'running'} onClick={() => void runDemoReplay}>{startingDemoReplay || demoReplay?.state === 'running' ? '隔离回放中…' : '随机演示回放'}</button><button type="button" onClick={() => setAttempt((value) => value + 1)}>刷新列表</button></div>}
     />
+    {demoReplay && <p className="alert-case__note" role="status">{demoReplay.state === 'running' ? `正在隔离回放：${demoReplay.sample?.title ?? '已验收样本'}。` : demoReplay.state === 'completed' ? `回放完成：${demoReplay.sample?.title ?? '样本'}，已导入 ${demoReplay.alert_count ?? 0} 条告警。` : demoReplay.state === 'failed' ? '演示回放失败；未导入告警，请查看服务器运行记录。' : '演示回放服务已就绪。'}</p>}
     {metrics && <div className="false-positive-metrics" aria-label="误报治理统计">
       <div><span>已定性案件</span><strong>{metrics.reviewed_cases}</strong></div>
       <div><span>确认误报</span><strong>{metrics.false_positives}</strong></div>
