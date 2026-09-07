@@ -73,6 +73,7 @@ def test_plan_is_internal_and_never_uses_host_network() -> None:
         assert plan.start_sensor.count("DAC_READ_SEARCH") == 1
         assert plan.run_replayer.count("NET_RAW") == 1
         assert "NET_ADMIN" not in plan.start_sensor
+        assert "af-packet.0.threads=1" in plan.start_sensor
         assert "0:0" in plan.run_replayer
 
 

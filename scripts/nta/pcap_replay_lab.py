@@ -158,6 +158,8 @@ def build_plan(
         suricata_image,
         "--runmode",
         "workers",
+        "--set",
+        "af-packet.0.threads=1",
         "-i",
         "eth0",
         "-l",

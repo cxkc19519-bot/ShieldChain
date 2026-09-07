@@ -113,6 +113,8 @@ python3 scripts/nta/ingest_nta_events.py /path/to/run/events.jsonl
 完成规则加载后才开始发包，结束或失败后都会删除回放器、传感器和网络。
 实时演示传感器使用 `-S`，只加载仓库中的 ShieldChain NTA 规则，不加载镜像内
 约 5 万条通用规则；正式测评若要求组合规则集，应单独冻结并记录对应配置与哈希。
+AF_PACKET 固定为单线程，避免按服务器全部 CPU 核数扩张流表内存；该配置面向
+短 PCAP 演示，不代表生产吞吐配置。
 
 先构建固定回放器镜像。服务器已有 ShieldChain 后端镜像时，可以用它作为无需
 联网的 Python 基础镜像：
