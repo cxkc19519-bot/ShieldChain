@@ -51,12 +51,18 @@ class OfflineSimulationAdapter:
         }
         self._endpoints = {target: "connected" for target in endpoint_targets}
         self._accounts = {target: "enabled" for target in account_targets}
+        self._files: dict[str, str] = {}
         self._fail_once = set(fail_once_tools)
         allowed = {
             "query_firewall_state",
             "block_ip",
+            "unblock_ip",
             "query_endpoint_state",
             "isolate_endpoint",
+            "restore_endpoint",
+            "query_file_state",
+            "quarantine_file",
+            "restore_file",
             "query_account_state",
             "disable_account",
         }
@@ -73,6 +79,8 @@ class OfflineSimulationAdapter:
                 )
             if name == "block_ip":
                 return self._block_ip(request)
+            if name == "unblock_ip":
+                return self._unblock_ip(request)
             if name == "query_endpoint_state":
                 self._endpoint_state(request)
                 return AdapterExecution(
@@ -80,6 +88,17 @@ class OfflineSimulationAdapter:
                 )
             if name == "isolate_endpoint":
                 return self._isolate_endpoint(request)
+            if name == "restore_endpoint":
+                return self._restore_endpoint(request)
+            if name == "query_file_state":
+                self._file_state(request)
+                return AdapterExecution(ExecutionOutcome.SUCCEEDED, "File state query completed.")
+            if name == "quarantine_file":
+                self._files[str(request.request.arguments["file_id"])] = "quarantined"
+                return AdapterExecution(ExecutionOutcome.SUCCEEDED, "File quarantined.")
+            if name == "restore_file":
+                self._files[str(request.request.arguments["file_id"])] = "present"
+                return AdapterExecution(ExecutionOutcome.SUCCEEDED, "File restored.")
             if name == "query_account_state":
                 self._account_state(request)
                 return AdapterExecution(
@@ -88,6 +107,15 @@ class OfflineSimulationAdapter:
             if name == "disable_account":
                 return self._disable_account(request)
         raise ValueError("tool is not supported by the offline simulation adapter")
+
+    def restore_successful_mutation(self, request: BoundToolRequest) -> None:
+        """Rebuild process-local state from a durable successful attempt."""
+
+        if not request.registration.definition.mutates_state:
+            raise ValueError("only state-changing calls can restore simulation state")
+        execution = self.execute(request)
+        if execution.outcome is not ExecutionOutcome.SUCCEEDED:
+            raise RuntimeError("durable simulation mutation could not be restored")
 
     def verify(
         self,
@@ -141,6 +169,28 @@ class OfflineSimulationAdapter:
         self._endpoints[target] = "isolated"
         return AdapterExecution(ExecutionOutcome.SUCCEEDED, "Endpoint simulation change completed.")
 
+    def _unblock_ip(self, request: BoundToolRequest) -> AdapterExecution:
+        target = str(request.request.arguments["target_ip"])
+        state = self._firewall_state(request)
+        self._firewalls[target] = replace(
+            state,
+            connection_status="active",
+            firewall_status="not_blocked",
+        )
+        return AdapterExecution(
+            ExecutionOutcome.SUCCEEDED,
+            "Firewall simulation rollback completed.",
+        )
+
+    def _restore_endpoint(self, request: BoundToolRequest) -> AdapterExecution:
+        target = str(request.request.arguments["endpoint_id"])
+        self._require_target(self._endpoints, target, "endpoint")
+        self._endpoints[target] = "connected"
+        return AdapterExecution(
+            ExecutionOutcome.SUCCEEDED,
+            "Endpoint simulation rollback completed.",
+        )
+
     def _disable_account(self, request: BoundToolRequest) -> AdapterExecution:
         target = str(request.request.arguments["account_id"])
         self._require_target(self._accounts, target, "account")
@@ -155,11 +205,13 @@ class OfflineSimulationAdapter:
 
     def _observed_state(self, request: BoundToolRequest) -> dict[str, str]:
         name = request.registration.definition.name
-        if name in {"query_firewall_state", "block_ip"}:
+        if name in {"query_firewall_state", "block_ip", "unblock_ip"}:
             state = self._firewall_state(request)
             return {"firewall_status": state.firewall_status}
-        if name in {"query_endpoint_state", "isolate_endpoint"}:
+        if name in {"query_endpoint_state", "isolate_endpoint", "restore_endpoint"}:
             return {"isolation_status": self._endpoint_state(request)}
+        if name in {"query_file_state", "quarantine_file", "restore_file"}:
+            return {"file_status": self._file_state(request)}
         if name in {"query_account_state", "disable_account"}:
             return {"account_status": self._account_state(request)}
         raise ValueError("tool has no offline verifier")
@@ -178,6 +230,11 @@ class OfflineSimulationAdapter:
         target = str(request.request.arguments["account_id"])
         self._require_target(self._accounts, target, "account")
         return self._accounts[target]
+
+    def _file_state(self, request: BoundToolRequest) -> str:
+        target = str(request.request.arguments["endpoint_id"])
+        self._require_target(self._endpoints, target, "endpoint")
+        return self._files.setdefault(str(request.request.arguments["file_id"]), "present")
 
     def _consume_failure(self, tool: str, *, use_firewall_state: bool = False) -> bool:
         if tool not in self._fail_once:

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from queue import Empty, Queue
+from threading import Thread
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -47,6 +50,8 @@ class TrustedToolAdapter(Protocol):
 
 class GatewayStore(Protocol):
     def atomic(self) -> AbstractContextManager[None]: ...
+
+    def commit(self) -> None: ...
 
     def create_or_get(
         self, *, tenant_id: UUID, bound: BoundToolRequest, request_id: str
@@ -243,6 +248,70 @@ class TrustedToolGateway:
             request_id=request_id,
         )
 
+    def execute_prepared(
+        self,
+        *,
+        bound: BoundToolRequest,
+        call: TrustedToolCall,
+        policy: PolicyDecision,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        adapter: TrustedToolAdapter,
+        request_id: str,
+    ) -> GatewayResult:
+        if (
+            call.status is not TrustedToolCallStatus.APPROVED
+            or bound.request.id != call.request.id
+            or bound.request_digest != call.request.request_digest
+            or context.case_id != call.request.case_id
+            or context.run_id != call.request.run_id
+            or policy.request_id != call.request.id
+            or policy.outcome is not PolicyOutcome.ALLOW
+            or policy.expires_at <= context.now
+        ):
+            raise ValueError("prepared trusted tool call is invalid or expired")
+        return self._execute(
+            bound=bound,
+            call=call,
+            created=False,
+            policy=policy,
+            approval=None,
+            context=context,
+            store=store,
+            adapter=adapter,
+            request_id=request_id,
+        )
+
+    def verify_after_recovery(
+        self,
+        *,
+        bound: BoundToolRequest,
+        call: TrustedToolCall,
+        execution: AdapterExecution,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        adapter: TrustedToolAdapter,
+        request_id: str,
+    ) -> GatewayResult:
+        if (
+            call.status is not TrustedToolCallStatus.VERIFYING
+            or bound.request.id != call.request.id
+            or bound.request_digest != call.request.request_digest
+            or context.case_id != call.request.case_id
+            or context.run_id != call.request.run_id
+            or execution.outcome is not ExecutionOutcome.SUCCEEDED
+        ):
+            raise ValueError("recovering verification is not bound to the trusted call")
+        verification = self._verify(bound, call, execution, context, adapter)
+        call = self._finalize_verification(
+            call=call,
+            verification=verification,
+            context=context,
+            store=store,
+            request_id=request_id,
+        )
+        return GatewayResult(call, False, verification=verification)
+
     def _execute(
         self,
         *,
@@ -272,6 +341,7 @@ class TrustedToolGateway:
                 now=context.now,
                 request_id=request_id,
             )
+        store.commit()
         while True:
             execution = _invoke_adapter(adapter, bound)
             attempt = ToolExecutionAttempt(
@@ -331,11 +401,30 @@ class TrustedToolGateway:
                             now=context.now,
                             request_id=request_id,
                         )
+            store.commit()
             if not retry:
                 break
         if execution.outcome in {ExecutionOutcome.UNKNOWN, ExecutionOutcome.FAILED}:
             return GatewayResult(call, created, policy, approval, attempt)
         verification = self._verify(bound, call, execution, context, adapter)
+        call = self._finalize_verification(
+            call=call,
+            verification=verification,
+            context=context,
+            store=store,
+            request_id=request_id,
+        )
+        return GatewayResult(call, created, policy, approval, attempt, verification)
+
+    @staticmethod
+    def _finalize_verification(
+        *,
+        call: TrustedToolCall,
+        verification: ToolVerification,
+        context: ToolPolicyContext,
+        store: GatewayStore,
+        request_id: str,
+    ) -> TrustedToolCall:
         target = {
             VerificationOutcome.VERIFIED: TrustedToolCallStatus.SUCCEEDED,
             VerificationOutcome.FAILED: TrustedToolCallStatus.FAILED,
@@ -354,7 +443,8 @@ class TrustedToolGateway:
                 request_id=request_id,
                 reason=reason,
             )
-        return GatewayResult(call, created, policy, approval, attempt, verification)
+        store.commit()
+        return call
 
     @staticmethod
     def _verify(
@@ -365,7 +455,10 @@ class TrustedToolGateway:
         adapter: TrustedToolAdapter,
     ) -> ToolVerification:
         try:
-            verification = adapter.verify(bound, execution, now=context.now)
+            verification = _call_with_deadline(
+                lambda: adapter.verify(bound, execution, now=context.now),
+                timeout_seconds=bound.registration.definition.timeout_seconds,
+            )
             if not isinstance(verification, ToolVerification):
                 raise TypeError("adapter returned an invalid verification result")
             if verification.request_id != call.request.id:
@@ -398,7 +491,10 @@ def _sanitize_execution(value: AdapterExecution) -> AdapterExecution:
 
 def _invoke_adapter(adapter: TrustedToolAdapter, bound: BoundToolRequest) -> AdapterExecution:
     try:
-        raw_execution = adapter.execute(bound)
+        raw_execution = _call_with_deadline(
+            lambda: adapter.execute(bound),
+            timeout_seconds=bound.registration.definition.timeout_seconds,
+        )
         if not isinstance(raw_execution, AdapterExecution):
             raise TypeError("adapter returned an invalid execution result")
         return _sanitize_execution(raw_execution)
@@ -414,6 +510,32 @@ def _invoke_adapter(adapter: TrustedToolAdapter, bound: BoundToolRequest) -> Ada
             "Adapter failed without a trusted result.",
             "adapter_failure",
         )
+
+
+def _call_with_deadline(
+    callback: Callable[[], object],
+    *,
+    timeout_seconds: float,
+) -> object:
+    completed: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+    def invoke() -> None:
+        try:
+            completed.put((True, callback()))
+        except BaseException as error:
+            completed.put((False, error))
+
+    worker = Thread(target=invoke, name="trusted-tool-adapter", daemon=True)
+    worker.start()
+    try:
+        succeeded, value = completed.get(timeout=timeout_seconds)
+    except Empty:
+        raise TimeoutError("trusted adapter exceeded its deadline") from None
+    if succeeded:
+        return value
+    if isinstance(value, BaseException):
+        raise value
+    raise RuntimeError("trusted adapter returned an invalid worker result")
 
 
 def _safe_summary(value: object) -> str:

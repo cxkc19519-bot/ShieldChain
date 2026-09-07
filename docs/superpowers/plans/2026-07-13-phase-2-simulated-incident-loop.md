@@ -1,5 +1,7 @@
 # Phase 2 Simulated Incident Loop Implementation Plan
 
+> 文档状态：历史规划/设计归档。用于追溯阶段性决策，不代表当前运行方式；现行架构以 `docs/README.md` 及各目录现行文档为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Windows 本机交付一个不依赖 LLM 的钓鱼攻击仿真闭环，能够从前端一键完成证据收集、确定性研判、模拟封禁、结果验证和审计。

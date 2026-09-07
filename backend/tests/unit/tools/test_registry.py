@@ -55,12 +55,18 @@ def test_default_registry_contains_fixed_tools_and_read_only_verifiers() -> None
     assert {
         ("query_firewall_state", "1"),
         ("block_ip", "1"),
+        ("unblock_ip", "1"),
         ("query_endpoint_state", "1"),
         ("isolate_endpoint", "1"),
+        ("restore_endpoint", "1"),
+        ("query_file_state", "1"),
+        ("quarantine_file", "1"),
+        ("restore_file", "1"),
         ("query_account_state", "1"),
         ("disable_account", "1"),
     } == identities
     assert registry.resolve("block_ip", "1").definition.risk is ToolRisk.HIGH
+    assert registry.resolve("unblock_ip", "1").definition.risk is ToolRisk.HIGH
     assert registry.resolve("disable_account", "1").definition.risk is ToolRisk.CRITICAL
 
 
@@ -111,6 +117,7 @@ def test_endpoint_and_account_schemas_use_enumerated_reasons_and_exact_state() -
         )
     )
     assert isolated.request.arguments["endpoint_id"] == "host-42"
+    assert isolated.request.arguments["isolation_ttl_seconds"] == 300
     with pytest.raises(ToolParameterRejected, match="reason_code"):
         registry.bind(
             tool_request(
@@ -125,6 +132,90 @@ def test_endpoint_and_account_schemas_use_enumerated_reasons_and_exact_state() -
                 tool_name="isolate_endpoint",
                 arguments={"endpoint_id": "host-42", "reason_code": "containment_required"},
                 expected_state={"isolation_status": "isolated", "extra": "hidden"},
+            )
+        )
+
+
+def test_unblock_requires_an_enumerated_rollback_reason() -> None:
+    registry = default_tool_registry()
+    restored = registry.bind(
+        tool_request(
+            tool_name="unblock_ip",
+            arguments={"target_ip": "203.0.113.8", "reason_code": "approved_rollback"},
+            expected_state={"firewall_status": "not_blocked"},
+        )
+    )
+    assert restored.request.arguments["reason_code"] == "approved_rollback"
+    with pytest.raises(ToolParameterRejected, match="reason_code"):
+        registry.bind(
+            tool_request(
+                tool_name="unblock_ip",
+                arguments={"target_ip": "203.0.113.8", "reason_code": "model_requested"},
+                expected_state={"firewall_status": "not_blocked"},
+            )
+        )
+
+
+def test_endpoint_ttl_and_restore_reason_are_bounded() -> None:
+    registry = default_tool_registry()
+    isolated = registry.bind(
+        tool_request(
+            tool_name="isolate_endpoint",
+            arguments={
+                "endpoint_id": "002",
+                "reason_code": "containment_required",
+                "isolation_ttl_seconds": 60,
+            },
+            expected_state={"isolation_status": "isolated"},
+        )
+    )
+    assert isolated.request.arguments["isolation_ttl_seconds"] == 60
+    restored = registry.bind(
+        tool_request(
+            tool_name="restore_endpoint",
+            arguments={"endpoint_id": "002", "reason_code": "approved_rollback"},
+            expected_state={"isolation_status": "connected"},
+        )
+    )
+    assert restored.request.arguments["reason_code"] == "approved_rollback"
+    with pytest.raises(ToolParameterRejected, match="isolation_ttl_seconds"):
+        registry.bind(
+            tool_request(
+                tool_name="isolate_endpoint",
+                arguments={
+                    "endpoint_id": "002",
+                    "reason_code": "containment_required",
+                    "isolation_ttl_seconds": 59,
+                },
+                expected_state={"isolation_status": "isolated"},
+            )
+        )
+
+
+def test_file_tools_require_opaque_file_id_and_enumerated_reason() -> None:
+    registry = default_tool_registry()
+    quarantined = registry.bind(
+        tool_request(
+            tool_name="quarantine_file",
+            arguments={
+                "endpoint_id": "002",
+                "file_id": "demo-suspicious-marker",
+                "reason_code": "confirmed_malicious",
+            },
+            expected_state={"file_status": "quarantined"},
+        )
+    )
+    assert quarantined.request.arguments["file_id"] == "demo-suspicious-marker"
+    with pytest.raises(ToolParameterRejected):
+        registry.bind(
+            tool_request(
+                tool_name="quarantine_file",
+                arguments={
+                    "endpoint_id": "002",
+                    "file_id": "../../etc/passwd",
+                    "reason_code": "model_requested",
+                },
+                expected_state={"file_status": "quarantined"},
             )
         )
 

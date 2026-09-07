@@ -66,7 +66,7 @@ def _action(value: dict[str, Any]) -> ReactActionView:
     expected = {
         key: item
         for key, item in dict(value["expected_state"]).items()
-        if key in {"firewall_status", "isolation_status", "account_status"}
+        if key in {"firewall_status", "isolation_status", "file_status", "account_status"}
     }
     return ReactActionView(
         id=UUID(str(value["id"])),

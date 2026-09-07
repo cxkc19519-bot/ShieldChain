@@ -68,9 +68,17 @@ _PROMPT_INJECTION_PATTERNS = tuple(
         r"忽略.{0,12}(之前|以上|系统).{0,8}(指令|提示词)",
         r"(reveal|print|泄露|输出).{0,20}(system prompt|api[ _-]?key|系统提示词|密钥)",
         r"(call|invoke|调用).{0,16}(tool|function|工具|函数).{0,16}(without|无需|绕过)",
-        r"(execute|run|执行|运行).{0,12}(shell|command|powershell|cmd|命令)",
+        r"(?:^|[\n.!?])\s*(?:please\s+)?(?:execute|run)\s+.{0,12}(shell|command|powershell|cmd)",
+        r"(?:请|立即|必须).{0,6}(?:执行|运行).{0,12}(?:shell|command|powershell|cmd|命令)",
     )
 )
+
+
+def contains_prompt_injection(text: str) -> bool:
+    """Return a conservative deterministic match without exposing policy internals."""
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    return any(pattern.search(text) is not None for pattern in _PROMPT_INJECTION_PATTERNS)
 
 
 class GroundedAnsweringService:
@@ -244,7 +252,7 @@ class GroundedAnsweringService:
 
     @staticmethod
     def _contains_injection(text: str) -> bool:
-        return any(pattern.search(text) is not None for pattern in _PROMPT_INJECTION_PATTERNS)
+        return contains_prompt_injection(text)
 
     @staticmethod
     def _refusal(

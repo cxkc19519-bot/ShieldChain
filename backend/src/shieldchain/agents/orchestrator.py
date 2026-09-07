@@ -70,7 +70,17 @@ _NEXT_PHASE = {
     CasePhase.REPORTING: CasePhase.CLOSED,
 }
 _HIGH_RISK_ACTIONS = frozenset(
-    {"block_ip", "isolate_endpoint", "disable_account", "quarantine_file"}
+    {
+        "block_ip",
+        "unblock_ip",
+        "isolate_endpoint",
+        "restore_endpoint",
+        "query_file_state",
+        "quarantine_file",
+        "restore_file",
+        "disable_account",
+        "quarantine_file",
+    }
 )
 
 

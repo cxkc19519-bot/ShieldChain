@@ -1,0 +1,13 @@
+[Unit]
+Description=ShieldChain allowlisted model switcher
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sg docker -c "/usr/bin/python3 /home/user/jhk/project/ShieldChain/scripts/server/model-manager.py"
+Restart=on-failure
+RestartSec=5
+UMask=0007
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=default.target

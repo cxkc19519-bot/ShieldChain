@@ -1,8 +1,8 @@
 import asyncio
-import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.engine import Engine
@@ -15,8 +15,15 @@ from shieldchain.api.agents import router as agents_router
 from shieldchain.api.health import router as health_router
 from shieldchain.api.incidents import router as incidents_router
 from shieldchain.api.knowledge import router as knowledge_router
+from shieldchain.api.mcp import router as mcp_router
+from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
+from shieldchain.api.wazuh import router as wazuh_router
+from shieldchain.api.vulnerabilities import router as vulnerabilities_router
+from shieldchain.assistant.api import router as assistant_router
+from shieldchain.assistant.service import GroundedAssistantService
+from shieldchain.assistant.store import LocalConversationStore
 from shieldchain.core.config import Settings, get_settings
 from shieldchain.core.errors import (
     ApiError,
@@ -29,16 +36,62 @@ from shieldchain.core.http_security import RequestSizeLimitMiddleware, SecurityH
 from shieldchain.core.logging import configure_logging
 from shieldchain.core.request_id import RequestIdMiddleware
 from shieldchain.db.session import create_engine_from_url, create_session_factory
-from shieldchain.incidents.background import InvestigationRunner
 from shieldchain.incidents.ports import IncidentRepository
 from shieldchain.incidents.queries import IncidentQueryService
 from shieldchain.incidents.repositories import SqlAlchemyIncidentRepository
 from shieldchain.incidents.scenario import seed_phishing_scenario
-from shieldchain.incidents.tools import SimulatedFirewall
-from shieldchain.incidents.workflow import InvestigationWorkflow
-from shieldchain.rag.api_service import KnowledgeApiService, UnconfiguredKnowledgeApiService
+from shieldchain.mcp_auth import build_mcp_auth_runtime
+from shieldchain.mcp_remote.discovery import McpDiscoveryService
+from shieldchain.mcp_remote.peer_config import load_mcp_remote_config
+from shieldchain.mcp_remote.persistence import McpSnapshotStore
+from shieldchain.mcp_remote.runtime import McpRemoteRuntime
+from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
+from shieldchain.operations.audit import AgentToolAuditStore
+from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
+from shieldchain.qwen_experience.api import router as qwen_experience_router
+from shieldchain.qwen_experience.service import QwenExperienceService
+from shieldchain.rag.api_service import KnowledgeApiService
+from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
+from shieldchain.react.safety_loop import (
+    AdapterProvider,
+    ResponseSafetyLoopService,
+    SimulationAdapterPool,
+)
 from shieldchain.tools.api_service import TrustedToolApiService
+from shieldchain.tools.firewall_connector import NftablesAdapterProvider
+from shieldchain.tools.wazuh_connector import WazuhAdapterProvider
+from shieldchain.wazuh.service import WazuhAlertService
+from shieldchain.vulnerabilities.agent import VulnerabilityTriageAgent
+from shieldchain.vulnerabilities.service import VulnerabilityWorkflowService
+
+logger = structlog.get_logger(__name__)
+_SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
+
+
+async def _periodic_safety_recovery(
+    service,
+    *,
+    tenant_id,
+    stop: asyncio.Event,
+    interval_seconds: float = _SAFETY_RECOVERY_INTERVAL_SECONDS,
+) -> None:
+    if interval_seconds <= 0:
+        raise ValueError("safety recovery interval must be positive")
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await asyncio.to_thread(
+                service.recover_safety_loops,
+                tenant_id=tenant_id,
+                now=datetime.now(UTC),
+            )
+        except Exception as error:
+            logger.warning("safety_loop_periodic_recovery_failed", error_type=type(error).__name__)
 
 
 def create_app(
@@ -47,11 +100,11 @@ def create_app(
     settings: Settings | None = None,
     agent_trajectory_query: CollaborationTrajectoryQuery | None = None,
     incident_repository: IncidentRepository | None = None,
-    investigation_runner: InvestigationRunner | None = None,
     incident_query_service: IncidentQueryService | None = None,
     knowledge_api_service: KnowledgeApiService | None = None,
     react_api_service: ReactApiService | None = None,
     trusted_tool_api_service: TrustedToolApiService | None = None,
+    qwen_experience_service: QwenExperienceService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.environment)
@@ -60,57 +113,158 @@ def create_app(
     session_factory = create_session_factory(engine)
     repository = incident_repository or SqlAlchemyIncidentRepository(seed_phishing_scenario)
     query_service = incident_query_service or IncidentQueryService(session_factory)
-    workflow = InvestigationWorkflow(
-        repository,
-        SimulatedFirewall(),
-        lambda: datetime.now(UTC),
-        time.sleep,
-        settings.simulation_step_delay_ms / 1000,
+    knowledge_service = knowledge_api_service or LocalKnowledgeService(
+        settings.rag_content_root,
+        evaluation_root=settings.rag_evaluation_root,
     )
-    runner = investigation_runner or InvestigationRunner(
-        workflow,
-        repository,
-        session_factory,
-        shutdown_timeout_seconds=settings.simulation_shutdown_timeout_seconds,
+    agent_tool_audit_store = AgentToolAuditStore(session_factory)
+    mcp_remote_config = (
+        load_mcp_remote_config(settings.mcp_remote_config_path)
+        if settings.mcp_remote_config_path is not None
+        else None
     )
+    mcp_snapshot_store = McpSnapshotStore(session_factory)
+    mcp_remote_discovery = (
+        McpDiscoveryService(mcp_snapshot_store, settings) if mcp_remote_config is not None else None
+    )
+    mcp_remote_runtime = (
+        McpRemoteRuntime(mcp_snapshot_store, mcp_remote_config, settings)
+        if mcp_remote_config is not None
+        else None
+    )
+    mcp_server = (
+        create_mcp_server(
+            session_factory,
+            tenant_id=settings.rag_demo_tenant_id,
+            principal_id=settings.rag_demo_principal_id,
+            audit_store=agent_tool_audit_store,
+            auth_runtime=build_mcp_auth_runtime(settings),
+        )
+        if settings.mcp_server_enabled
+        else None
+    )
+    mcp_http_app = create_mcp_http_app(mcp_server, settings) if mcp_server is not None else None
+    if trusted_tool_api_service is not None:
+        trusted_tools = trusted_tool_api_service
+    else:
+        adapter_provider: AdapterProvider = SimulationAdapterPool()
+        if settings.response_connector_mode == "nftables_http":
+            adapter_provider = NftablesAdapterProvider(
+                adapter_provider,
+                base_url=settings.response_firewall_executor_url,
+                token=settings.response_firewall_executor_token.get_secret_value(),
+            )
+        if settings.response_wazuh_connector_enabled:
+            adapter_provider = WazuhAdapterProvider(
+                adapter_provider,
+                base_url=settings.response_wazuh_executor_url,
+                token=settings.response_wazuh_executor_token.get_secret_value(),
+            )
+        trusted_tools = TrustedToolApiService(
+            session_factory,
+            safety_loop=ResponseSafetyLoopService(session_factory, adapters=adapter_provider),
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        _app.state.accepting_requests = True
+        agent_tool_audit_store.recover_interrupted(now=datetime.now(UTC))
+        recover_safety = getattr(trusted_tools, "recover_safety_loops", None)
+        recovery_stop = asyncio.Event()
+        recovery_task = None
+        if callable(recover_safety):
+            recover_safety(
+                tenant_id=settings.rag_demo_tenant_id,
+                now=datetime.now(UTC),
+            )
+            recovery_task = asyncio.create_task(
+                _periodic_safety_recovery(
+                    trusted_tools,
+                    tenant_id=settings.rag_demo_tenant_id,
+                    stop=recovery_stop,
+                )
+            )
         try:
-            await asyncio.to_thread(runner.recover_interrupted)
-            yield
+            if mcp_remote_discovery is not None and mcp_remote_config is not None:
+                _app.state.mcp_remote_discovery_outcomes = (
+                    await mcp_remote_discovery.refresh_enabled(mcp_remote_config)
+                )
+            _app.state.accepting_requests = True
+            if mcp_server is None:
+                yield
+            else:
+                async with mcp_server.session_manager.run():
+                    yield
         finally:
             _app.state.accepting_requests = False
-            await runner.shutdown()
+            recovery_stop.set()
+            if recovery_task is not None:
+                await recovery_task
             if owns_engine:
                 engine.dispose()
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
+    app.state.mcp_server = mcp_server
+    app.state.mcp_remote_config = mcp_remote_config
+    app.state.mcp_snapshot_store = mcp_snapshot_store
+    app.state.mcp_remote_discovery = mcp_remote_discovery
+    app.state.mcp_remote_runtime = mcp_remote_runtime
+    app.state.mcp_remote_discovery_outcomes = ()
+    app.state.agent_tool_audit_store = agent_tool_audit_store
+    app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
     app.state.agent_trajectory_query = agent_trajectory_query or CollaborationTrajectoryQuery(
         session_factory
     )
     app.include_router(agents_router, prefix="/api/v1")
+    app.include_router(assistant_router, prefix="/api/v1")
+    app.include_router(qwen_experience_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
-    app.state.investigation_runner = runner
-    app.state.knowledge_api_service = knowledge_api_service or UnconfiguredKnowledgeApiService()
-    app.state.trusted_tool_api_service = trusted_tool_api_service or TrustedToolApiService(
-        session_factory
+    app.state.knowledge_api_service = knowledge_service
+    app.state.grounded_assistant_service = GroundedAssistantService(
+        knowledge_service,
+        query_service,
+        settings=settings,
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+        store=LocalConversationStore(settings.assistant_data_root),
     )
+    app.state.trusted_tool_api_service = trusted_tools
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
+    app.state.wazuh_alert_service = WazuhAlertService()
+    app.state.vulnerability_workflow_service = VulnerabilityWorkflowService(
+        session_factory,
+        VulnerabilityTriageAgent(
+            settings,
+            knowledge_service,
+            tenant_id=settings.rag_demo_tenant_id,
+            principal_id=settings.rag_demo_principal_id,
+        ),
+        scanner_token=settings.vulnerability_scanner_token.get_secret_value(),
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+    )
+    app.state.security_operations_report_agent = SecurityOperationsReportAgent(
+        session_factory,
+        settings=settings,
+        tenant_id=settings.rag_demo_tenant_id,
+        store=OperationsReportStore(settings.assistant_data_root),
+        knowledge=knowledge_service,
+        principal_id=settings.rag_demo_principal_id,
+        audit_store=agent_tool_audit_store,
+        remote_runtime=mcp_remote_runtime,
+    )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.http_allowed_origins),
         allow_credentials=False,
         allow_methods=["DELETE", "GET", "POST"],
-        allow_headers=["Content-Type", "X-Request-ID"],
+        allow_headers=["Content-Type", "X-Request-ID", "X-ShieldChain-Vulnerability-Token"],
         expose_headers=["X-Request-ID"],
         max_age=600,
     )
@@ -135,6 +289,12 @@ def create_app(
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(incidents_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
+    app.include_router(mcp_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(react_router, prefix="/api/v1")
+    app.include_router(wazuh_router, prefix="/api/v1")
+    app.include_router(vulnerabilities_router, prefix="/api/v1")
+    app.include_router(operations_router, prefix="/api/v1")
+    if mcp_http_app is not None:
+        app.mount("/", mcp_http_app)
     return app

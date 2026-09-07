@@ -1,5 +1,7 @@
 # 阶段 4：多智能体与上下文工程实施计划
 
+> 文档状态：历史规划/设计归档。用于追溯阶段性决策，不代表当前运行方式；现行架构以 `docs/README.md` 及各目录现行文档为准。
+
 按 `docs/superpowers/specs/2026-07-20-phase-4-multi-agent-context-design.md` 实施。每个任务独立测试、审查和提交；默认离线，不提前实现阶段 5 工具网关或阶段 6 ReAct。
 
 ## Task 1：核心领域合同

@@ -1,4 +1,6 @@
 # Local agent and worktree state
+AGENTS.md
+config/mcp/servers.yaml
 .agents/
 .superpowers/
 .worktrees/
@@ -7,6 +9,14 @@
 .env
 .env.*
 !.env.example
+secrets/
+
+# Server-local backups and runtime state
+backups/
+runtime/
+sample_docs/security_vertical/*.pdf
+.deployed-git-sha
+.deployment-commit
 
 # Python
 .venv/

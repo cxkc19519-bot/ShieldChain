@@ -37,10 +37,25 @@ class TrustedToolCallRow(Base):
             "idempotency_key",
             name="uq_trusted_tool_idempotency",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "plan_action_id",
+            name="uq_trusted_tool_plan_action",
+        ),
         ForeignKeyConstraint(
             ["run_id", "tenant_id"],
-            ["investigation_runs.id", "investigation_runs.tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
             name="fk_trusted_tool_call_run_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["plan_revision_id", "tenant_id"],
+            ["response_plan_revisions.id", "response_plan_revisions.tenant_id"],
+            name="fk_trusted_tool_call_plan_revision_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["plan_action_id", "tenant_id"],
+            ["response_plan_actions.id", "response_plan_actions.tenant_id"],
+            name="fk_trusted_tool_call_plan_action_tenant",
         ),
         CheckConstraint("revision >= 0", name="ck_trusted_tool_call_revision"),
         CheckConstraint(f"status IN ({_STATUSES})", name="ck_trusted_tool_call_status"),
@@ -50,6 +65,8 @@ class TrustedToolCallRow(Base):
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     case_id: Mapped[str] = mapped_column(String(36), nullable=False)
     plan_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    plan_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    plan_action_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     caller_role: Mapped[str] = mapped_column(String(32), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(64), nullable=False)

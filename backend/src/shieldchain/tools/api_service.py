@@ -5,11 +5,23 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from shieldchain.agents.persistence import AgentRunRow
+from shieldchain.react.safety_loop import ResponseSafetyLoopService, SafetyLoopConflict
+from shieldchain.response_planning.persistence import (
+    ResponsePlanActionRow,
+    ResponsePlanEventRow,
+    ResponsePlanRevisionRow,
+    ResponsePlanRow,
+)
 from shieldchain.tools.approval_store import SqlAlchemyApprovalStore
-from shieldchain.tools.approvals import ApprovalAuthority, TrustedToolApprovalService
+from shieldchain.tools.approvals import (
+    ApprovalAuthority,
+    ApprovalExpired,
+    TrustedToolApprovalService,
+)
 from shieldchain.tools.control import TrustedToolControlService
 from shieldchain.tools.control_store import SqlAlchemyToolControlStore
 from shieldchain.tools.domain import (
@@ -27,8 +39,18 @@ from shieldchain.tools.persistence import (
     ToolVerificationRow,
     TrustedToolCallRow,
 )
+from shieldchain.tools.plan_service import ResponsePlanToolService
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository, _call
-from shieldchain.tools.schemas import ToolMutationView, ToolTraceItem, ToolTraceView
+from shieldchain.tools.schemas import (
+    ResponsePlanActionView,
+    ResponsePlanEventView,
+    ResponsePlanMutationView,
+    ResponsePlanRevisionView,
+    ResponsePlanView,
+    ToolMutationView,
+    ToolTraceItem,
+    ToolTraceView,
+)
 
 REQUESTER_SERVICE_SUBJECT = UUID("00000000-0000-4000-8000-000000000006")
 
@@ -42,11 +64,78 @@ def _utc(value: datetime) -> datetime:
 
 
 class TrustedToolApiService:
-    def __init__(self, sessions: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        *,
+        safety_loop: ResponseSafetyLoopService | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._plans = ResponsePlanToolService(sessions)
+        self._safety = safety_loop or ResponseSafetyLoopService(sessions)
+
+    def decide_plan(
+        self,
+        *,
+        tenant_id: UUID,
+        actor_id: UUID,
+        plan_id: UUID,
+        outcome: str,
+        reason: str,
+        now: datetime,
+        expected_revision: int | None = None,
+    ) -> ResponsePlanMutationView:
+        result = self._plans.decide(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            plan_id=plan_id,
+            outcome=outcome,
+            reason=reason,
+            now=now,
+            expected_revision=expected_revision,
+        )
+        if outcome == "accepted":
+            self._safety.advance_plan(
+                tenant_id=tenant_id,
+                plan_id=plan_id,
+                now=now,
+            )
+        return result
+
+    def plan_by_id(self, *, tenant_id: UUID, plan_id: UUID) -> ResponsePlanView:
+        with self._sessions() as session:
+            plan = session.execute(
+                select(ResponsePlanRow).where(
+                    ResponsePlanRow.id == str(plan_id),
+                    ResponsePlanRow.tenant_id == str(tenant_id),
+                )
+            ).scalar_one_or_none()
+            if plan is None:
+                raise ToolApiNotFound("response plan not found")
+            return self._plan_view(session, plan)
+
+    def plan_by_run(self, *, tenant_id: UUID, run_id: UUID) -> ResponsePlanView:
+        with self._sessions() as session:
+            plan = session.execute(
+                select(ResponsePlanRow).where(
+                    ResponsePlanRow.run_id == str(run_id),
+                    ResponsePlanRow.tenant_id == str(tenant_id),
+                )
+            ).scalar_one_or_none()
+            if plan is None:
+                raise ToolApiNotFound("response plan not found")
+            return self._plan_view(session, plan)
 
     def trace(self, *, tenant_id: UUID, run_id: UUID) -> ToolTraceView:
         with self._sessions() as session:
+            run = session.execute(
+                select(AgentRunRow.id).where(
+                    AgentRunRow.id == str(run_id),
+                    AgentRunRow.tenant_id == str(tenant_id),
+                )
+            ).scalar_one_or_none()
+            if run is None:
+                raise ToolApiNotFound("trusted tool trace not found")
             rows = session.execute(
                 select(TrustedToolCallRow)
                 .where(
@@ -56,8 +145,6 @@ class TrustedToolApiService:
                 .order_by(TrustedToolCallRow.created_at, TrustedToolCallRow.id)
             ).scalars()
             items = [self._trace_item(session, row) for row in rows]
-        if not items:
-            raise ToolApiNotFound("trusted tool trace not found")
         return ToolTraceView(run_id=run_id, calls=items)
 
     def decide(
@@ -70,39 +157,93 @@ class TrustedToolApiService:
         reason: str,
         now: datetime,
     ) -> ToolMutationView:
+        plan_id = None
+        approval_expired = False
         with self._sessions.begin() as session:
             repo = SqlAlchemyTrustedToolRepository()
             call = repo.get(session, tenant_id=tenant_id, tool_call_id=call_id)
             policy = self._latest_policy(session, tenant_id, call_id)
             if call is None or policy is None:
                 raise ToolApiNotFound("trusted tool call not found")
-            TrustedToolApprovalService().decide(
-                call=call,
-                policy=policy,
-                authority=ApprovalAuthority(
-                    tenant_id,
-                    actor_id,
-                    frozenset({"trusted_tools.approve", "trusted_tools.approve_critical"}),
-                    now,
-                ),
-                requester_subject_id=REQUESTER_SERVICE_SUBJECT,
-                outcome=outcome,
-                reason_summary=reason,
-                store=SqlAlchemyApprovalStore(session, repo),
-            )
-            if outcome is ApprovalOutcome.REJECTED:
+            row = session.get(TrustedToolCallRow, str(call_id))
+            plan_id = UUID(row.plan_id) if row is not None and row.plan_action_id else None
+            if policy.expires_at <= now:
                 call = repo.transition(
                     session,
                     tenant_id=tenant_id,
                     current=call,
-                    target=TrustedToolCallStatus.REJECTED,
+                    target=TrustedToolCallStatus.NEEDS_REVIEW,
                     now=now,
-                    request_id=f"api-approval:{call_id}",
-                    reason=PolicyReason.APPROVAL_REJECTED,
+                    request_id=f"api-approval-expired:{call_id}",
+                    reason=PolicyReason.APPROVAL_EXPIRED,
                 )
-            return ToolMutationView(
+                approval_expired = True
+            else:
+                TrustedToolApprovalService().decide(
+                    call=call,
+                    policy=policy,
+                    authority=ApprovalAuthority(
+                        tenant_id,
+                        actor_id,
+                        frozenset(
+                            {"trusted_tools.approve", "trusted_tools.approve_critical"}
+                        ),
+                        now,
+                    ),
+                    requester_subject_id=REQUESTER_SERVICE_SUBJECT,
+                    outcome=outcome,
+                    reason_summary=reason,
+                    store=SqlAlchemyApprovalStore(session, repo),
+                )
+                if outcome is ApprovalOutcome.REJECTED:
+                    call = repo.transition(
+                        session,
+                        tenant_id=tenant_id,
+                        current=call,
+                        target=TrustedToolCallStatus.REJECTED,
+                        now=now,
+                        request_id=f"api-approval:{call_id}",
+                        reason=PolicyReason.APPROVAL_REJECTED,
+                    )
+            result = ToolMutationView(
                 call_id=call_id, status=call.status.value, revision=call.revision
             )
+        if plan_id is not None:
+            self._safety.advance_plan(
+                tenant_id=tenant_id,
+                plan_id=plan_id,
+                now=now,
+            )
+            with self._sessions() as session:
+                latest = SqlAlchemyTrustedToolRepository().get(
+                    session,
+                    tenant_id=tenant_id,
+                    tool_call_id=call_id,
+                )
+                if latest is not None:
+                    result = ToolMutationView(
+                        call_id=call_id,
+                        status=latest.status.value,
+                        revision=latest.revision,
+                    )
+        if approval_expired:
+            raise ApprovalExpired("trusted tool approval policy expired")
+        return result
+
+    def recover_safety_loops(
+        self,
+        *,
+        tenant_id: UUID,
+        now: datetime,
+    ) -> int:
+        with self._sessions() as session:
+            schema = inspect(session.get_bind())
+            if not schema.has_table("response_plans") or not schema.has_table("react_loops"):
+                return 0
+        try:
+            return len(self._safety.recover_stale(tenant_id=tenant_id, now=now))
+        except SafetyLoopConflict:
+            return 0
 
     def control_call(
         self,
@@ -228,6 +369,9 @@ class TrustedToolApiService:
         )
         return ToolTraceItem(
             id=call.request.id,
+            plan_id=call.request.plan_id,
+            plan_revision_id=UUID(row.plan_revision_id) if row.plan_revision_id else None,
+            plan_action_id=UUID(row.plan_action_id) if row.plan_action_id else None,
             tool_name=call.request.tool_name,
             tool_version=call.request.tool_version,
             status=call.status.value,
@@ -241,4 +385,122 @@ class TrustedToolApiService:
             evidence_ids=[item.id for item in call.request.evidence],
             created_at=call.request.created_at,
             updated_at=call.updated_at,
+        )
+
+    @staticmethod
+    def _plan_view(session: Session, plan: ResponsePlanRow) -> ResponsePlanView:
+        revisions = list(
+            session.scalars(
+                select(ResponsePlanRevisionRow)
+                .where(
+                    ResponsePlanRevisionRow.plan_id == plan.id,
+                    ResponsePlanRevisionRow.tenant_id == plan.tenant_id,
+                )
+                .order_by(ResponsePlanRevisionRow.revision)
+            )
+        )
+        revision_ids = [item.id for item in revisions]
+        actions = list(
+            session.scalars(
+                select(ResponsePlanActionRow)
+                .where(
+                    ResponsePlanActionRow.tenant_id == plan.tenant_id,
+                    ResponsePlanActionRow.plan_revision_id.in_(revision_ids),
+                )
+                .order_by(ResponsePlanActionRow.plan_revision_id, ResponsePlanActionRow.sequence)
+            )
+        ) if revision_ids else []
+        action_ids = [item.id for item in actions]
+        calls = list(
+            session.scalars(
+                select(TrustedToolCallRow)
+                .where(
+                    TrustedToolCallRow.tenant_id == plan.tenant_id,
+                    TrustedToolCallRow.plan_action_id.in_(action_ids),
+                )
+                .order_by(TrustedToolCallRow.created_at, TrustedToolCallRow.id)
+            )
+        ) if action_ids else []
+        call_by_action = {item.plan_action_id: item for item in calls if item.plan_action_id}
+        call_ids = [item.id for item in calls]
+        verifications = list(
+            session.scalars(
+                select(ToolVerificationRow)
+                .where(
+                    ToolVerificationRow.tenant_id == plan.tenant_id,
+                    ToolVerificationRow.tool_call_id.in_(call_ids),
+                )
+                .order_by(ToolVerificationRow.verified_at)
+            )
+        ) if call_ids else []
+        verification_by_call = {item.tool_call_id: item.outcome for item in verifications}
+        actions_by_revision: dict[str, list[ResponsePlanActionView]] = {
+            item.id: [] for item in revisions
+        }
+        for action in actions:
+            call = call_by_action.get(action.id)
+            actions_by_revision[action.plan_revision_id].append(
+                ResponsePlanActionView(
+                    id=UUID(action.id),
+                    sequence=action.sequence,
+                    tool_name=action.tool_name,
+                    tool_version=action.tool_version,
+                    target_type=action.target_type,
+                    target=action.target_identifier,
+                    depends_on=[UUID(item) for item in action.depends_on_json],
+                    evidence_ids=[UUID(item) for item in action.evidence_ids_json],
+                    public_reason=action.public_reason,
+                    assessed_risk=action.assessed_risk,
+                    approval_required=action.approval_required,
+                    verification_tool=action.verification_tool,
+                    verification_version=action.verification_version,
+                    rollback_strategy=action.rollback_strategy,
+                    call_id=UUID(call.id) if call else None,
+                    call_status=call.status if call else None,
+                    verification_outcome=(
+                        verification_by_call.get(call.id) if call is not None else None
+                    ),
+                )
+            )
+        events = list(
+            session.scalars(
+                select(ResponsePlanEventRow)
+                .where(
+                    ResponsePlanEventRow.plan_id == plan.id,
+                    ResponsePlanEventRow.tenant_id == plan.tenant_id,
+                )
+                .order_by(ResponsePlanEventRow.created_at, ResponsePlanEventRow.id)
+            )
+        )
+        return ResponsePlanView(
+            plan_id=UUID(plan.id),
+            run_id=UUID(plan.run_id),
+            case_id=UUID(plan.case_id) if plan.case_id else None,
+            status=plan.status,
+            current_revision=plan.current_revision,
+            revisions=[
+                ResponsePlanRevisionView(
+                    id=UUID(revision.id),
+                    revision=revision.revision,
+                    parent_revision=revision.parent_revision,
+                    public_summary=revision.public_summary,
+                    reason_code=revision.reason_code,
+                    actions=actions_by_revision[revision.id],
+                    created_at=_utc(revision.created_at),
+                )
+                for revision in revisions
+            ],
+            events=[
+                ResponsePlanEventView(
+                    id=UUID(event.id),
+                    revision=event.revision,
+                    event_type=event.event_type,
+                    reason_code=event.reason_code,
+                    public_summary=event.public_summary,
+                    created_at=_utc(event.created_at),
+                )
+                for event in events
+            ],
+            created_at=_utc(plan.created_at),
+            updated_at=_utc(plan.updated_at),
         )

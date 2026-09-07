@@ -44,7 +44,7 @@ jobs:
           npm ls --prefix frontend --all
       - name: Run deterministic quality gates
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -StaticOnly
       - name: Run static container and supply-chain contracts
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\run-phase8-container-smoke.ps1 -StaticOnly

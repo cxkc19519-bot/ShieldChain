@@ -1,5 +1,7 @@
 # Phase 3 Product-Grade RAG Implementation Plan
 
+> 文档状态：历史规划/设计归档。用于追溯阶段性决策，不代表当前运行方式；现行架构以 `docs/README.md` 及各目录现行文档为准。
+
 ## Goal
 
 按 `docs/superpowers/specs/2026-07-18-phase-3-product-rag-design.md` 交付产品级、可审计、可评测、可显式降级的 RAG。每个任务是独立可验收的小闭环；默认测试离线、无云费用。

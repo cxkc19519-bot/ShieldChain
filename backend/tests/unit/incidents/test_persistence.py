@@ -237,6 +237,11 @@ def test_foreign_keys_have_exact_targets_and_are_not_cascading() -> None:
         for constraint in table.constraints:
             if isinstance(constraint, ForeignKeyConstraint):
                 assert constraint.ondelete is None
+                if constraint.name == "fk_investigation_agent_run_tenant":
+                    assert tuple(
+                        element.target_fullname for element in constraint.elements
+                    ) == ("agent_runs.id", "agent_runs.tenant_id")
+                    continue
                 for element in constraint.elements:
                     actual[(table_name, element.parent.name)] = (
                         element.target_fullname,

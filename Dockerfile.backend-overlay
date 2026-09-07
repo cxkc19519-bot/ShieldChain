@@ -1,0 +1,3 @@
+FROM shieldchain-backend:local
+COPY backend/src/shieldchain/qwen_experience/ /opt/venv/lib/python3.14/site-packages/shieldchain/qwen_experience/
+COPY backend/src/shieldchain/llm/deepseek.py /opt/venv/lib/python3.14/site-packages/shieldchain/llm/deepseek.py

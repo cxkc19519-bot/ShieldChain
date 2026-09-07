@@ -7,14 +7,17 @@ successful cloud result.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 from uuid import UUID
 
 from shieldchain.rag.schemas import (
     CreateKnowledgeBaseRequest,
+    DocumentChunkListResponse,
     DocumentVersionListResponse,
     EvaluationRequest,
     EvaluationResponse,
+    KnowledgeBaseDeleteResponse,
     KnowledgeBaseView,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentView,
@@ -56,6 +59,10 @@ class UploadedDocument:
     content: bytes
     sensitivity: Sensitivity
     permission_tags: tuple[str, ...]
+    verified_at: date | None = None
+    review_due_at: date | None = None
+    source_tiers: tuple[str, ...] = ()
+    source_urls: tuple[str, ...] = ()
 
 
 class KnowledgeApiService(Protocol):
@@ -64,6 +71,10 @@ class KnowledgeApiService(Protocol):
     def create_knowledge_base(
         self, payload: CreateKnowledgeBaseRequest, *, tenant_id: UUID
     ) -> KnowledgeBaseView: ...
+
+    def delete_knowledge_base(
+        self, knowledge_base_id: UUID, *, tenant_id: UUID
+    ) -> KnowledgeBaseDeleteResponse: ...
 
     def upload_document(
         self, knowledge_base_id: UUID, upload: UploadedDocument, *, tenant_id: UUID
@@ -76,6 +87,10 @@ class KnowledgeApiService(Protocol):
     def list_versions(
         self, document_id: UUID, *, tenant_id: UUID
     ) -> DocumentVersionListResponse: ...
+
+    def list_chunks(
+        self, document_id: UUID, version_id: UUID, *, tenant_id: UUID
+    ) -> DocumentChunkListResponse: ...
 
     def publish(
         self, document_id: UUID, version_id: UUID, *, tenant_id: UUID

@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from shieldchain.agents.domain import AgentRole, EvidenceReference
-from shieldchain.incidents.persistence import EvidenceRecordRow, InvestigationRunRow
+from shieldchain.incidents.persistence import InvestigationRunRow
 from shieldchain.incidents.repositories import append_incident_audit
 from shieldchain.tools.domain import (
     ApprovalDecision,
@@ -29,6 +29,8 @@ from shieldchain.tools.persistence import (
     TrustedToolCallRow,
 )
 from shieldchain.tools.registry import BoundToolRequest
+from shieldchain.wazuh.evidence import confirmed_evidence
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 
 class TrustedToolCallNotFound(RuntimeError):
@@ -98,6 +100,8 @@ class SqlAlchemyTrustedToolRepository:
         tenant_id: UUID,
         bound: BoundToolRequest,
         request_id: str,
+        plan_revision_id: UUID | None = None,
+        plan_action_id: UUID | None = None,
     ) -> tuple[TrustedToolCall, bool]:
         request = bound.request
         run = session.execute(
@@ -106,7 +110,14 @@ class SqlAlchemyTrustedToolRepository:
                 InvestigationRunRow.tenant_id == str(tenant_id),
             )
         ).scalar_one_or_none()
-        if run is None or run.incident_id != str(request.case_id):
+        wazuh_run = session.scalar(
+            select(WazuhCaseRunRow).where(
+                WazuhCaseRunRow.run_id == str(request.run_id),
+                WazuhCaseRunRow.tenant_id == str(tenant_id),
+                WazuhCaseRunRow.case_id == str(request.case_id),
+            )
+        )
+        if (run is None or run.incident_id != str(request.case_id)) and wazuh_run is None:
             raise TrustedToolCallNotFound("run not found in tenant")
         existing = session.execute(
             select(TrustedToolCallRow).where(
@@ -117,7 +128,13 @@ class SqlAlchemyTrustedToolRepository:
             )
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.request_digest != bound.request_digest:
+            if (
+                existing.request_digest != bound.request_digest
+                or existing.plan_revision_id
+                != (str(plan_revision_id) if plan_revision_id is not None else None)
+                or existing.plan_action_id
+                != (str(plan_action_id) if plan_action_id is not None else None)
+            ):
                 raise TrustedToolIdempotencyConflict("idempotency key is bound to another request")
             return _call(existing), False
         self._validate_evidence(session, request)
@@ -127,6 +144,8 @@ class SqlAlchemyTrustedToolRepository:
             tenant_id=str(tenant_id),
             case_id=str(request.case_id),
             plan_id=str(request.plan_id),
+            plan_revision_id=(str(plan_revision_id) if plan_revision_id is not None else None),
+            plan_action_id=str(plan_action_id) if plan_action_id is not None else None,
             idempotency_key=request.idempotency_key,
             caller_role=request.caller_role.value,
             tool_name=request.tool_name,
@@ -318,12 +337,9 @@ class SqlAlchemyTrustedToolRepository:
         for reference in request.evidence:
             if not isinstance(reference, EvidenceReference):
                 raise InvalidToolEvidence("tool execution currently requires incident evidence")
-            row = session.execute(
-                select(EvidenceRecordRow).where(
-                    EvidenceRecordRow.id == str(reference.id),
-                    EvidenceRecordRow.run_id == str(request.run_id),
-                )
-            ).scalar_one_or_none()
+            row = confirmed_evidence(
+                session, run_id=request.run_id, evidence_id=reference.id
+            )
             if (
                 row is None
                 or row.integrity_sha256 != reference.integrity_sha256

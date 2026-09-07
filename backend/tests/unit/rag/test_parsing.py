@@ -143,6 +143,25 @@ def test_supported_documents_have_structured_source_locations(
     assert all(element.source_location for element in result.elements)
 
 
+def test_official_html_prefers_article_body_over_navigation_and_footer() -> None:
+    result = parse(
+        (
+            "<html><head><title>官方文件</title></head><body>"
+            "<nav><p>不应索引的导航</p></nav>"
+            "<div id='BodyLabel'><h1>管理办法</h1><p>应索引的官方正文</p></div>"
+            "<footer><p>不应索引的页脚</p></footer>"
+            "</body></html>"
+        ).encode(),
+        "official.html",
+        "text/html",
+    )
+
+    assert result.status is ParsingStatus.SUCCEEDED
+    assert "应索引的官方正文" in result.text
+    assert "不应索引的导航" not in result.text
+    assert "不应索引的页脚" not in result.text
+
+
 def test_csv_and_xlsx_preserve_table_and_worksheet_locations() -> None:
     csv_result = parse(b"name,value\na,b\n", "table.csv", "text/csv")
     workbook_result = parse(
@@ -259,8 +278,11 @@ def test_large_worker_result_does_not_use_a_pipe_and_cleans_parent_temp(tmp_path
     ],
 )
 def test_worker_failure_paths_leave_no_process_or_temp(
-    tmp_path: Path, worker: object, error: type[Exception]
+    tmp_path: Path, worker: object, error: type[Exception], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # pytest importlib mode names this module rag.test_parsing; spawn must be able
+    # to import the injected worker in a fresh interpreter as well.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     parser = BoundedDocumentParser(
         ParsingLimits(timeout_seconds=0.05 if worker is hanging_worker else 5.0),
         temp_root=tmp_path,

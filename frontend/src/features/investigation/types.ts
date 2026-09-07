@@ -27,6 +27,7 @@ export interface SimulationView {
 
 export interface IncidentView {
   id: string
+  tracking_id?: string
   external_id: string
   simulation_instance_id: string
   alert_id: string
@@ -45,6 +46,7 @@ export interface IncidentView {
 
 export interface RunSummaryView {
   run_id: string
+  tracking_id?: string
   status: string
   mode: string
   created_at: string
@@ -108,7 +110,9 @@ export interface ResetSimulationResponse {
 
 export interface InvestigationResponse {
   run_id: string
+  run_tracking_id?: string
   incident_id: string
+  incident_tracking_id?: string
   simulation_instance_id: string
   status: InvestigationStatus
   mode: InvestigationMode

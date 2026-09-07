@@ -96,6 +96,11 @@ class InvestigationRunRow(Base):
     __table_args__ = (
         UniqueConstraint("id", "tenant_id", name="uq_investigation_run_id_tenant"),
         ForeignKeyConstraint(
+            ["id", "tenant_id"],
+            ["agent_runs.id", "agent_runs.tenant_id"],
+            name="fk_investigation_agent_run_tenant",
+        ),
+        ForeignKeyConstraint(
             ["incident_id", "tenant_id"],
             ["incidents.id", "incidents.tenant_id"],
             name="fk_investigation_run_incident_tenant",

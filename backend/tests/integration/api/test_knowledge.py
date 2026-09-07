@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -20,6 +20,7 @@ from shieldchain.rag.schemas import (
     DocumentVersionView,
     EvaluationRequest,
     EvaluationResponse,
+    KnowledgeBaseDeleteResponse,
     KnowledgeBaseView,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentView,
@@ -35,6 +36,7 @@ PRINCIPAL = UUID("00000000-0000-4000-8000-000000000102")
 BASE = uuid4()
 DOCUMENT = uuid4()
 VERSION = uuid4()
+PACK_ROOT = Path(__file__).parents[4] / "sample_docs" / "security_vertical"
 
 
 def version() -> DocumentVersionView:
@@ -89,6 +91,10 @@ class FakeKnowledgeService:
     def create_knowledge_base(self, payload: CreateKnowledgeBaseRequest, *, tenant_id: UUID):
         self.calls.append(("create_base", tenant_id, None))
         return self._base().model_copy(update={"name": payload.name})
+
+    def delete_knowledge_base(self, knowledge_base_id: UUID, *, tenant_id: UUID):
+        self.calls.append(('delete_base', tenant_id, knowledge_base_id))
+        return KnowledgeBaseDeleteResponse(id=knowledge_base_id, status='completed')
 
     def upload_document(
         self, knowledge_base_id: UUID, upload: UploadedDocument, *, tenant_id: UUID
@@ -160,6 +166,7 @@ def knowledge_client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeKnowledge
         database_url=f"sqlite:///{tmp_path / 'knowledge-api.db'}",
         rag_demo_tenant_id=TENANT,
         rag_demo_principal_id=PRINCIPAL,
+        security_vertical_pack_root=PACK_ROOT,
         simulation_step_delay_ms=0,
     )
     with TestClient(
@@ -194,6 +201,56 @@ def test_base_document_and_upload_contract_is_server_tenant_bound(knowledge_clie
     assert all(call[1] == TENANT for call in service.calls if call[0] != "evaluate")
 
 
+
+def test_delete_knowledge_base_contract_is_server_tenant_bound(knowledge_client) -> None:
+    client, service = knowledge_client
+
+    deleted = client.delete(f'/api/v1/knowledge-bases/{BASE}')
+
+    assert deleted.status_code == 202
+    assert deleted.json() == {'id': str(BASE), 'status': 'completed'}
+    assert ('delete_base', TENANT, BASE) in service.calls
+
+
+def test_curated_security_pack_import_is_server_managed_and_tenant_bound(
+    knowledge_client, monkeypatch
+) -> None:
+    client, service = knowledge_client
+    monkeypatch.setattr("shieldchain.rag.curated_pack._today", lambda: date(2026, 9, 2))
+
+    response = client.post("/api/v1/knowledge-bases/imports/security-vertical")
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "pack_id": "shieldchain-security-vertical",
+        "pack_version": "2026.09.3",
+        "usage_policy": (
+            "本知识包保存项目组整理的防御性摘要，并归档清单明确列出的官方公开 PDF 与 HTML 快照"
+            "供比赛项目离线检索；不批量镜像第三方网站，原始资料的知识产权、许可与使用条件以发布机构页面为准。"
+        ),
+        "knowledge_base_id": str(BASE),
+        "verified_at": "2026-09-02",
+        "review_due_at": "2026-10-02",
+        "imported": [
+            "00_安全垂直知识库维护规范_2026-07.md",
+            "01_中国网络与数据安全合规控制基线_2026-07.md",
+            "中央网信办_网络数据安全管理条例_2024-09-30.html",
+            "中央网信办_行政法规目录_访问于2026-09-02.html",
+            "中央网信办_金融信息服务数据分类分级指南答记者问_2026-06-13.html",
+            "中央网信办_国家网络安全事件报告管理办法_2025-09-15.html",
+            "02_0day与在野利用漏洞响应作战手册_2026-07.md",
+            "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md",
+            "04_深信服官方安全研究与知识运营基线_2026-09.md",
+            "深信服_2025年漏洞趋势分析报告.pdf",
+            "深信服_2025年APT趋势洞察报告.pdf",
+            "深信服_2025年网络安全状况特点及2026年趋势研判.pdf",
+            "深信服_网络安全半月刊_2026年03月上期.pdf",
+        ],
+        "skipped": [],
+    }
+    assert len([call for call in service.calls if call[0] == "upload"]) == 13
+    assert all(call[1] == TENANT for call in service.calls)
+
 def test_versions_lifecycle_retrieval_and_evaluation_contract(knowledge_client) -> None:
     client, service = knowledge_client
     assert client.get(f"/api/v1/documents/{DOCUMENT}/versions").status_code == 200
@@ -212,10 +269,16 @@ def test_versions_lifecycle_retrieval_and_evaluation_contract(knowledge_client) 
     assert retrieval.status_code == 200
     assert retrieval.json()["refusal_reason"] == "insufficient_evidence"
     evaluation = client.post(
-        "/api/v1/rag/evaluations", json={"dataset_id": "security-bilingual-v1"}
+        "/api/v1/rag/evaluations",
+        json={"dataset_id": "security-bilingual-v1", "knowledge_base_ids": [str(BASE)]},
     )
     assert evaluation.status_code == 200
     assert evaluation.json()["quality_gate_passed"] is True
+
+    unscoped_evaluation = client.post(
+        "/api/v1/rag/evaluations", json={"dataset_id": "security-bilingual-v1"}
+    )
+    assert unscoped_evaluation.status_code == 422
     assert ("retrieve", TENANT, PRINCIPAL) in service.calls
     assert ("evaluate", TENANT, PRINCIPAL) in service.calls
 
@@ -315,14 +378,14 @@ def test_cross_tenant_style_resource_is_not_disclosed(knowledge_client) -> None:
     }
 
 
-def test_default_service_reports_unconfigured_cloud_chain(tmp_path: Path) -> None:
+def test_default_local_service_starts_with_an_empty_catalog(tmp_path: Path) -> None:
     engine = create_engine_from_url(f"sqlite:///{tmp_path / 'unconfigured.db'}")
     Base.metadata.create_all(engine)
     app = create_app(database_engine=engine, settings=Settings(_env_file=None))
     with TestClient(app) as client:
         response = client.get("/api/v1/knowledge-bases")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "knowledge_service_unconfigured"
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
     engine.dispose()
 
 

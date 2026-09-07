@@ -1,5 +1,7 @@
 # ShieldChain 开发说明
 
+> 文档状态：历史开发交付指南。部分阶段名称和命令用于版本追溯；当前开发与部署方式请优先阅读 `docs/README.md`、`operations/local-development.md` 和 `delivery/deployment-guide.md`。
+
 ## 环境
 
 支持 Python `>=3.12,<3.15`、Node.js 24/LTS 和 Windows PowerShell。复制 `.env.example` 为本地 `.env`，不得提交真实密钥。完整安装：
@@ -19,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File scripts\test.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-后端默认 `127.0.0.1:8000`，前端默认 `127.0.0.1:5173`。`verify.ps1` 按 Ruff、完整后端、前端 lint/type/test/build、Alembic 升降升、RAG 评测、脚本合同和 Phase 7 smoke 顺序失败即停。
+后端默认 `127.0.0.1:8000`，前端默认 `127.0.0.1:5173`。`verify.ps1` 按 Ruff、完整后端、前端 lint/type/test/build、前端依赖审计、Alembic `upgrade → downgrade -1 → upgrade`、RAG 评测、脚本合同和 Task 14 smoke 顺序失败即停。Python 可来自根目录 `.venv`、`backend/.venv` 或 CI PATH。
 
 ## 数据库修改
 

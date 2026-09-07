@@ -60,7 +60,7 @@ class Service:
         return ReactMutationView(loop_id=LOOP, status="awaiting_human", revision=2)
 
 
-def client(service: Service) -> TestClient:
+def client(service: Service, settings: Settings | None = None) -> TestClient:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -68,7 +68,7 @@ def client(service: Service) -> TestClient:
     return TestClient(
         create_app(
             database_engine=engine,
-            settings=Settings(simulation_step_delay_ms=0),
+            settings=settings or Settings(simulation_step_delay_ms=0),
             react_api_service=service,
         )
     )
@@ -120,4 +120,18 @@ def test_control_only_exposes_takeover_and_resume() -> None:
             f"/api/v1/react/loops/{LOOP}/complete", json={"reason": "not allowed"}
         )
     assert response.status_code == 404
+    assert service.calls == []
+
+
+def test_production_react_control_requires_real_admin_auth_boundary() -> None:
+    service = Service()
+    with client(
+        service,
+        Settings(environment="production", simulation_step_delay_ms=0),
+    ) as value:
+        response = value.post(
+            f"/api/v1/react/loops/{LOOP}/takeover",
+            json={"reason": "not authenticated"},
+        )
+    assert response.status_code == 403
     assert service.calls == []

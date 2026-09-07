@@ -1,38 +1,45 @@
 # ShieldChain 比赛提交包
 
-最终提交包为 `delivery/shieldchain-submission.zip`，由版本控制中的文件确定性构建；SHA-256 校验见 `delivery/submission-files.sha256`。
+> 文档状态：提交前规划（更新于 2026-08-16）。项目尚未定稿，当前仓库不保留半成品 PPT、演示视频、最终 ZIP 或校验和。
 
-## 内容
+## 内容范围
 
-- 后端源码、迁移、锁定依赖和测试。
-- 前端源码、锁文件、构建配置和测试。
-- Phase 2–8 Windows smoke、完整验证与打包脚本。
-- 需求、架构、操作、交付、报告和逐日开发日志。
-- Docker/Compose/CI/供应链静态合同。
-- 10 页可编辑 PPTX、3 分钟 1080p MP4、分镜字幕和 Remotion 工程。
+- FastAPI 后端、数据库迁移、锁定依赖和自动化测试；
+- React/Vite 前端、锁文件、构建配置和测试；
+- 七个专业角色、ReAct 编排、可信工具网关与只读安全运营 MCP 工具；
+- Wazuh/OpenSearch 接入、持久化 RAG、智能助手和安全运营报告；
+- 本地 vLLM/Qwen 部署配置、服务器运维脚本与相关文档；
+- 需求、架构、运维、交付、历史验收快照和开发决策记录。
 
-打包器只读取 `git ls-files`，明确排除自身、校验和、`.env`、虚拟环境、`node_modules`、渲染临时目录和运行数据库。ZIP 内路径使用 `/`，文件按路径排序并使用固定时间戳，便于复现。
+固定钓鱼模拟入口、旧 Remotion 工程和旧视频测试已经退出当前产品范围。比赛 PPT、3 分钟演示视频和最终提交包将在功能、数据、测试与比赛口径冻结后重新制作，当前清单必须将它们标记为 `planned`，且对应成品文件不应存在。
 
-## 复现
+## 可复现交付
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\run-phase8-smoke.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\scripts\build-phase8-package.ps1
-Get-FileHash -Algorithm SHA256 delivery\shieldchain-submission.zip
-```
+仓库保留确定性打包脚本，供最终版本冻结后使用。打包器以 `git ls-files` 为输入，排除 `.env`、虚拟环境、`node_modules`、运行数据库、缓存和临时渲染目录。**项目未定稿时不要运行最终打包命令。**
 
-最终完整门禁使用：
+最终冻结后依次运行交付 smoke、打包脚本和哈希校验；执行前必须先完成最新测试、PPT 与视频验收。
+
+完整工程门禁：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-## 验收状态
+## 当前验收边界
 
-- Windows 完整门禁：通过；后端 `1037 passed, 1 skipped`，前端 `24 files / 90 tests`，迁移升降升、固定 RAG、54 项脚本合同、构建与 smoke 均通过。
-- Phase 8 smoke：通过；检查 14 项交付物、10 页 PPT、180 秒字幕、阶段 3–7 先决 smoke 和本地性能预算。
-- Docker runtime：`DOCKER_RUNTIME_TESTED=False`（本机无 Docker CLI）。
-- 远端 CI：`CI_RUNTIME_TESTED=False`（未推送，未执行）。
-- 外部网络：`NETWORK_ACCESS_TESTED=False`。
-- 真实模型规划：`REAL_MODEL_PLANNING_TESTED=False`。
-- 真实设备路径：`REAL_DEVICE_PATHS_TESTED=False`。
+- 后端新增真实运营、ReAct、MCP 与报告链路已有针对性自动化测试；
+- 前端类型检查、核心组件测试和生产构建可在本地执行；
+- Wazuh 与 OpenSearch 已在学校服务器 Docker 环境实际部署和验证，不再属于“未验证 Docker”状态；
+- 本地 vLLM Compose 配置和镜像链路已经准备，Qwen 模型权重下载与常驻服务启动取决于代理连通性和共享 RTX 4090 的可用时段；
+- 外部 DeepSeek 与本地 OpenAI 兼容模型均属于可配置模型后端；
+- 真实告警读取保持只读；实验室已纳入测试地址封禁、演示 Agent 网络隔离和限定文件隔离，但高风险写操作必须逐项人工审批，且不能表述为生产设备能力；
+- 历史报告中的测试数量和 `*_TESTED` 标志只代表生成报告时的版本，不应覆盖本节状态。
+
+## 提交前检查
+
+1. 运行后端和前端测试；
+2. 校验 Compose 配置；
+3. 确认 `.env`、密钥、真实告警样本和运行数据库未被提交；
+4. 检查 `git status`，只纳入本次授权范围；
+5. 制作并验收最终 PPT 和 3 分钟视频；
+6. 最后生成 ZIP 与校验和，确认其中不包含密钥、运行数据和已经退役的视频工程。

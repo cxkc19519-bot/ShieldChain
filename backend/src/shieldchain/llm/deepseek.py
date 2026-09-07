@@ -31,6 +31,8 @@ class DeepSeekClient:
         http_client: httpx.AsyncClient,
         sleep: AsyncSleep = asyncio.sleep,
         deadline: AsyncDeadline = asyncio.wait_for,
+        *,
+        request_timeout: float = TOTAL_TIMEOUT_SECONDS,
     ) -> None:
         self._base_url = str(settings.deepseek_base_url).rstrip("/")
         self._model = settings.deepseek_model
@@ -38,6 +40,7 @@ class DeepSeekClient:
         self._http_client = http_client
         self._sleep = sleep
         self._deadline = deadline
+        self._request_timeout = request_timeout
         self._logger = structlog.get_logger(__name__)
 
     @property
@@ -48,7 +51,7 @@ class DeepSeekClient:
     async def chat(self, request: ChatRequest) -> ChatResponse:
         try:
             return await self._deadline(
-                self._chat_with_retries(request), TOTAL_TIMEOUT_SECONDS
+                self._chat_with_retries(request), self._request_timeout
             )
         except TimeoutError:
             raise LlmUnavailableError("LLM request deadline exceeded") from None
@@ -75,7 +78,7 @@ class DeepSeekClient:
                         "Content-Type": "application/json",
                     },
                     json=payload,
-                    timeout=httpx.Timeout(TOTAL_TIMEOUT_SECONDS),
+                    timeout=httpx.Timeout(self._request_timeout),
                 )
             except httpx.TimeoutException:
                 self._log_attempt(started_at, attempt, "timeout")

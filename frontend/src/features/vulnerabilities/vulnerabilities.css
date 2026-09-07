@@ -1,0 +1,17 @@
+.vulnerabilities-page { display: grid; gap: 1rem; }
+.vulnerability-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; }
+.vulnerability-metrics div { padding: .9rem; border: 1px solid var(--color-border); border-radius: .75rem; background: var(--color-surface); }
+.vulnerability-metrics span { display: block; color: var(--color-text-muted); font-size: .78rem; }
+.vulnerability-metrics strong { display: block; margin-top: .25rem; font-size: 1.35rem; }
+.vulnerability-list { display: grid; gap: 1rem; }
+.vulnerability-card { border: 1px solid var(--color-border); border-left: 4px solid #64748b; border-radius: .85rem; padding: 1rem; background: white; }
+.vulnerability-card.severity-critical { border-left-color: #dc2626; }.vulnerability-card.severity-high { border-left-color: #ea580c; }.vulnerability-card.severity-medium { border-left-color: #d97706; }
+.vulnerability-card > header { display: flex; justify-content: space-between; gap: 1rem; }.vulnerability-card h3 { margin: .2rem 0; }
+.vulnerability-card > header > span { align-self: flex-start; padding: .3rem .6rem; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: .8rem; }
+.vulnerability-card dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }.vulnerability-card dt { color: var(--color-text-muted); font-size: .78rem; }.vulnerability-card dd { margin: .2rem 0 0; }
+.agent-triage { margin: .9rem 0; padding: .9rem; border-radius: .7rem; background: #f5f7ff; }.agent-triage p { margin: .35rem 0; line-height: 1.55; }.agent-triage small { color: var(--color-text-muted); }
+.agent-triage > div { margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--color-border); }
+.vulnerability-action-form { display: grid; gap: .55rem; margin: .8rem 0; }.vulnerability-action-form input, .vulnerability-action-form textarea { border: 1px solid var(--color-border); border-radius: .55rem; padding: .65rem; }.vulnerability-action-form textarea { min-height: 5rem; resize: vertical; }
+.vulnerability-actions { display: flex; flex-wrap: wrap; gap: .55rem; margin: .75rem 0; }.vulnerability-actions button { display: inline-flex; align-items: center; gap: .35rem; }
+.vulnerability-timeline { padding-left: 1.2rem; }.vulnerability-timeline li { margin: .7rem 0; }.vulnerability-timeline span { margin-left: .7rem; color: var(--color-text-muted); font-size: .78rem; }.vulnerability-timeline p { margin: .2rem 0; }
+@media (max-width: 900px) { .vulnerability-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.vulnerability-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

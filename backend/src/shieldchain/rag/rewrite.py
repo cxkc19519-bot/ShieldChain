@@ -209,9 +209,13 @@ class DeepSeekQueryRewriter:
         except _InvalidRewrite as error:
             return self._fallback(original_query, error.category, response_model=model)
 
-        queries = self._stable_queries(original_query, normalized, resolved, generated)
-        if len(queries) - 1 > self.policy.max_generated_queries:
-            return self._fallback(original_query, "query_limit", response_model=model)
+        queries = self._stable_queries(
+            original_query,
+            normalized,
+            resolved,
+            generated,
+            limit=1 + self.policy.max_generated_queries,
+        )
         return RewriteResult(
             original_query=original_query,
             normalized_query=normalized,
@@ -340,7 +344,13 @@ class DeepSeekQueryRewriter:
         return value
 
     def _stable_queries(
-        self, original: str, normalized: str, resolved: str, generated: tuple[str, ...]
+        self,
+        original: str,
+        normalized: str,
+        resolved: str,
+        generated: tuple[str, ...],
+        *,
+        limit: int,
     ) -> tuple[str, ...]:
         result: list[str] = []
         seen: set[str] = set()
@@ -349,6 +359,8 @@ class DeepSeekQueryRewriter:
             if key not in seen:
                 seen.add(key)
                 result.append(value)
+                if len(result) >= limit:
+                    break
         return tuple(result)
 
     def _fallback(

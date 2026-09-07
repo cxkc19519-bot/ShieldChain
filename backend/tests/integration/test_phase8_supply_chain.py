@@ -1,6 +1,10 @@
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,9 +28,14 @@ def test_python_lock_is_exact_local_and_covers_declared_dependencies() -> None:
         name, version = requirement.strip().split("==", 1)
         assert re.fullmatch(r"[A-Za-z0-9_.-]+", name)
         assert re.fullmatch(r"[A-Za-z0-9_.+-]+", version)
+        normalized_name = re.sub(r"[-_.]+", "-", name).casefold()
         if marker:
-            assert marker.strip() == 'sys_platform != "win32"'
-        pins[re.sub(r"[-_.]+", "-", name).casefold()] = version
+            expected_markers = {
+                "pywin32": 'sys_platform == "win32"',
+                "uvloop": 'sys_platform != "win32"',
+            }
+            assert marker.strip() == expected_markers[normalized_name]
+        pins[normalized_name] = version
 
     pyproject = _read("backend/pyproject.toml")
     for dependency in (
@@ -35,11 +44,14 @@ def test_python_lock_is_exact_local_and_covers_declared_dependencies() -> None:
         "defusedxml",
         "fastapi",
         "httpx",
+        "httpx2",
+        "mcp",
         "openpyxl",
         "pydantic-settings",
         "pypdf",
         "python-docx",
         "python-multipart",
+        "pyyaml",
         "sqlalchemy",
         "structlog",
         "uvicorn",
@@ -85,6 +97,10 @@ def test_ci_actions_are_sha_pinned_and_least_privilege() -> None:
         assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action)
     assert "persist-credentials: false" in workflow
     assert "timeout-minutes:" in workflow
+    windows_job, linux_job = workflow.split("  linux-container:", 1)
+    assert "scripts\\verify.ps1 -StaticOnly" in windows_job
+    assert "run-phase8-container-smoke.ps1" in linux_job
+    assert "-StaticOnly" not in linux_job
 
 
 def test_container_smoke_is_bounded_optional_and_cleans_its_own_project() -> None:
@@ -101,6 +117,41 @@ def test_container_smoke_is_bounded_optional_and_cleans_its_own_project() -> Non
     assert "down --volumes --remove-orphans" in script
     assert "shieldchain-phase8-" in script
     assert "Remove-Item" not in script
+
+
+@pytest.mark.parametrize(
+    ("response", "exit_code"),
+    [
+        ("'ok'", 0),
+        ('"ok`n"', 0),
+        ('"ok`r`n"', 0),
+        ("'not ok'", 1),
+        ("''", 1),
+        ("$null", 1),
+    ],
+)
+def test_container_health_accepts_plain_text_line_endings(response, exit_code) -> None:
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        pytest.skip("PowerShell is required to execute the container smoke predicate")
+    script = _read("tests/scripts/run-phase8-container-smoke.ps1")
+    condition = re.search(r"if \(([^\n]*\$frontendHealth[^\n]*)\) \{", script)
+    assert condition is not None
+    result = subprocess.run(
+        [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"$frontendHealth = {response}; "
+            f"if ({condition.group(1)}) {{ exit 1 }} else {{ exit 0 }}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == exit_code, result.stderr
 
 
 def test_compose_volume_is_project_scoped_for_safe_smoke_cleanup() -> None:

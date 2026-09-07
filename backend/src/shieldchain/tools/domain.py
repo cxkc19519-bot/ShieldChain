@@ -430,6 +430,7 @@ class TrustedToolCall:
             {
                 TrustedToolCallStatus.APPROVED,
                 TrustedToolCallStatus.PAUSED,
+                TrustedToolCallStatus.NEEDS_REVIEW,
                 TrustedToolCallStatus.REJECTED,
                 TrustedToolCallStatus.CANCELLED,
                 TrustedToolCallStatus.EMERGENCY_STOPPED,

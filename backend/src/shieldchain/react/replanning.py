@@ -84,6 +84,8 @@ class DeterministicReplanner:
 
         category = assessment.category
         allowed = DeterministicFailureClassifier.allowed_decisions(category)
+        if category is FailureCategory.COMPLETED:
+            return ReplanResult(ReactDecision.COMPLETE, "verified_result_completed")
         registration = registry.resolve(failed_tool_name, "1")
         definition = registration.definition
         if category in {

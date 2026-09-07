@@ -7,6 +7,7 @@
 .venv
 .env
 .env.*
+config/mcp/servers.yaml
 **/__pycache__
 **/*.py[cod]
 **/.pytest_cache

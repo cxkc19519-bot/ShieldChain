@@ -1,5 +1,7 @@
 # 阶段 5：可信工具调用实施计划
 
+> 文档状态：历史规划/设计归档。用于追溯阶段性决策，不代表当前运行方式；现行架构以 `docs/README.md` 及各目录现行文档为准。
+
 按 `docs/superpowers/specs/2026-07-23-phase-5-trusted-tool-calling-design.md` 实施。每个任务独立测试、审查和提交；默认离线，不提前实现阶段 6 ReAct，不接入真实安全设备。
 
 ## Task 1：核心领域合同与状态机

@@ -1,0 +1,149 @@
+{
+  "dataset_id": "shieldchain-security-vertical-v1",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "zh-regulation-log-retention",
+      "language": "zh",
+      "query": "《网络数据安全管理条例》对网络日志留存期限有什么要求？",
+      "relevance": {
+        "中央网信办_网络数据安全管理条例_2024-09-30.html": 3,
+        "01_中国网络与数据安全合规控制基线_2026-07.md": 2
+      },
+      "expected_citation_ids": [
+        "中央网信办_网络数据安全管理条例_2024-09-30.html"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-incident-report-hotline",
+      "language": "zh",
+      "query": "运营者发生网络安全事件后，可以通过哪个官方热线进行报告？",
+      "relevance": {
+        "中央网信办_国家网络安全事件报告管理办法_2025-09-15.html": 3,
+        "01_中国网络与数据安全合规控制基线_2026-07.md": 1
+      },
+      "expected_citation_ids": [
+        "中央网信办_国家网络安全事件报告管理办法_2025-09-15.html"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-finance-data-classification",
+      "language": "zh",
+      "query": "金融信息服务领域为什么要制定数据分类分级指南？",
+      "relevance": {
+        "中央网信办_金融信息服务数据分类分级指南答记者问_2026-06-13.html": 3,
+        "01_中国网络与数据安全合规控制基线_2026-07.md": 1
+      },
+      "expected_citation_ids": [
+        "中央网信办_金融信息服务数据分类分级指南答记者问_2026-06-13.html"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-zero-day-first-hour",
+      "language": "zh",
+      "query": "发现疑似 0day 在野利用时，第一小时应该如何研判和止损？",
+      "relevance": {
+        "02_0day与在野利用漏洞响应作战手册_2026-07.md": 3
+      },
+      "expected_citation_ids": [
+        "02_0day与在野利用漏洞响应作战手册_2026-07.md"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-attack-powershell",
+      "language": "zh",
+      "query": "PowerShell 编码命令对应什么 ATT&CK 技术，调查时应查看哪些日志？",
+      "relevance": {
+        "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md": 3
+      },
+      "expected_citation_ids": [
+        "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-sangfor-hugging-face",
+      "language": "zh",
+      "query": "深信服 2025 年漏洞趋势分析报告提到 Hugging Face 新增了多少 Models？",
+      "relevance": {
+        "深信服_2025年漏洞趋势分析报告.pdf": 3,
+        "04_深信服官方安全研究与知识运营基线_2026-09.md": 1
+      },
+      "expected_citation_ids": [
+        "深信服_2025年漏洞趋势分析报告.pdf"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "zh-unknown-advisory-refusal",
+      "language": "zh",
+      "query": "SC-NONEXISTENT-99887766",
+      "relevance": {},
+      "expected_citation_ids": [],
+      "expected_refusal": true
+    },
+    {
+      "case_id": "en-attack-powershell",
+      "language": "en",
+      "query": "Which MITRE ATT&CK technique covers encoded PowerShell execution?",
+      "relevance": {
+        "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md": 3
+      },
+      "expected_citation_ids": [
+        "03_MITRE_ATT&CK_v19企业检测研判处置图谱_2026-07.md"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-kev-priority",
+      "language": "en",
+      "query": "Should CISA KEV evidence take priority over CVSS alone when triaging active exploitation?",
+      "relevance": {
+        "02_0day与在野利用漏洞响应作战手册_2026-07.md": 3,
+        "00_安全垂直知识库维护规范_2026-07.md": 1
+      },
+      "expected_citation_ids": [
+        "02_0day与在野利用漏洞响应作战手册_2026-07.md"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-regulation-scope",
+      "language": "en",
+      "query": "What governance duties are described by China's Network Data Security Management Regulation?",
+      "relevance": {
+        "中央网信办_网络数据安全管理条例_2024-09-30.html": 3,
+        "01_中国网络与数据安全合规控制基线_2026-07.md": 2
+      },
+      "expected_citation_ids": [
+        "中央网信办_网络数据安全管理条例_2024-09-30.html"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-rag-authorization-boundary",
+      "language": "en",
+      "query": "Can a retrieved RAG document authorize automatic containment without approval?",
+      "relevance": {
+        "04_深信服官方安全研究与知识运营基线_2026-09.md": 3,
+        "02_0day与在野利用漏洞响应作战手册_2026-07.md": 2
+      },
+      "expected_citation_ids": [
+        "04_深信服官方安全研究与知识运营基线_2026-09.md"
+      ],
+      "expected_refusal": false
+    },
+    {
+      "case_id": "en-unknown-advisory-refusal",
+      "language": "en",
+      "query": "ZZZQX-NONEXISTENT-99887766",
+      "relevance": {},
+      "expected_citation_ids": [],
+      "expected_refusal": true
+    }
+  ]
+}

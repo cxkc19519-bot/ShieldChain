@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from shieldchain.agents.domain import BudgetSnapshot, EvidenceReference
+from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.db.base import Base
 from shieldchain.incidents.persistence import (
     IncidentRow,
@@ -29,6 +30,7 @@ from shieldchain.react.repositories import (
     SqlAlchemyReactRepository,
     StaleReactLoop,
 )
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 NOW = datetime(2026, 7, 23, 19, tzinfo=UTC)
 TENANT, OTHER = UUID(int=1), UUID(int=99)
@@ -152,6 +154,45 @@ def test_create_get_is_tenant_bound_and_step_is_atomic(session) -> None:
     assert repo.get(session, tenant_id=TENANT, loop_id=LOOP).revision == 1
     for row in (ReactObservationRow, ReactAssessmentRow, ReactDecisionRow):
         assert session.scalar(select(func.count()).select_from(row)) == 1
+
+
+def test_create_accepts_explicit_wazuh_case_run_binding() -> None:
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(
+            AgentRunRow(
+                id=str(RUN),
+                tenant_id=str(TENANT),
+                principal_id=str(UUID(int=2)),
+                run_kind="incident_investigation",
+                status="awaiting_approval",
+                goal="Investigate a confirmed Wazuh review case.",
+                catalog_revision="test-catalog-v1",
+                revision=0,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.flush()
+        session.add(
+            WazuhCaseRunRow(
+                run_id=str(RUN),
+                case_id=str(CASE),
+                tenant_id=str(TENANT),
+                alert_id=str(UUID(int=6506)),
+                created_at=NOW,
+            )
+        )
+        session.flush()
+
+        created = SqlAlchemyReactRepository().create(
+            session, tenant_id=TENANT, loop=loop()
+        )
+
+        assert created.run_id == RUN
+        assert created.case_id == CASE
+    engine.dispose()
 
 
 def test_stale_step_rolls_back_all_append_records(session) -> None:

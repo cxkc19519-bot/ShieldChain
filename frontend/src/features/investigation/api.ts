@@ -45,10 +45,13 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function model(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function model(value: unknown, keys: readonly string[], optionalKeys: readonly string[] = []): Record<string, unknown> {
   const item = record(value)
-  const allowed = new Set(keys)
-  if (Object.keys(item).length !== keys.length || Object.keys(item).some((key) => !allowed.has(key))) {
+  const allowed = new Set([...keys, ...optionalKeys])
+  if (
+    keys.some((key) => !(key in item))
+    || Object.keys(item).some((key) => !allowed.has(key))
+  ) {
     throw new Error()
   }
   return item
@@ -113,9 +116,9 @@ function incidentView(value: unknown): IncidentView {
     'id', 'external_id', 'simulation_instance_id', 'alert_id', 'alert_status', 'endpoint', 'username',
     'source_ip', 'remote_ip', 'remote_port', 'process_name', 'parent_process_name', 'command_summary',
     'threat_label', 'created_at',
-  ])
+  ], ['tracking_id'])
   return {
-    id: string(item.id), external_id: string(item.external_id),
+    id: string(item.id), tracking_id: typeof item.tracking_id === 'string' ? item.tracking_id : undefined, external_id: string(item.external_id),
     simulation_instance_id: string(item.simulation_instance_id), alert_id: string(item.alert_id),
     alert_status: string(item.alert_status), endpoint: string(item.endpoint), username: string(item.username),
     source_ip: string(item.source_ip), remote_ip: string(item.remote_ip), remote_port: number(item.remote_port),
@@ -126,9 +129,9 @@ function incidentView(value: unknown): IncidentView {
 }
 
 function runSummary(value: unknown): RunSummaryView {
-  const item = model(value, ['run_id', 'status', 'mode', 'created_at', 'updated_at', 'completed_at'])
+  const item = model(value, ['run_id', 'status', 'mode', 'created_at', 'updated_at', 'completed_at'], ['tracking_id'])
   return {
-    run_id: string(item.run_id), status: string(item.status), mode: string(item.mode),
+    run_id: string(item.run_id), tracking_id: typeof item.tracking_id === 'string' ? item.tracking_id : undefined, status: string(item.status), mode: string(item.mode),
     created_at: string(item.created_at), updated_at: string(item.updated_at),
     completed_at: nullableString(item.completed_at),
   }
@@ -198,12 +201,12 @@ function investigationResponse(value: unknown): InvestigationResponse {
   const item = model(value, [
     'run_id', 'incident_id', 'simulation_instance_id', 'status', 'mode', 'created_at', 'updated_at',
     'completed_at', 'simulation', 'steps', 'evidence', 'assessment', 'tool_result', 'verification',
-  ])
+  ], ['run_tracking_id', 'incident_tracking_id'])
   const status = string(item.status) as InvestigationStatus
   const mode = string(item.mode) as InvestigationMode
   if (!STATUSES.has(status) || !MODES.has(mode)) throw new Error()
   return {
-    run_id: string(item.run_id), incident_id: string(item.incident_id),
+    run_id: string(item.run_id), run_tracking_id: typeof item.run_tracking_id === 'string' ? item.run_tracking_id : undefined, incident_id: string(item.incident_id), incident_tracking_id: typeof item.incident_tracking_id === 'string' ? item.incident_tracking_id : undefined,
     simulation_instance_id: string(item.simulation_instance_id), status, mode,
     created_at: string(item.created_at), updated_at: string(item.updated_at),
     completed_at: nullableString(item.completed_at), simulation: simulationView(item.simulation),

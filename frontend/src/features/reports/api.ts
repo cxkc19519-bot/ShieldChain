@@ -2,7 +2,7 @@ import { getCollaborationTrajectory } from '../agents/api'
 import { getReactTrajectory } from '../agents/reactApi'
 import { getAudit, getIncident, getInvestigation } from '../investigation/api'
 import { getToolTrace } from '../tools/api'
-import type { ReportBundle, ReportSourceName, ReportSourceState } from './types'
+import type { HistoricalReport, ReportBundle, ReportSourceName, ReportSourceState } from './types'
 
 type Settled<T> = { value: T | null; state: ReportSourceState }
 
@@ -54,4 +54,41 @@ export async function loadReportBundle(
     react: react.value,
     sources,
   }
+}
+
+function reportRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('历史报告服务返回了无效响应')
+  return value as Record<string, unknown>
+}
+
+function reportText(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('历史报告服务返回了无效响应')
+  return value
+}
+
+function historicalReport(value: unknown): HistoricalReport {
+  const item = reportRecord(value)
+  const keys = ['run_id', 'run_tracking_id', 'incident_id', 'incident_tracking_id', 'status', 'threat_label', 'endpoint', 'created_at', 'updated_at', 'completed_at']
+  if (keys.some((key) => !(key in item)) || Object.keys(item).some((key) => !keys.includes(key))) throw new Error('历史报告服务返回了无效响应')
+  return {
+    run_id: reportText(item.run_id), run_tracking_id: reportText(item.run_tracking_id),
+    incident_id: reportText(item.incident_id), incident_tracking_id: reportText(item.incident_tracking_id),
+    status: reportText(item.status), threat_label: reportText(item.threat_label), endpoint: reportText(item.endpoint),
+    created_at: reportText(item.created_at), updated_at: reportText(item.updated_at),
+    completed_at: item.completed_at === null ? null : reportText(item.completed_at),
+  }
+}
+
+export async function listHistoricalReports(signal?: AbortSignal): Promise<HistoricalReport[]> {
+  const response = await fetch('/api/v1/reports/history', { method: 'GET', signal })
+  let body: unknown
+  try { body = await response.json() } catch { throw new Error('历史报告服务返回了无效响应') }
+  if (!response.ok) throw new Error('历史报告加载失败，请稍后重试。')
+  const payload = reportRecord(body)
+  if (Object.keys(payload).length !== 1 || !Array.isArray(payload.reports)) throw new Error('历史报告服务返回了无效响应')
+  return payload.reports.map(historicalReport)
+}
+export async function deleteHistoricalReport(runId: string): Promise<void> {
+  const response = await fetch(`/api/v1/reports/history/${encodeURIComponent(runId)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('删除历史报告失败，请稍后重试。')
 }

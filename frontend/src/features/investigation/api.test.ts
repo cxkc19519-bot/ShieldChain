@@ -145,6 +145,17 @@ describe('investigation API client', () => {
     await expect(getAudit(ID)).resolves.toEqual(auditBody)
   })
 
+  it('accepts optional compact tracking identifiers without accepting arbitrary keys', async () => {
+    const tracked = {
+      ...investigation,
+      run_tracking_id: 'RUN-22222222',
+      incident_tracking_id: 'INC-1',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(tracked)))
+
+    await expect(getInvestigation(RUN_ID)).resolves.toEqual(tracked)
+  })
+
   it.each([
     [{ ...investigation, status: 'unknown' }, 'unexpected success body'],
     [{ ...investigation, tool_result: { target: '198.51.100.24:443' } }, 'unexpected success body'],

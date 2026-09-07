@@ -59,23 +59,18 @@ try {
     Assert-True ($secretSafetyResult.Output -notmatch [regex]::Escape($secret)) "dev never prints environment secret values"
     Remove-Item -LiteralPath (Join-Path $fixtureRoot ".env") -Force
 
-    $realEnvPath = Join-Path $repositoryRoot ".env"
-    $createdRealEnv = -not (Test-Path -LiteralPath $realEnvPath)
-    if ($createdRealEnv) {
-        Set-Content -LiteralPath $realEnvPath -Value "DEEPSEEK_API_KEY="
-    }
-    try {
-        $configuredResult = Invoke-CapturedPowerShell -Arguments @(
-            "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
-            "-CheckOnly", "-ProjectRoot", $repositoryRoot
-        )
-        Assert-True ($configuredResult.ExitCode -eq 0) "dev check-only succeeds in the configured worktree"
-    }
-    finally {
-        if ($createdRealEnv) {
-            Remove-Item -LiteralPath $realEnvPath -Force
-        }
-    }
+    # CheckOnly validates paths, so isolate this contract from the developer/CI
+    # interpreter layout and never create or remove the repository's real .env.
+    $configuredRoot = Join-Path $fixtureRoot "configured"
+    New-Item -ItemType Directory -Path (Join-Path $configuredRoot ".venv\Scripts") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $configuredRoot "frontend\node_modules") -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $configuredRoot ".venv\Scripts\python.exe") -Value ""
+    Set-Content -LiteralPath (Join-Path $configuredRoot ".env") -Value "DEEPSEEK_API_KEY="
+    $configuredResult = Invoke-CapturedPowerShell -Arguments @(
+        "-File", (Join-Path $repositoryRoot "scripts\dev.ps1"),
+        "-CheckOnly", "-ProjectRoot", $configuredRoot
+    )
+    Assert-True ($configuredResult.ExitCode -eq 0) "dev check-only succeeds in the configured fixture"
 
     $productionScripts = @(
         (Join-Path $repositoryRoot "scripts\dev.ps1"),
@@ -87,7 +82,8 @@ try {
         (Join-Path $repositoryRoot "tests\scripts\run-phase5-smoke.ps1"),
         (Join-Path $repositoryRoot "tests\scripts\run-phase6-smoke.ps1"),
         (Join-Path $repositoryRoot "tests\scripts\run-phase7-smoke.ps1"),
-        (Join-Path $repositoryRoot "tests\scripts\run-phase8-smoke.ps1")
+        (Join-Path $repositoryRoot "tests\scripts\run-phase8-smoke.ps1"),
+        (Join-Path $repositoryRoot "tests\scripts\run-task14-smoke.ps1")
     )
     $devScriptText = Get-Content -Raw -LiteralPath $productionScripts[0]
     $smokeScriptText = Get-Content -Raw -LiteralPath $productionScripts[3]
@@ -199,6 +195,7 @@ exit /b 0
 @echo off
 set token=%2
 if "%1"=="test" set token=vitest
+if "%1"=="audit" set token=audit
 echo %token%>>"%SHIELDCHAIN_CONTRACT_LOG%"
 if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="%token%" exit /b 42
 exit /b 0
@@ -218,8 +215,8 @@ if defined RUN_LIVE_DEEPSEEK_TEST exit /b 91
 if defined RUN_LIVE_EMBEDDING_TEST exit /b 91
 if defined RUN_LIVE_MILVUS_TEST exit /b 91
 if defined RUN_LIVE_RERANKER_TEST exit /b 91
-echo phase8-smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
-if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="phase8-smoke" exit /b 42
+echo task14-smoke>>"%SHIELDCHAIN_CONTRACT_LOG%"
+if /i "%SHIELDCHAIN_CONTRACT_FAIL_TOKEN%"=="task14-smoke" exit /b 42
 exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $wrapperRoot "smoke.cmd") -Value $smokeWrapper
@@ -242,8 +239,8 @@ exit /b 0
         "-ProjectRoot", $repositoryRoot
     )
     Assert-True ($verifyResult.ExitCode -eq 0) "verify succeeds when every command succeeds"
-    $expectedGateOrder = "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade,migration-upgrade,rag-evaluation,contract,phase8-smoke"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "verify uses the required deterministic phase 8 gate order"
+    $expectedGateOrder = "ruff,pytest,lint,typecheck,vitest,build,audit,migration-upgrade,migration-downgrade,migration-upgrade,rag-evaluation,contract,task14-smoke"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "verify uses the required deterministic Task 14 gate order"
 
     Clear-Content -LiteralPath $callLog
     $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "typecheck"
@@ -265,18 +262,18 @@ exit /b 0
     Assert-True ($migrationFailureResult.ExitCode -eq 42) "verify returns a migration failure exit code"
     Assert-True (
         (Get-Content -LiteralPath $callLog) -join "," -eq
-        "ruff,pytest,lint,typecheck,vitest,build,migration-upgrade,migration-downgrade"
+        "ruff,pytest,lint,typecheck,vitest,build,audit,migration-upgrade,migration-downgrade"
     ) "verify stops before later gates after migration failure"
 
     Clear-Content -LiteralPath $callLog
-    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "phase8-smoke"
+    $env:SHIELDCHAIN_CONTRACT_FAIL_TOKEN = "task14-smoke"
     $smokeFailureResult = Invoke-CapturedPowerShell -Arguments @(
         "-File", (Join-Path $repositoryRoot "scripts\verify.ps1"),
         "-ContractTest", "-TestCommandDirectory", $wrapperRoot,
         "-ProjectRoot", $repositoryRoot
     )
-    Assert-True ($smokeFailureResult.ExitCode -eq 42) "verify returns the smoke failure exit code"
-    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "phase 8 smoke failure occurs only after every earlier gate"
+    Assert-True ($smokeFailureResult.ExitCode -eq 42) "verify returns the Task 14 smoke failure exit code"
+    Assert-True ((Get-Content -LiteralPath $callLog) -join "," -eq $expectedGateOrder) "Task 14 smoke failure occurs only after every earlier gate"
 
     Clear-Content -LiteralPath $callLog
     $env:RUN_LIVE_EMBEDDING_TEST = "1"
