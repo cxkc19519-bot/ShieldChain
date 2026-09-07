@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -93,7 +94,7 @@ class DemoReplayRunner:
         script = repository / "scripts" / "nta" / "pcap_replay_lab.py"
         output_root = self._runtime_root / "runs"
         command = [
-            os.environ.get("PYTHON", "python3"), str(script), str(sample.path),
+            os.environ.get("PYTHON", sys.executable), str(script), str(sample.path),
             "--pcap-root", str(self._pcap_root), "--output-root", str(output_root),
             "--pps", "500", "--timeout", "90", "--acknowledgement",
             "I_UNDERSTAND_ISOLATED_REPLAY",
@@ -123,7 +124,7 @@ class DemoReplayRunner:
             if ingested.returncode:
                 raise RuntimeError("replay detection could not be imported")
             result: dict[str, Any] = {"state": "completed", "sample": {"id": sample.sample_id, "title": sample.title}, "run_id": run_id, "alert_count": len(event_rows)}
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
             result = {"state": "failed", "sample": {"id": sample.sample_id, "title": sample.title}, "run_id": run_id, "reason": type(error).__name__}
         with self._lock:
             self._status = result
