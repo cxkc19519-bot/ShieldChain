@@ -74,7 +74,11 @@ class DemoReplayRunner:
         with self._lock:
             if self._status["state"] == "running":
                 return dict(self._status)
-            sample = secrets.choice(self._samples())
+            try:
+                sample = secrets.choice(self._samples())
+            except (OSError, TypeError, ValueError):
+                self._status = {"state": "failed", "sample": None, "run_id": None, "reason": "manifest_invalid"}
+                return dict(self._status)
             run_id = secrets.token_hex(6)
             self._status = {
                 "state": "running",
