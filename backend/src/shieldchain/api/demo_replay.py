@@ -8,11 +8,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, Request as FastApiRequest, status
+from fastapi import APIRouter, status
+from fastapi import Request as FastApiRequest
 
 from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
-
 
 router = APIRouter(prefix="/nta/demo-replay", tags=["nta-demo-replay"])
 

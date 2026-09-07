@@ -42,7 +42,7 @@ class DemoReplayRunner:
         samples: list[DemoSample] = []
         for row in rows:
             if not isinstance(row, dict):
-                raise ValueError("demo replay sample is invalid")
+                raise TypeError("demo replay sample is invalid")
             sample_id, relative, title, digest, rule_ids = (
                 row.get("id"),
                 row.get("path"),
@@ -96,7 +96,9 @@ class DemoReplayRunner:
         ]
         environment = dict(os.environ, SHIELDCHAIN_NTA_REPLAY_ENABLED="true")
         try:
-            completed = subprocess.run(command, text=True, capture_output=True, timeout=120, env=environment)
+            completed = subprocess.run(
+                command, text=True, capture_output=True, timeout=120, env=environment, check=False
+            )
             if completed.returncode:
                 raise RuntimeError("isolated replay failed")
             output_dir = Path(completed.stdout.strip()).resolve(strict=True)
@@ -106,7 +108,14 @@ class DemoReplayRunner:
             if not rule_ids.intersection(sample.expected_rule_ids):
                 raise RuntimeError("replay completed but expected detection was not observed")
             ingest = repository / "scripts" / "nta" / "ingest_nta_events.py"
-            ingested = subprocess.run([command[0], str(ingest), str(events)], text=True, capture_output=True, timeout=60, env=environment)
+            ingested = subprocess.run(
+                [command[0], str(ingest), str(events)],
+                text=True,
+                capture_output=True,
+                timeout=60,
+                env=environment,
+                check=False,
+            )
             if ingested.returncode:
                 raise RuntimeError("replay detection could not be imported")
             result: dict[str, Any] = {"state": "completed", "sample": {"id": sample.sample_id, "title": sample.title}, "run_id": run_id, "alert_count": len(event_rows)}
