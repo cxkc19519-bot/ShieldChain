@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentsPage } from './AgentsPage'
@@ -28,6 +28,7 @@ describe('AgentsPage', () => {
     api.getCollaborationTrajectory.mockRejectedValue(new Error('Agent trajectory not found'))
     render(<AgentsPage />)
     expect(await screen.findByRole('combobox', { name: '最近调查运行' })).toHaveValue(ID)
+    await waitFor(() => expect(api.listAgentRuns).toHaveBeenCalledTimes(1))
     expect(api.getCollaborationTrajectory).toHaveBeenCalledWith(ID, expect.any(AbortSignal))
     fireEvent.change(screen.getByRole('combobox', { name: '最近调查运行' }), { target: { value: SECOND_ID } })
     expect(api.getCollaborationTrajectory).toHaveBeenCalledWith(SECOND_ID, expect.any(AbortSignal))

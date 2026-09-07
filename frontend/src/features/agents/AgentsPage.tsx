@@ -92,11 +92,11 @@ function ReactWorkspace({ trajectory, busy, reason, setReason, onControl }: { tr
 }
 
 export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: string; embedded?: boolean } = {}) {
-  const context = useRunContext()
+  const { runId: contextRunId, setSelection } = useRunContext()
   const [runs, setRuns] = useState<AgentRunOption[]>([])
   const [runsLoading, setRunsLoading] = useState(true)
   const [runsError, setRunsError] = useState<string | null>(null)
-  const [runId, setRunId] = useState(initialRunId ?? context.runId ?? '')
+  const [runId, setRunId] = useState(initialRunId ?? contextRunId ?? '')
   const [manualRunId, setManualRunId] = useState('')
   const [trajectory, setTrajectory] = useState<CollaborationTrajectory | null>(null)
   const [react, setReact] = useState<ReactTrajectory | null>(null)
@@ -128,12 +128,12 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
     if (!controller.signal.aborted) setBusy(false)
   }, [])
 
-  const chooseRun = useCallback((selected: string, availableRuns = runs) => {
+  const chooseRun = useCallback((selected: string, availableRuns: AgentRunOption[]) => {
     if (!selected) return
     const option = availableRuns.find((item) => item.run_id === selected)
-    if (!embedded && context.runId !== selected) context.setSelection({ runId: selected, incidentId: option?.incident_id ?? null })
+    if (!embedded && contextRunId !== selected) setSelection({ runId: selected, incidentId: option?.incident_id ?? null })
     void loadRun(selected)
-  }, [context, embedded, loadRun, runs])
+  }, [contextRunId, embedded, loadRun, setSelection])
 
   const refreshRuns = useCallback(() => {
     historyActive.current?.abort()
@@ -143,7 +143,7 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
     void listAgentRuns(controller.signal).then((items) => {
       if (controller.signal.aborted) return
       setRuns(items)
-      const preferred = initialRunId ?? context.runId ?? items[0]?.run_id ?? ''
+      const preferred = initialRunId ?? contextRunId ?? items[0]?.run_id ?? ''
       if (preferred) chooseRun(preferred, items)
     }).catch((failure) => {
       if (!controller.signal.aborted) setRunsError(failure instanceof Error ? failure.message : '运行列表加载失败，请稍后重试。')
@@ -151,11 +151,11 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
       if (historyActive.current === controller) historyActive.current = null
       if (!controller.signal.aborted) setRunsLoading(false)
     })
-  }, [chooseRun, context.runId, initialRunId])
+  }, [chooseRun, contextRunId, initialRunId])
 
   useEffect(() => { refreshRuns(); return () => { historyActive.current?.abort(); active.current?.abort() } }, [refreshRuns])
 
-  const loadManual = (event: FormEvent) => { event.preventDefault(); const selected = manualRunId.trim(); if (selected) chooseRun(selected) }
+  const loadManual = (event: FormEvent) => { event.preventDefault(); const selected = manualRunId.trim(); if (selected) chooseRun(selected, runs) }
   const control = async (action: 'takeover' | 'resume') => {
     if (!react || !reason.trim()) return
     active.current?.abort(); const controller = new AbortController(); active.current = controller; setBusy(true); setControlMessage(null)
@@ -172,7 +172,7 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
     <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="选择最近调查即可查看真实角色交接、工具调用与受控循环；不展示私有上下文、原始提示、隐藏思维链或凭据。" actions={<button disabled={runsLoading} type="button" onClick={refreshRuns}>{runsLoading ? '刷新中…' : '刷新运行'}</button>} />
     <section className="agent-run-picker" aria-labelledby="recent-runs-title">
       <div className="agent-section-heading"><div><h3 id="recent-runs-title">选择调查运行</h3><p>默认打开最近一条记录，无需复制运行 ID。</p></div>{runs.length > 0 && <span>{runs.length} 条</span>}</div>
-      {runsLoading && runs.length === 0 ? <LoadingState title="正在加载最近运行" detail="正在读取可追溯的调查记录。" /> : runs.length > 0 ? <><label htmlFor="agent-run-select">最近调查运行</label><select id="agent-run-select" value={runId} disabled={busy} onChange={(event) => chooseRun(event.target.value)}>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.incident_tracking_id} · {item.threat_label} · {statusLabel(item.status)} · {dateTime(item.updated_at)}</option>)}</select></> : !runsError && <EmptyState title="暂无调查运行" detail="先在调查页面启动一次运行，记录会自动出现在这里。" />}
+      {runsLoading && runs.length === 0 ? <LoadingState title="正在加载最近运行" detail="正在读取可追溯的调查记录。" /> : runs.length > 0 ? <><label htmlFor="agent-run-select">最近调查运行</label><select id="agent-run-select" value={runId} disabled={busy} onChange={(event) => chooseRun(event.target.value, runs)}>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.incident_tracking_id} · {item.threat_label} · {statusLabel(item.status)} · {dateTime(item.updated_at)}</option>)}</select></> : !runsError && <EmptyState title="暂无调查运行" detail="先在调查页面启动一次运行，记录会自动出现在这里。" />}
       {runsError && <p role="alert" className="agent-error">{runsError}</p>}
       {selectedRun && <dl className="agent-run-summary"><div><dt>事件</dt><dd>{selectedRun.incident_tracking_id}</dd></div><div><dt>目标</dt><dd>{selectedRun.endpoint}</dd></div><div><dt>状态</dt><dd>{statusLabel(selectedRun.status)}</dd></div><div><dt>最近更新</dt><dd>{dateTime(selectedRun.updated_at)}</dd></div></dl>}
       <details className="agent-manual-run"><summary>高级：使用运行 ID</summary><form className="agent-run-form" onSubmit={loadManual}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={manualRunId} onChange={(event) => setManualRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !manualRunId.trim()} type="submit">查看轨迹</button></div></form></details>
