@@ -10,6 +10,9 @@ const api = vi.hoisted(() => ({
 }))
 
 vi.mock('./api', () => api)
+vi.mock('../agents/AgentsPage', () => ({
+  AgentsPage: ({ initialRunId, embedded }: { initialRunId?: string; embedded?: boolean }) => <div aria-label="嵌入式智能体轨迹">{initialRunId} · {embedded ? 'embedded' : 'standalone'}</div>,
+}))
 
 beforeEach(() => Object.values(api).forEach((mock) => mock.mockReset()))
 
@@ -106,5 +109,7 @@ describe('OperationsReportPage', () => {
     expect(screen.getByText(/计划生成不代表接受、审批、执行或验证成功/)).toBeVisible()
     expect(screen.getByText('建议人工复核当前报告线索。')).toBeVisible()
     expect(screen.getByRole('link', { name: '进入处置中心' })).toHaveAttribute('href', '/response?run_id=00000000-0000-4000-8000-000000000201')
+    expect(screen.getByRole('heading', { name: '智能体协作与 ReAct 轨迹' })).toBeVisible()
+    expect(screen.getByLabelText('嵌入式智能体轨迹')).toHaveTextContent('00000000-0000-4000-8000-000000000201 · embedded')
   })
 })

@@ -153,7 +153,17 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
     })
   }, [chooseRun, contextRunId, initialRunId])
 
-  useEffect(() => { refreshRuns(); return () => { historyActive.current?.abort(); active.current?.abort() } }, [refreshRuns])
+  useEffect(() => {
+    if (!embedded || !initialRunId) return
+    void loadRun(initialRunId)
+    return () => active.current?.abort()
+  }, [embedded, initialRunId, loadRun])
+
+  useEffect(() => {
+    if (embedded && initialRunId) return
+    refreshRuns()
+    return () => { historyActive.current?.abort(); active.current?.abort() }
+  }, [embedded, initialRunId, refreshRuns])
 
   const loadManual = (event: FormEvent) => { event.preventDefault(); const selected = manualRunId.trim(); if (selected) chooseRun(selected, runs) }
   const control = async (action: 'takeover' | 'resume') => {
@@ -168,15 +178,15 @@ export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: 
   const missingIssues = [collaborationIssue, reactIssue, mcpIssue].filter((item): item is LoadIssue => item?.kind === 'missing')
   const errorIssues = [collaborationIssue, reactIssue, mcpIssue].filter((item): item is LoadIssue => item?.kind === 'error')
 
-  return <section aria-labelledby="agents-title" className="page-card agents-page">
-    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="选择最近调查即可查看真实角色交接、工具调用与受控循环；不展示私有上下文、原始提示、隐藏思维链或凭据。" actions={<button disabled={runsLoading} type="button" onClick={refreshRuns}>{runsLoading ? '刷新中…' : '刷新运行'}</button>} />
-    <section className="agent-run-picker" aria-labelledby="recent-runs-title">
+  return <section aria-label={embedded ? '智能体与 ReAct 公开轨迹' : undefined} aria-labelledby={embedded ? undefined : 'agents-title'} className={`page-card agents-page${embedded ? ' agents-page--embedded' : ''}`}>
+    {!embedded && <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="选择最近调查即可查看真实角色交接、工具调用与受控循环；不展示私有上下文、原始提示、隐藏思维链或凭据。" actions={<button disabled={runsLoading} type="button" onClick={refreshRuns}>{runsLoading ? '刷新中…' : '刷新运行'}</button>} />}
+    {!embedded && <section className="agent-run-picker" aria-labelledby="recent-runs-title">
       <div className="agent-section-heading"><div><h3 id="recent-runs-title">选择调查运行</h3><p>默认打开最近一条记录，无需复制运行 ID。</p></div>{runs.length > 0 && <span>{runs.length} 条</span>}</div>
       {runsLoading && runs.length === 0 ? <LoadingState title="正在加载最近运行" detail="正在读取可追溯的调查记录。" /> : runs.length > 0 ? <><label htmlFor="agent-run-select">最近调查运行</label><select id="agent-run-select" value={runId} disabled={busy} onChange={(event) => chooseRun(event.target.value, runs)}>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.incident_tracking_id} · {item.threat_label} · {statusLabel(item.status)} · {dateTime(item.updated_at)}</option>)}</select></> : !runsError && <EmptyState title="暂无调查运行" detail="先在调查页面启动一次运行，记录会自动出现在这里。" />}
       {runsError && <p role="alert" className="agent-error">{runsError}</p>}
       {selectedRun && <dl className="agent-run-summary"><div><dt>事件</dt><dd>{selectedRun.incident_tracking_id}</dd></div><div><dt>目标</dt><dd>{selectedRun.endpoint}</dd></div><div><dt>状态</dt><dd>{statusLabel(selectedRun.status)}</dd></div><div><dt>最近更新</dt><dd>{dateTime(selectedRun.updated_at)}</dd></div></dl>}
       <details className="agent-manual-run"><summary>高级：使用运行 ID</summary><form className="agent-run-form" onSubmit={loadManual}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={manualRunId} onChange={(event) => setManualRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !manualRunId.trim()} type="submit">查看轨迹</button></div></form></details>
-    </section>
+    </section>}
     {busy && <p className="agent-loading" role="status">正在加载该运行的公开轨迹…</p>}
     {missingIssues.length > 0 && <aside className="agent-availability" aria-label="轨迹数据说明"><strong>本次运行的数据范围</strong><ul>{missingIssues.map((item) => <li key={item.message}>{item.message}</li>)}</ul></aside>}
     {errorIssues.map((item) => <p role="alert" className="agent-error" key={item.message}>{item.message}</p>)}

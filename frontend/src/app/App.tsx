@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, Bot, ShieldCheck, Bug } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, ShieldCheck, Bug } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -8,7 +8,6 @@ import { useRouteFocus } from './useRouteFocus'
 const navigation = [
   { label: '运营总览', icon: Activity, to: '/dashboard' },
   { label: '安全运营报告', icon: Search, to: '/operations-report' },
-  { label: '智能体与 ReAct', icon: Bot, to: '/agents' },
   { label: '处置中心', icon: ShieldCheck, to: '/response' },
   { label: '实时告警', icon: AlertTriangle, to: '/alerts' },
   { label: '漏洞闭环', icon: Bug, to: '/vulnerabilities' },

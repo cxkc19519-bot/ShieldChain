@@ -35,6 +35,15 @@ describe('AgentsPage', () => {
     expect(screen.getByText('高级：使用运行 ID')).toBeVisible()
   })
 
+  it('loads the supplied run directly when embedded in an operations report', async () => {
+    api.getCollaborationTrajectory.mockRejectedValue(new Error('Agent trajectory not found'))
+    render(<AgentsPage initialRunId={ID} embedded />)
+    await waitFor(() => expect(api.getCollaborationTrajectory).toHaveBeenCalledWith(ID, expect.any(AbortSignal)))
+    expect(api.listAgentRuns).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: '智能体与 ReAct 工作台' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '最近调查运行' })).not.toBeInTheDocument()
+  })
+
   it('draws only persisted handoffs and shows missing ReAct data as a neutral note', async () => {
     api.getCollaborationTrajectory.mockResolvedValue({ run_id: ID, case_id: ID, phase: 'investigation', revision: 2, shared_summary: '钓鱼调查进行中', confirmed_facts: ['已确认外连'], budget, reason_codes: ['evidence_insufficient'], role_statuses: [{ role: 'alert_triage', status: 'completed', summary: '需要调查', reason_code: null, citations: [], updated_at: null }], handoffs: [{ id: ID, sender: 'alert_triage', receiver: 'threat_investigation', conclusion: '检查终端', confidence: .8, open_questions: [], recommended_actions: [], citations: [], created_at: '2026-07-23T00:00:00Z' }], citations: [{ id: ID, kind: 'evidence', source_id: 'siem:1', observed_at: '2026-07-23T00:00:00Z', integrity_sha256: 'a'.repeat(64) }], updated_at: '2026-07-23T00:00:00Z' })
     render(<AgentsPage />)

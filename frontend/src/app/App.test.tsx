@@ -37,6 +37,7 @@ describe('application shell', () => {
     expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
     expect(screen.queryByRole('link', { name: 'MCP 服务状态' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '历史报告' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '智能体与 ReAct' })).not.toBeInTheDocument()
   })
 
   it('supports keyboard navigation through visible links', async () => {
