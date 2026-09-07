@@ -12,6 +12,8 @@ Suricata 与 Zeek，生成结构化检测事件，不会把 PCAP 回放到真实
 - `ingest_nta_events.py`：将事件提交到 ShieldChain 的 Wazuh 兼容接入接口。
 - `generate_benign_fixture.py`：只在文件中生成 RFC1918 正常 HTTP PCAP，不发送网络流量，用于误报回归。
 - `slice_pcap_time.py`：单次流式读取经典 PCAP，按带时区的绝对时间窗口生成可复现切片与清单，不加载整个文件。
+- `pcap_replay_lab.py`：只在一次性 Docker 内部网络命名空间中实时回放单个 PCAP，由 Suricata 实时监听并生成可导入事件。
+- `replay/Dockerfile`：固定的 tcpreplay 回放器镜像定义。
 - `../../config/suricata/shieldchain-nta.rules`：ShieldChain 自定义告警规则。
 
 当前 v11 规则集包含 95 条 ShieldChain 自定义 Suricata 规则定义（其中 2 条为 `flowbits:noalert` 关联状态规则），并结合 Zeek 元数据行为检测。935 条 final-blind 已一次性完成：754 条得到明确分类、737 条产生安全告警、181 条待研判、双引擎失败 0。这是检测覆盖率，不是准确率。详细结果见 [v11 最终盲测报告](../../docs/reports/xdr-probe-final-blind-v11-20260823.md)。
@@ -102,6 +104,59 @@ export WAZUH_WEBHOOK_TOKEN=replace-with-local-token
 export SHIELDCHAIN_NTA_INGEST_ENDPOINT=http://127.0.0.1:8000/api/v1/integrations/wazuh/alerts
 python3 scripts/nta/ingest_nta_events.py /path/to/run/events.jsonl
 ```
+
+## 隔离实时回放演示
+
+实时回放与上面的离线评测是两条不同链路。实时回放只用于获授权的演示或靶场，
+不会连接宿主机物理网卡，也不接受接口名参数。回放器与 Suricata 共享一个一次性
+网络命名空间，该命名空间只连接带 `--internal` 标记的 Docker bridge；结束或失败
+后脚本都会删除回放器、传感器和网络。
+
+先构建固定回放器镜像：
+
+```bash
+docker build -t shieldchain/tcpreplay:local scripts/nta/replay
+```
+
+先生成只读计划。`--pcap-root` 是明确授权的数据目录，脚本拒绝该目录以外的文件：
+
+```bash
+python3 scripts/nta/pcap_replay_lab.py \
+  /srv/nta-demo/sample.pcap \
+  --pcap-root /srv/nta-demo \
+  --pps 500 \
+  --plan
+```
+
+核对计划后才允许真实发送。数据包只会出现在一次性内部 Docker 网络中：
+
+```bash
+export SHIELDCHAIN_NTA_REPLAY_ENABLED=true
+python3 scripts/nta/pcap_replay_lab.py \
+  /srv/nta-demo/sample.pcap \
+  --pcap-root /srv/nta-demo \
+  --pps 500 \
+  --timeout 90 \
+  --acknowledgement I_UNDERSTAND_ISOLATED_REPLAY
+```
+
+结果写入 `data/nta-replay/run-<id>/`：
+
+- `suricata/eve.json`：实时监听得到的 Suricata 事件；
+- `events.jsonl`：按签名去重、最多 50 条的 ShieldChain 最小化事件；
+- `manifest.json`：PCAP 哈希、隔离模式、速率、运行时间与回放器输出摘要。
+
+确认 `events.jsonl` 后可复用已有导入脚本：
+
+```bash
+export WAZUH_WEBHOOK_TOKEN=replace-with-local-token
+export SHIELDCHAIN_NTA_INGEST_ENDPOINT=http://127.0.0.1:8080/api/v1/integrations/wazuh/alerts
+python3 scripts/nta/ingest_nta_events.py data/nta-replay/run-<id>/events.jsonl
+```
+
+安全限制：单文件默认不超过 512 MiB，最大允许配置为 2 GiB；速率限制为
+1～100000 包/秒，循环次数限制为 1～10，单次超时限制为 5～600 秒。脚本没有
+宿主机网卡参数、没有 `--network host` 路径，也不会自动导入告警或执行处置。
 
 运行不需要 Docker 的分类单元测试：
 
