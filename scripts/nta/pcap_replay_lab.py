@@ -160,6 +160,8 @@ def build_plan(
         "workers",
         "--set",
         "af-packet.0.threads=1",
+        "-k",
+        "none",
         "-i",
         "eth0",
         "-l",
