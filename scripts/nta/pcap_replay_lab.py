@@ -145,6 +145,8 @@ def build_plan(
         "--security-opt",
         "no-new-privileges:true",
         "--read-only",
+        "--user",
+        "998:998",
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,size=64m",
         "--volume",
