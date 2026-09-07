@@ -3,6 +3,17 @@ import type { Budget, CollaborationTrajectory, Handoff, RoleStatus, TrajectoryRe
 const API_ROOT = '/api/v1'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+export interface AgentRunOption {
+  run_id: string
+  run_tracking_id: string
+  incident_id: string
+  incident_tracking_id: string
+  status: string
+  threat_label: string
+  endpoint: string
+  updated_at: string
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('invalid object')
   return value as Record<string, unknown>
@@ -78,6 +89,36 @@ function trajectory(value: unknown): CollaborationTrajectory {
     role_statuses: array(item.role_statuses, role), handoffs: array(item.handoffs, handoff),
     citations: array(item.citations, reference), budget: budget(item.budget),
     reason_codes: array(item.reason_codes, text), updated_at: text(item.updated_at),
+  }
+}
+
+function runOption(value: unknown): AgentRunOption {
+  const item = record(value)
+  return {
+    run_id: text(item.run_id),
+    run_tracking_id: text(item.run_tracking_id),
+    incident_id: text(item.incident_id),
+    incident_tracking_id: text(item.incident_tracking_id),
+    status: text(item.status),
+    threat_label: text(item.threat_label),
+    endpoint: text(item.endpoint),
+    updated_at: text(item.updated_at),
+  }
+}
+
+export async function listAgentRuns(signal?: AbortSignal): Promise<AgentRunOption[]> {
+  const response = await fetch(`${API_ROOT}/reports/history?limit=50`, { method: 'GET', signal })
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new Error('运行列表服务返回了无效响应')
+  }
+  if (!response.ok) throw new Error('运行列表加载失败，请稍后重试。')
+  try {
+    return array(record(body).reports, runOption)
+  } catch {
+    throw new Error('运行列表数据不符合公开契约')
   }
 }
 

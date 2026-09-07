@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getCollaborationTrajectory } from './api'
+import { getCollaborationTrajectory, listAgentRuns } from './api'
 
 const ID = '11111111-1111-4111-8111-111111111111'
 const payload = {
@@ -13,6 +13,14 @@ const payload = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('agents API client', () => {
+  it('lists recent investigations as selectable run summaries', async () => {
+    const item = { run_id: ID, run_tracking_id: 'RUN-1111', incident_id: ID, incident_tracking_id: 'INC-1111', status: 'closed', threat_label: '钓鱼行为', endpoint: 'workstation-01', created_at: '2026-09-07T00:00:00Z', updated_at: '2026-09-07T01:00:00Z', completed_at: '2026-09-07T01:00:00Z' }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ reports: [item] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(listAgentRuns()).resolves.toEqual([{ run_id: ID, run_tracking_id: 'RUN-1111', incident_id: ID, incident_tracking_id: 'INC-1111', status: 'closed', threat_label: '钓鱼行为', endpoint: 'workstation-01', updated_at: '2026-09-07T01:00:00Z' }])
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/reports/history?limit=50', expect.objectContaining({ method: 'GET' }))
+  })
+
   it('uses a read-only encoded path and sends no identity or prompt body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)

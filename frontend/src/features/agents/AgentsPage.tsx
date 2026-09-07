@@ -1,59 +1,80 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import { useRunContext } from '../../app/RunContext'
-import { EmptyState } from '../../components/ui/States'
+import { EmptyState, LoadingState } from '../../components/ui/States'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { StatusBadge } from '../../components/ui/StatusBadge'
 import { getMcpRunCalls } from '../mcp/api'
 import type { McpRunCall } from '../mcp/types'
-import { getCollaborationTrajectory } from './api'
+import { getCollaborationTrajectory, listAgentRuns } from './api'
+import type { AgentRunOption } from './api'
 import { controlReactLoop, getReactTrajectory } from './reactApi'
 import type { ReactTrajectory } from './reactTypes'
 import type { CollaborationTrajectory } from './types'
 import './agents.css'
 
+interface LoadIssue {
+  kind: 'missing' | 'error'
+  message: string
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  superagent: '总控智能体',
+  alert_triage: '告警分诊智能体',
+  threat_investigation: '威胁研判智能体',
+  knowledge_retrieval: '知识检索智能体',
+  response_planning: '响应规划智能体',
+  verification: '验证智能体',
+  reporting: '报告智能体',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: '等待调查', collecting: '收集证据', analyzing: '研判中',
+  action_planned: '已生成方案', executing: '执行中', verifying: '验证中',
+  closed: '已闭环', failed: '失败', needs_review: '需要复核',
+  interrupted: '已中断', completed: '已完成', not_started: '未启动',
+}
+
+function roleLabel(value: string): string { return ROLE_LABELS[value] ?? value }
+function statusLabel(value: string): string { return STATUS_LABELS[value] ?? value }
+function dateTime(value: string): string {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN', { hour12: false })
+}
+
 function Metric({ label, used, limit }: { label: string; used: number; limit: number }) {
   return <div className="agent-metric"><span>{label}</span><strong>{used} / {limit}</strong></div>
 }
 
-const TRAJECTORY_ERROR_LABELS: Record<string, string> = {
-  'Agent trajectory not found': '未找到协作轨迹。请确认运行 ID 正确，且该运行已生成协作轨迹。',
-  'ReAct trajectory not found': '未找到 ReAct 轨迹。请确认运行 ID 正确，且该运行已生成 ReAct 轨迹。',
+function loadIssue(value: unknown, source: 'collaboration' | 'react' | 'mcp'): LoadIssue {
+  const message = value instanceof Error ? value.message : ''
+  if (message === 'Agent trajectory not found') return { kind: 'missing', message: '该运行没有生成多智能体协作轨迹。' }
+  if (message === 'ReAct trajectory not found') return { kind: 'missing', message: '该运行没有启动 ReAct 循环，因此没有 ReAct 轨迹。' }
+  const fallback = source === 'collaboration'
+    ? '协作轨迹加载失败，请稍后重试。'
+    : source === 'react' ? 'ReAct 轨迹加载失败，请稍后重试。' : 'MCP 调用记录加载失败，请稍后重试。'
+  return { kind: 'error', message: /[\u4e00-\u9fff]/.test(message) ? message : fallback }
 }
 
-function trajectoryError(value: unknown, fallback: string): string {
-  const message = value instanceof Error ? value.message : ''
-  if (TRAJECTORY_ERROR_LABELS[message]) return TRAJECTORY_ERROR_LABELS[message]
-  return /[\u4e00-\u9fff]/.test(message) ? message : fallback
-}
 function Collaboration({ trajectory }: { trajectory: CollaborationTrajectory }) {
-  const reasoning = [
-    {
-      title: '观测：确认事实与证据',
-      detail: trajectory.confirmed_facts.length > 0
-        ? `已确认 ${trajectory.confirmed_facts.length} 条事实，并保留 ${trajectory.citations.length} 条完整性引用。`
-        : '当前没有已确认事实，所有判断均保留为待复核线索。',
-    },
-    ...trajectory.handoffs.map((item) => ({
-      title: `协同：${item.sender} → ${item.receiver}`,
-      detail: `${item.conclusion}${item.open_questions.length > 0 ? ` 待补证：${item.open_questions.join('、')}` : ''}`,
-    })),
-    {
-      title: '定性：形成当前调查结论',
-      detail: `当前公开调查状态：${trajectory.phase}（修订 ${trajectory.revision}），共享摘要已交给后续角色复核。`,
-    },
-    {
-      title: '闭环：验证后反馈总控',
-      detail: `当前阶段为 ${trajectory.phase}；验证不通过时应带着新证据回到总控重新规划。`,
-    },
-  ]
   return <div className="agent-workspace collaboration-workspace">
-    <header><div><span className="agent-phase">{trajectory.phase}</span><h3>{trajectory.shared_summary}</h3></div><small>修订 {trajectory.revision}</small></header>
+    <header><div><span className="agent-phase">{statusLabel(trajectory.phase)}</span><h3>{trajectory.shared_summary}</h3></div><small>修订 {trajectory.revision}</small></header>
     <section aria-labelledby="budget-title"><h3 id="budget-title">协作预算</h3><div className="agent-metrics"><Metric label="步骤" used={trajectory.budget.steps_used} limit={trajectory.budget.step_limit} /><Metric label="Token" used={trajectory.budget.tokens_used} limit={trajectory.budget.token_limit} /><Metric label="工具调用" used={trajectory.budget.tool_calls_used} limit={trajectory.budget.tool_call_limit} /></div></section>
-    <section aria-labelledby="public-reasoning-title" className="agent-public-reasoning"><h3 id="public-reasoning-title">结构化调查推理链</h3><p>以下是基于公开事实、引用和交接的可审计视图，不包含模型隐藏思维链。</p><ol>{reasoning.map((item, index) => <li key={`${item.title}-${index}`}><span>{index + 1}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></li>)}</ol></section>
+    <section aria-labelledby="handoff-flow-title" className="agent-handoff-flow">
+      <div className="agent-section-heading"><div><h3 id="handoff-flow-title">真实协作路线</h3><p>仅按服务端保存的角色交接记录展示，不推测或补画未发生的阶段。</p></div><span>{trajectory.handoffs.length} 次交接</span></div>
+      {trajectory.handoffs.length === 0 ? <p className="agent-empty-note">该运行没有角色交接记录。</p> : <ol>{trajectory.handoffs.map((item, index) => <li key={item.id}>
+        <span className="agent-flow-index">{index + 1}</span>
+        <div className="agent-flow-card">
+          <div className="agent-flow-roles"><strong>{roleLabel(item.sender)}</strong><span aria-hidden="true">→</span><strong>{roleLabel(item.receiver)}</strong></div>
+          <p>{item.conclusion}</p>
+          {item.open_questions.length > 0 && <small>待补证：{item.open_questions.join('、')}</small>}
+          <div className="agent-flow-meta"><span>置信度 {Math.round(item.confidence * 100)}%</span><time dateTime={item.created_at}>{dateTime(item.created_at)}</time></div>
+        </div>
+      </li>)}</ol>}
+    </section>
+    {trajectory.confirmed_facts.length > 0 && <section aria-labelledby="facts-title"><h3 id="facts-title">已确认事实</h3><ul className="agent-facts">{trajectory.confirmed_facts.map((fact, index) => <li key={`${fact}-${index}`}>{fact}</li>)}</ul></section>}
     {trajectory.reason_codes.length > 0 && <section><h3>原因码</h3><div className="agent-reasons">{trajectory.reason_codes.map((code) => <code key={code}>{code}</code>)}</div></section>}
-    <section aria-labelledby="roles-title"><h3 id="roles-title">角色状态</h3><div className="agent-role-grid">{trajectory.role_statuses.map((item) => <article key={item.role}><StatusBadge tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</StatusBadge><h4>{item.role}</h4><p>{item.summary ?? '尚未开始'}</p>{item.reason_code && <code>{item.reason_code}</code>}</article>)}</div></section>
-    <section aria-labelledby="handoffs-title"><h3 id="handoffs-title">结构化交接</h3>{trajectory.handoffs.length === 0 ? <p>暂无交接。</p> : <ol className="agent-handoffs">{trajectory.handoffs.map((item) => <li key={item.id}><strong>{item.sender} → {item.receiver}</strong><p>{item.conclusion}</p><small>置信度 {Math.round(item.confidence * 100)}%</small></li>)}</ol>}</section>
+    <section aria-labelledby="roles-title"><h3 id="roles-title">角色状态</h3><div className="agent-role-grid">{trajectory.role_statuses.map((item) => <article key={item.role}><StatusBadge tone={item.status === 'completed' ? 'success' : 'info'}>{statusLabel(item.status)}</StatusBadge><h4>{roleLabel(item.role)}</h4><p>{item.summary ?? '尚未开始'}</p>{item.reason_code && <code>{item.reason_code}</code>}</article>)}</div></section>
     <section aria-labelledby="citations-title"><h3 id="citations-title">可信引用</h3>{trajectory.citations.length === 0 ? <p>暂无引用。</p> : <ul className="agent-citations">{trajectory.citations.map((item) => <li key={item.id}><strong>{item.kind}</strong><span>{item.source_id}</span><code>{item.integrity_sha256.slice(0, 12)}…</code></li>)}</ul>}</section>
   </div>
 }
@@ -72,57 +93,93 @@ function ReactWorkspace({ trajectory, busy, reason, setReason, onControl }: { tr
 
 export function AgentsPage({ initialRunId, embedded = false }: { initialRunId?: string; embedded?: boolean } = {}) {
   const context = useRunContext()
+  const [runs, setRuns] = useState<AgentRunOption[]>([])
+  const [runsLoading, setRunsLoading] = useState(true)
+  const [runsError, setRunsError] = useState<string | null>(null)
   const [runId, setRunId] = useState(initialRunId ?? context.runId ?? '')
+  const [manualRunId, setManualRunId] = useState('')
   const [trajectory, setTrajectory] = useState<CollaborationTrajectory | null>(null)
   const [react, setReact] = useState<ReactTrajectory | null>(null)
   const [mcpCalls, setMcpCalls] = useState<McpRunCall[] | null>(null)
-  const [collaborationError, setCollaborationError] = useState<string | null>(null)
-  const [reactError, setReactError] = useState<string | null>(null)
-  const [mcpError, setMcpError] = useState<string | null>(null)
+  const [collaborationIssue, setCollaborationIssue] = useState<LoadIssue | null>(null)
+  const [reactIssue, setReactIssue] = useState<LoadIssue | null>(null)
+  const [mcpIssue, setMcpIssue] = useState<LoadIssue | null>(null)
   const [controlMessage, setControlMessage] = useState<string | null>(null)
   const [reason, setReason] = useState('人工复核运行轨迹')
   const [busy, setBusy] = useState(false)
   const active = useRef<AbortController | null>(null)
+  const historyActive = useRef<AbortController | null>(null)
 
   const loadRun = useCallback(async (selected: string) => {
     active.current?.abort()
-    const controller = new AbortController(); active.current = controller
-    setBusy(true); setCollaborationError(null); setReactError(null); setMcpError(null); setControlMessage(null)
+    const controller = new AbortController()
+    active.current = controller
+    setRunId(selected); setBusy(true); setCollaborationIssue(null); setReactIssue(null); setMcpIssue(null); setControlMessage(null)
     const [collaborationResult, reactResult, mcpResult] = await Promise.allSettled([getCollaborationTrajectory(selected, controller.signal), getReactTrajectory(selected, controller.signal), getMcpRunCalls(selected, controller.signal)])
     if (!controller.signal.aborted) {
       if (collaborationResult.status === 'fulfilled') setTrajectory(collaborationResult.value)
-      else { setTrajectory(null); setCollaborationError(trajectoryError(collaborationResult.reason, '协作轨迹加载失败，请稍后重试。')) }
+      else { setTrajectory(null); setCollaborationIssue(loadIssue(collaborationResult.reason, 'collaboration')) }
       if (reactResult.status === 'fulfilled') setReact(reactResult.value)
-      else { setReact(null); setReactError(trajectoryError(reactResult.reason, 'ReAct 轨迹加载失败，请稍后重试。')) }
+      else { setReact(null); setReactIssue(loadIssue(reactResult.reason, 'react')) }
       if (mcpResult.status === 'fulfilled') setMcpCalls(mcpResult.value)
-      else { setMcpCalls(null); setMcpError(trajectoryError(mcpResult.reason, 'MCP 调用记录加载失败，请稍后重试。')) }
+      else { setMcpCalls(null); setMcpIssue(loadIssue(mcpResult.reason, 'mcp')) }
     }
     if (active.current === controller) active.current = null
     if (!controller.signal.aborted) setBusy(false)
   }, [])
 
-  useEffect(() => () => active.current?.abort(), [])
-  useEffect(() => { active.current?.abort(); setRunId(context.runId ?? ''); setTrajectory(null); setReact(null); setMcpCalls(null); setCollaborationError(null); setReactError(null); setMcpError(null); setBusy(false) }, [context.runId])
-  useEffect(() => {
-    if (embedded && initialRunId) void loadRun(initialRunId)
-  }, [embedded, initialRunId, loadRun])
+  const chooseRun = useCallback((selected: string, availableRuns = runs) => {
+    if (!selected) return
+    const option = availableRuns.find((item) => item.run_id === selected)
+    if (!embedded && context.runId !== selected) context.setSelection({ runId: selected, incidentId: option?.incident_id ?? null })
+    void loadRun(selected)
+  }, [context, embedded, loadRun, runs])
 
-  const load = (event: FormEvent) => { event.preventDefault(); void loadRun(runId.trim()) }
+  const refreshRuns = useCallback(() => {
+    historyActive.current?.abort()
+    const controller = new AbortController()
+    historyActive.current = controller
+    setRunsLoading(true); setRunsError(null)
+    void listAgentRuns(controller.signal).then((items) => {
+      if (controller.signal.aborted) return
+      setRuns(items)
+      const preferred = initialRunId ?? context.runId ?? items[0]?.run_id ?? ''
+      if (preferred) chooseRun(preferred, items)
+    }).catch((failure) => {
+      if (!controller.signal.aborted) setRunsError(failure instanceof Error ? failure.message : '运行列表加载失败，请稍后重试。')
+    }).finally(() => {
+      if (historyActive.current === controller) historyActive.current = null
+      if (!controller.signal.aborted) setRunsLoading(false)
+    })
+  }, [chooseRun, context.runId, initialRunId])
+
+  useEffect(() => { refreshRuns(); return () => { historyActive.current?.abort(); active.current?.abort() } }, [refreshRuns])
+
+  const loadManual = (event: FormEvent) => { event.preventDefault(); const selected = manualRunId.trim(); if (selected) chooseRun(selected) }
   const control = async (action: 'takeover' | 'resume') => {
     if (!react || !reason.trim()) return
     active.current?.abort(); const controller = new AbortController(); active.current = controller; setBusy(true); setControlMessage(null)
-    try { const result = await controlReactLoop(react.loop_id, action, reason.trim(), controller.signal); if (!controller.signal.aborted) { await loadRun(runId.trim()); setControlMessage(`${action === 'takeover' ? '人工接管' : '恢复循环'}成功：${result.status}`) } }
+    try { const result = await controlReactLoop(react.loop_id, action, reason.trim(), controller.signal); if (!controller.signal.aborted) { await loadRun(runId); setControlMessage(`${action === 'takeover' ? '人工接管' : '恢复循环'}成功：${result.status}`) } }
     catch (failure) { if (!controller.signal.aborted) setControlMessage(failure instanceof Error ? failure.message : 'ReAct 控制失败') }
     finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false) }
   }
 
+  const selectedRun = runs.find((item) => item.run_id === runId)
+  const missingIssues = [collaborationIssue, reactIssue, mcpIssue].filter((item): item is LoadIssue => item?.kind === 'missing')
+  const errorIssues = [collaborationIssue, reactIssue, mcpIssue].filter((item): item is LoadIssue => item?.kind === 'error')
+
   return <section aria-labelledby="agents-title" className="page-card agents-page">
-    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="组合结构化公开推理、角色交接与受控循环轨迹；不展示私有上下文、原始提示、隐藏思维链或凭据。" />
-    <form className="agent-run-form" onSubmit={load}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={runId} onChange={(event) => setRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !runId.trim()} type="submit">{busy ? '加载中…' : '查看联合轨迹'}</button></div></form>
-    {!runId.trim() && <EmptyState title="尚未选择运行" detail="从调查页启动运行，或输入已有运行 ID。" />}
-    {collaborationError && <p role="alert" className="agent-error">协作轨迹：{collaborationError}</p>}
-    {reactError && <p role="alert" className="agent-error">ReAct 轨迹：{reactError}</p>}
-    {mcpError && <p role="alert" className="agent-error">MCP 调用：{mcpError}</p>}
+    <PageHeader id="agents-title" eyebrow="共享智能" title="智能体与 ReAct 工作台" description="选择最近调查即可查看真实角色交接、工具调用与受控循环；不展示私有上下文、原始提示、隐藏思维链或凭据。" actions={<button disabled={runsLoading} type="button" onClick={refreshRuns}>{runsLoading ? '刷新中…' : '刷新运行'}</button>} />
+    <section className="agent-run-picker" aria-labelledby="recent-runs-title">
+      <div className="agent-section-heading"><div><h3 id="recent-runs-title">选择调查运行</h3><p>默认打开最近一条记录，无需复制运行 ID。</p></div>{runs.length > 0 && <span>{runs.length} 条</span>}</div>
+      {runsLoading && runs.length === 0 ? <LoadingState title="正在加载最近运行" detail="正在读取可追溯的调查记录。" /> : runs.length > 0 ? <><label htmlFor="agent-run-select">最近调查运行</label><select id="agent-run-select" value={runId} disabled={busy} onChange={(event) => chooseRun(event.target.value)}>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.incident_tracking_id} · {item.threat_label} · {statusLabel(item.status)} · {dateTime(item.updated_at)}</option>)}</select></> : !runsError && <EmptyState title="暂无调查运行" detail="先在调查页面启动一次运行，记录会自动出现在这里。" />}
+      {runsError && <p role="alert" className="agent-error">{runsError}</p>}
+      {selectedRun && <dl className="agent-run-summary"><div><dt>事件</dt><dd>{selectedRun.incident_tracking_id}</dd></div><div><dt>目标</dt><dd>{selectedRun.endpoint}</dd></div><div><dt>状态</dt><dd>{statusLabel(selectedRun.status)}</dd></div><div><dt>最近更新</dt><dd>{dateTime(selectedRun.updated_at)}</dd></div></dl>}
+      <details className="agent-manual-run"><summary>高级：使用运行 ID</summary><form className="agent-run-form" onSubmit={loadManual}><label htmlFor="agent-run-id">调查运行 ID</label><div><input id="agent-run-id" value={manualRunId} onChange={(event) => setManualRunId(event.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /><button disabled={busy || !manualRunId.trim()} type="submit">查看轨迹</button></div></form></details>
+    </section>
+    {busy && <p className="agent-loading" role="status">正在加载该运行的公开轨迹…</p>}
+    {missingIssues.length > 0 && <aside className="agent-availability" aria-label="轨迹数据说明"><strong>本次运行的数据范围</strong><ul>{missingIssues.map((item) => <li key={item.message}>{item.message}</li>)}</ul></aside>}
+    {errorIssues.map((item) => <p role="alert" className="agent-error" key={item.message}>{item.message}</p>)}
     {controlMessage && <p role="status" className="agent-control-message">{controlMessage}</p>}
     {trajectory && <Collaboration trajectory={trajectory} />}
     {mcpCalls && <section className="agent-workspace agent-tool-workspace" aria-labelledby="agent-tools-title"><header><div><span className="agent-phase">Agent Tool / MCP</span><h3 id="agent-tools-title">工具选择与公开回执</h3></div><strong>{mcpCalls.length} 次调用</strong></header>{mcpCalls.length === 0 ? <p>本次运行未选择只读工具。</p> : <ol className="react-timeline">{mcpCalls.map((call) => <li key={call.id}><div><StatusBadge tone={call.status === 'succeeded' || call.status === 'empty' ? 'success' : 'warning'}>{call.status}</StatusBadge> <strong>{call.tool_alias}</strong></div><span>{call.provider_kind === 'remote_mcp' ? '外部 MCP' : call.provider_kind === 'rag' ? '本地 RAG' : '内置工具'} · 目录 {call.catalog_revision} · Schema {call.schema_revision}</span><p>{call.summary ?? '尚无公开回执摘要。'}</p>{call.reason_code && <code>{call.reason_code}</code>}</li>)}</ol>}</section>}
