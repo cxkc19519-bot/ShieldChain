@@ -7,7 +7,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "nta" / "replay" / "demo_runner.py"
 SPEC = importlib.util.spec_from_file_location("demo_replay_runner", MODULE_PATH)
