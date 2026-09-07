@@ -23,14 +23,13 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "data" / "nta-replay"
 DEFAULT_RULES = REPOSITORY_ROOT / "config" / "suricata" / "shieldchain-nta.rules"
 DEFAULT_SURICATA_IMAGE = "jasonish/suricata:7.0.16"
-DEFAULT_REPLAY_IMAGE = "shieldchain/tcpreplay:local"
+DEFAULT_REPLAY_IMAGE = "shieldchain/pcap-replay:local"
 MAX_ALLOWED_BYTES = 2 * 1024 * 1024 * 1024
 PCAP_MAGIC = {
     b"\xa1\xb2\xc3\xd4",
     b"\xd4\xc3\xb2\xa1",
     b"\xa1\xb2\x3c\x4d",
     b"\x4d\x3c\xb2\xa1",
-    b"\x0a\x0d\x0d\x0a",
 }
 ACKNOWLEDGEMENT = "I_UNDERSTAND_ISOLATED_REPLAY"
 
@@ -89,7 +88,7 @@ def validate_pcap(pcap: Path, pcap_root: Path, max_bytes: int) -> Path:
     with resolved_pcap.open("rb") as stream:
         magic = stream.read(4)
     if magic not in PCAP_MAGIC:
-        raise ValueError("file is not a supported PCAP or PCAPNG capture")
+        raise ValueError("file is not a supported classic PCAP capture")
     return resolved_pcap
 
 
@@ -181,11 +180,13 @@ def build_plan(
         "--volume",
         f"{pcap}:/pcap/input.pcap:ro",
         replay_image,
-        "--intf1=eth0",
-        f"--pps={pps}",
-        f"--loop={loops}",
-        "--stats=1",
         "/pcap/input.pcap",
+        "--interface",
+        "eth0",
+        "--pps",
+        str(pps),
+        "--loops",
+        str(loops),
     ]
     return ReplayPlan(
         run_id=token,
@@ -319,7 +320,7 @@ def execute(plan: ReplayPlan, *, pcap: Path, pps: int, loops: int, timeout: int)
         completed = run(plan.run_replayer, check=False, timeout=timeout)
         replay_output = (completed.stdout + completed.stderr)[-12_000:]
         if completed.returncode:
-            raise RuntimeError(f"tcpreplay exited with status {completed.returncode}")
+            raise RuntimeError(f"replay emitter exited with status {completed.returncode}")
         time.sleep(2)
     finally:
         run(["docker", "stop", "--time", "5", plan.sensor_name], check=False)

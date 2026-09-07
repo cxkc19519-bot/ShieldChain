@@ -1,9 +1,6 @@
-FROM alpine:3.22.1
+ARG BASE_IMAGE=python:3.14-slim-bookworm
+FROM ${BASE_IMAGE}
 
-RUN apk add --no-cache tcpreplay \
-    && addgroup -S -g 65532 replay \
-    && adduser -S -D -H -u 65532 -G replay replay
+COPY emitter.py /opt/shieldchain-replay/emitter.py
 
-USER 65532:65532
-
-ENTRYPOINT ["tcpreplay"]
+ENTRYPOINT ["python", "/opt/shieldchain-replay/emitter.py"]
