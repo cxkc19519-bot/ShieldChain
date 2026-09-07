@@ -39,6 +39,7 @@ COMPOSE=(
   -f compose.yaml
   -f compose.server.yaml
   -f compose.local-llm.yaml
+  -f compose.model-control.yaml
 )
 
 show_status() {
