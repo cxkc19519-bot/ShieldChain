@@ -83,7 +83,7 @@ def test_sensor_readiness_requires_engine_started_marker() -> None:
         assert replay.sensor_is_ready(log) is False
         log.write_text("rules loaded\n", encoding="utf-8")
         assert replay.sensor_is_ready(log) is False
-        log.write_text("all processing threads initialized, engine started\n", encoding="utf-8")
+        log.write_text("Threads created -> W: 1 Engine started.\n", encoding="utf-8")
         assert replay.sensor_is_ready(log) is True
 
 

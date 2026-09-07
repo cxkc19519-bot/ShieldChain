@@ -312,7 +312,7 @@ def sensor_is_ready(log_path: Path) -> bool:
         return False
     return "engine started" in log_path.read_text(
         encoding="utf-8", errors="replace"
-    )[-20_000:]
+    )[-20_000:].casefold()
 
 
 def wait_for_sensor(plan: ReplayPlan, log_path: Path, timeout: int) -> None:
