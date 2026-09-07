@@ -70,8 +70,9 @@ def test_plan_is_internal_and_never_uses_host_network() -> None:
         assert "host" not in plan.run_replayer
         assert f"{pcap}:/pcap/input.pcap:ro" in plan.run_replayer
         assert plan.start_sensor.count("NET_RAW") == 1
+        assert plan.start_sensor.count("DAC_READ_SEARCH") == 1
         assert plan.run_replayer.count("NET_RAW") == 1
-        assert "998:998" in plan.start_sensor
+        assert "NET_ADMIN" not in plan.start_sensor
         assert "0:0" in plan.run_replayer
 
 

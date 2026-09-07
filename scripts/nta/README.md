@@ -111,6 +111,8 @@ python3 scripts/nta/ingest_nta_events.py /path/to/run/events.jsonl
 不会连接宿主机物理网卡，也不接受接口名参数。回放器与 Suricata 分别运行在两个
 容器中，且只连接带 `--internal` 标记的一次性 Docker bridge；脚本确认 Suricata
 完成规则加载后才开始发包，结束或失败后都会删除回放器、传感器和网络。
+实时演示传感器使用 `-S`，只加载仓库中的 ShieldChain NTA 规则，不加载镜像内
+约 5 万条通用规则；正式测评若要求组合规则集，应单独冻结并记录对应配置与哈希。
 
 先构建固定回放器镜像。服务器已有 ShieldChain 后端镜像时，可以用它作为无需
 联网的 Python 基础镜像：
@@ -162,6 +164,8 @@ python3 scripts/nta/ingest_nta_events.py data/nta-replay/run-<id>/events.jsonl
 安全限制：单文件默认不超过 512 MiB，最大允许配置为 2 GiB；速率限制为
 1～100000 包/秒，循环次数限制为 1～10，单次超时限制为 5～600 秒。脚本没有
 宿主机网卡参数、没有 `--network host` 路径，也不会自动导入告警或执行处置。
+Suricata 容器只保留抓包所需的 `NET_RAW` 和读取镜像内受限配置所需的
+`DAC_READ_SEARCH`，根文件系统保持只读，不挂载宿主机密钥或业务目录。
 
 运行不需要 Docker 的分类单元测试：
 
