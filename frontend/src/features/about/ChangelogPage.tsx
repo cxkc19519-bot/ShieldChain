@@ -12,9 +12,22 @@ export function ChangelogPage() {
       </header>
       
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        
         <section className="page-card" style={{ padding: '2rem', minHeight: 'auto', position: 'relative' }}>
           <div style={{ position: 'absolute', left: '-1rem', top: '2rem', background: 'var(--color-accent)', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '1rem', fontSize: '0.8rem', fontWeight: 'bold' }}>最新</div>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
+            <Rocket className="nav-icon" size={20} color="var(--color-accent)" />
+            v1.3.0 - NTA 隔离回放与 XDR 联动
+          </h3>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-09-07</span>
+          <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
+            <li>实时告警页新增随机演示回放：仅从服务器白名单随机选择已验收的经典 PCAP，不接受浏览器指定文件、网卡或速率。</li>
+            <li>回放器与 NTA 探针仅在一次性内部 Docker 网络中通信；回放结束后自动清理临时容器和网络。</li>
+            <li>已配置 10 条经过实际规则命中验证的演示样本；命中预期规则后自动导入 ShieldChain 告警中心并保留隔离回放证据。</li>
+            <li>智能助手页面移除了固定评测入口，使对话界面聚焦于日常研判和知识问答。</li>
+          </ul>
+        </section>
+
+        <section className="page-card" style={{ padding: '2rem', minHeight: 'auto', position: 'relative' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
             <Rocket className="nav-icon" size={20} color="var(--color-accent)" /> 
             v1.2.0 - 智能体 ReAct 升级
