@@ -36,31 +36,6 @@ type Message = {
   model: string | null
   created_at: string
 }
-type AssistantEvaluation = {
-  dataset_id: string
-  dataset_version: string
-  dataset_sha256: string
-  case_count: number
-  metrics: Record<string, number>
-  thresholds: Record<string, number>
-  quality_gate_passed: boolean
-  case_results: Array<{
-    case_id: string
-    language: 'zh' | 'en'
-    message: string
-    expected_statuses: string[]
-    actual_status: string
-    expected_refusal_reason: string | null
-    actual_refusal_reason: string | null
-    expected_document_ids: string[]
-    cited_document_ids: string[]
-    citation_recall: number | null
-    provenance_completeness: number | null
-    latency_ms: number
-    passed: boolean
-    failure_reasons: string[]
-  }>
-}
 type Conversation = { id: string; title: string; created_at: string; updated_at: string; memory_summary: string; summary: string; pinned: boolean; message_count: number }
 type Detail = Conversation & { messages: Message[] }
 const API_ROOT = '/api/v1'
@@ -109,8 +84,6 @@ export function AssistantPage() {
   const [sidebarToggleHovered, setSidebarToggleHovered] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [evaluation, setEvaluation] = useState<AssistantEvaluation | null>(null)
-  const [evaluating, setEvaluating] = useState(false)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -137,7 +110,6 @@ export function AssistantPage() {
   }, [searchOpen])
 
   async function openConversation(id: string) {
-    setEvaluation(null)
     setSearchOpen(false)
     setSearch('')
     setOpenMenuId(null)
@@ -146,7 +118,6 @@ export function AssistantPage() {
   }
 
   function newConversation() {
-    setEvaluation(null)
     setSearchOpen(false)
     setSearch('')
     setOpenMenuId(null)
@@ -212,19 +183,6 @@ export function AssistantPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : '\u91cd\u547d\u540d\u5931\u8d25') }
   }
 
-  async function runAssistantEvaluation() {
-    if (evaluating) return
-    setEvaluating(true); setError(null); setSearchOpen(false)
-    try {
-      setEvaluation(await api<AssistantEvaluation>('/assistant/evaluations', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset_id: 'shieldchain-assistant-v1', max_cases: 100 }),
-      }))
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '助手固定评测失败')
-    } finally { setEvaluating(false) }
-  }
-
   const empty = !active || active.messages.length === 0
   function handleLogoClick() {
     if (sidebarCollapsed) { setSidebarCollapsed(false) } else { newConversation() }
@@ -237,7 +195,6 @@ export function AssistantPage() {
       <div className="gemini-brand"><button type="button" className="gemini-brand-btn" onClick={handleLogoClick} aria-label={sidebarCollapsed ? '展开侧边栏' : '发起新对话'} title={sidebarCollapsed ? '展开侧边栏' : '发起新对话'}><span className="gemini-star"><img src={logoUrl} alt="ShieldChain" /></span><strong>ShieldChain</strong></button><button type="button" className="gemini-sidebar-toggle" onClick={() => setSidebarCollapsed((value) => !value)} onMouseEnter={() => setSidebarToggleHovered(true)} onMouseLeave={() => setSidebarToggleHovered(false)} onFocus={() => setSidebarToggleHovered(true)} onBlur={() => setSidebarToggleHovered(false)} aria-label="收起侧边栏" title="收起侧边栏" data-tooltip="关闭边栏">{sidebarCollapsed ? <PanelLeftOpen size={18} /> : sidebarToggleHovered ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}</button></div>
       <button type="button" className="gemini-new" onClick={newConversation}><MessageSquarePlus size={18} /><span>发起新对话</span></button>
       <button type="button" className="gemini-search-trigger" onClick={() => setSearchOpen(true)} aria-label="搜索对话内容" title="搜索对话内容"><Search size={17} /><span>搜索对话内容</span></button>
-      <button type="button" className="gemini-evaluation-trigger" onClick={() => void runAssistantEvaluation()} disabled={evaluating}><span>{evaluating ? '正在运行固定评测…' : '运行助手固定评测'}</span></button>
       <div className="gemini-section-title"><History size={15} /><span>最近</span></div>
       <nav className="gemini-conversations" aria-label="本地聊天记录">
         {filtered.length ? filtered.map((item) => (
@@ -260,15 +217,7 @@ export function AssistantPage() {
     </aside>
     <main className={`gemini-main ${empty && !searchOpen ? 'gemini-main--empty' : ''}`}>
       <button type="button" className="gemini-home-link" onClick={() => navigate(-1)} aria-label="返回上一页" title="返回上一页"><ArrowLeft size={20} /></button>
-      {evaluation ? <div className="gemini-evaluation-view">
-        <div className="gemini-evaluation-header"><div><h1>助手固定评测</h1><p>{evaluation.dataset_id} · {evaluation.dataset_version} · {evaluation.case_count} 条</p></div><button type="button" onClick={() => setEvaluation(null)} aria-label="关闭评测"><X size={18} /></button></div>
-        <p className={evaluation.quality_gate_passed ? 'gemini-evaluation-gate' : 'gemini-evaluation-gate failed'}>{evaluation.quality_gate_passed ? '质量门禁通过' : '质量门禁未通过'}</p>
-        <p>数据集 SHA-256：<code>{evaluation.dataset_sha256}</code></p>
-        <dl className="gemini-evaluation-metrics">{Object.entries(evaluation.metrics).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl>
-        <details><summary>查看门禁阈值</summary><dl className="gemini-evaluation-metrics">{Object.entries(evaluation.thresholds).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl></details>
-        <h2>逐题诊断</h2>
-        <ol className="gemini-evaluation-cases">{evaluation.case_results.map((item) => <li key={item.case_id}><details><summary>{item.passed ? '通过' : '未通过'} · {item.case_id} · {item.actual_status}</summary><p>{item.message}</p><dl><dt>期望状态</dt><dd>{item.expected_statuses.join('；')}</dd><dt>期望文档</dt><dd>{item.expected_document_ids.join('；') || '无'}</dd><dt>实际引用</dt><dd>{item.cited_document_ids.join('；') || '无'}</dd><dt>引用召回</dt><dd>{item.citation_recall?.toFixed(3) ?? '不适用'}</dd><dt>溯源完整率</dt><dd>{item.provenance_completeness?.toFixed(3) ?? '不适用'}</dd><dt>拒答原因</dt><dd>{item.actual_refusal_reason ?? '无'}</dd><dt>失败原因</dt><dd>{item.failure_reasons.join('；') || '无'}</dd></dl></details></li>)}</ol>
-      </div> : searchOpen ? <div className="gemini-search-view">
+      {searchOpen ? <div className="gemini-search-view">
         <div className="gemini-search-bar">
           <Search size={18} />
           <input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索对话内容" autoFocus />

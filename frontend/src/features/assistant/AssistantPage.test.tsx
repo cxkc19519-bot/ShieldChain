@@ -110,40 +110,4 @@ describe('AssistantPage composer', () => {
     expect(screen.getAllByText('隔离前必须经过人工审批。')).toHaveLength(1)
   })
 
-  it('runs and displays the fixed assistant evaluation', async () => {
-    const evaluation = {
-      dataset_id: 'shieldchain-assistant-v1', dataset_version: '1.0.0',
-      dataset_sha256: 'b'.repeat(64), case_count: 1,
-      metrics: { status_accuracy: 1, case_pass_rate: 1 },
-      thresholds: { status_accuracy: 0.875, case_pass_rate: 0.75 },
-      quality_gate_passed: true,
-      case_results: [{
-        case_id: 'zh-greeting', language: 'zh', message: '你好',
-        expected_statuses: ['conversational'], actual_status: 'conversational',
-        expected_refusal_reason: null, actual_refusal_reason: null,
-        expected_document_ids: [], cited_document_ids: [], citation_recall: null,
-        provenance_completeness: null, latency_ms: 2, passed: true,
-        failure_reasons: [],
-      }],
-    }
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      void init
-      const url = String(input)
-      if (url.endsWith('/assistant/evaluations')) return jsonResponse(evaluation)
-      return jsonResponse({ items: [] })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    const user = userEvent.setup()
-    render(<MemoryRouter><AssistantPage /></MemoryRouter>)
-
-    await user.click(screen.getByRole('button', { name: '运行助手固定评测' }))
-
-    expect(await screen.findByText('质量门禁通过')).toBeVisible()
-    expect(screen.getByText(/shieldchain-assistant-v1/)).toBeVisible()
-    expect(screen.getByText(/zh-greeting/)).toBeVisible()
-    const request = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/assistant/evaluations'))
-    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
-      dataset_id: 'shieldchain-assistant-v1', max_cases: 100,
-    })
-  })
 })
