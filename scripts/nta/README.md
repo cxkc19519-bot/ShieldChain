@@ -108,9 +108,9 @@ python3 scripts/nta/ingest_nta_events.py /path/to/run/events.jsonl
 ## 隔离实时回放演示
 
 实时回放与上面的离线评测是两条不同链路。实时回放只用于获授权的演示或靶场，
-不会连接宿主机物理网卡，也不接受接口名参数。回放器与 Suricata 共享一个一次性
-网络命名空间，该命名空间只连接带 `--internal` 标记的 Docker bridge；结束或失败
-后脚本都会删除回放器、传感器和网络。
+不会连接宿主机物理网卡，也不接受接口名参数。回放器与 Suricata 分别运行在两个
+容器中，且只连接带 `--internal` 标记的一次性 Docker bridge；脚本确认 Suricata
+完成规则加载后才开始发包，结束或失败后都会删除回放器、传感器和网络。
 
 先构建固定回放器镜像。服务器已有 ShieldChain 后端镜像时，可以用它作为无需
 联网的 Python 基础镜像：

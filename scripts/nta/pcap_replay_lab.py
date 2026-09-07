@@ -1,7 +1,7 @@
-"""Replay one authorized PCAP inside an isolated Docker network namespace.
+"""Replay one authorized PCAP across a disposable Docker-internal bridge.
 
-Packets are emitted only on a disposable, Docker-internal interface shared by a
-Suricata sensor. The script never accepts a host interface or host networking.
+Packets are emitted only between disposable containers on an internal bridge.
+The script never accepts a host interface or host networking.
 """
 
 from __future__ import annotations
@@ -169,7 +169,7 @@ def build_plan(
         "--name",
         replayer_name,
         "--network",
-        f"container:{sensor_name}",
+        network_name,
         "--cap-drop",
         "ALL",
         "--cap-add",
@@ -207,7 +207,7 @@ def build_plan(
 def public_plan(plan: ReplayPlan, pcap: Path) -> dict[str, object]:
     return {
         "run_id": plan.run_id,
-        "mode": "isolated_docker_namespace",
+        "mode": "isolated_docker_bridge",
         "pcap_name": pcap.name,
         "pcap_sha256": sha256(pcap),
         "output_dir": str(plan.output_dir),
@@ -303,6 +303,29 @@ def cleanup(plan: ReplayPlan) -> None:
     run(["docker", "network", "rm", plan.network_name], check=False)
 
 
+def sensor_is_ready(log_path: Path) -> bool:
+    if not log_path.exists():
+        return False
+    return "engine started" in log_path.read_text(
+        encoding="utf-8", errors="replace"
+    )[-20_000:]
+
+
+def wait_for_sensor(plan: ReplayPlan, log_path: Path, timeout: int) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", plan.sensor_name],
+            check=False,
+        )
+        if state.returncode or state.stdout.strip() != "true":
+            raise RuntimeError("Suricata sensor stopped before becoming ready")
+        if sensor_is_ready(log_path):
+            return
+        time.sleep(0.5)
+    raise RuntimeError(f"Suricata sensor did not become ready within {timeout} seconds")
+
+
 def execute(plan: ReplayPlan, *, pcap: Path, pps: int, loops: int, timeout: int) -> None:
     preflight_runtime(plan)
     sensor_logs = plan.output_dir / "suricata"
@@ -313,19 +336,14 @@ def execute(plan: ReplayPlan, *, pcap: Path, pps: int, loops: int, timeout: int)
     try:
         run(plan.create_network)
         run(plan.start_sensor)
-        time.sleep(2)
-        state = run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", plan.sensor_name]
-        )
-        if state.stdout.strip() != "true":
-            raise RuntimeError("Suricata sensor stopped before replay")
+        wait_for_sensor(plan, sensor_logs / "suricata.log", min(timeout, 45))
         completed = run(plan.run_replayer, check=False, timeout=timeout)
         replay_output = (completed.stdout + completed.stderr)[-12_000:]
         if completed.returncode:
             raise RuntimeError(f"replay emitter exited with status {completed.returncode}")
-        time.sleep(2)
+        time.sleep(3)
     finally:
-        run(["docker", "stop", "--time", "5", plan.sensor_name], check=False)
+        run(["docker", "stop", "--timeout", "5", plan.sensor_name], check=False)
         cleanup(plan)
 
     eve_path = sensor_logs / "eve.json"

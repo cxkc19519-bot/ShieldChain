@@ -65,7 +65,7 @@ def test_plan_is_internal_and_never_uses_host_network() -> None:
         )
 
         assert "--internal" in plan.create_network
-        assert "container:sc-nta-sensor-0123456789ab" in plan.run_replayer
+        assert plan.network_name in plan.run_replayer
         assert "host" not in plan.start_sensor
         assert "host" not in plan.run_replayer
         assert f"{pcap}:/pcap/input.pcap:ro" in plan.run_replayer
@@ -73,6 +73,16 @@ def test_plan_is_internal_and_never_uses_host_network() -> None:
         assert plan.run_replayer.count("NET_RAW") == 1
         assert "998:998" in plan.start_sensor
         assert "0:0" in plan.run_replayer
+
+
+def test_sensor_readiness_requires_engine_started_marker() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        log = Path(temp) / "suricata.log"
+        assert replay.sensor_is_ready(log) is False
+        log.write_text("rules loaded\n", encoding="utf-8")
+        assert replay.sensor_is_ready(log) is False
+        log.write_text("all processing threads initialized, engine started\n", encoding="utf-8")
+        assert replay.sensor_is_ready(log) is True
 
 
 def test_plan_rejects_unbounded_rate_and_loop_count() -> None:
