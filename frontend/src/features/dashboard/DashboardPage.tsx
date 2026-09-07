@@ -30,6 +30,11 @@ function verificationLabel(run: InvestigationResponse): string {
   return run.verification ? '验证未通过' : '等待验证'
 }
 
+function isMissingInvestigation(failure: unknown): boolean {
+  return typeof failure === 'object' && failure !== null
+    && 'status' in failure && (failure as { status?: unknown }).status === 404
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return <article className="dashboard-metric"><span>{label}</span><strong>{value}</strong></article>
 }
@@ -83,11 +88,16 @@ export function DashboardPage() {
         }
       },
       (failure: unknown) => {
-        if (!controller.signal.aborted) setRunError(failure instanceof Error ? failure.message : '无法加载调查总览')
+        if (controller.signal.aborted) return
+        if (isMissingInvestigation(failure)) {
+          context.clearSelection()
+          return
+        }
+        setRunError(failure instanceof Error ? failure.message : '无法加载调查总览')
       },
     ).finally(() => { if (!controller.signal.aborted) setRunLoading(false) })
     return () => controller.abort()
-  }, [context.runId, runAttempt])
+  }, [context, context.runId, runAttempt])
 
   const confirmedEvidence = run?.evidence.filter((item) => item.confirmed && item.integrity_verified).length ?? 0
   const risk = run?.assessment?.risk_level

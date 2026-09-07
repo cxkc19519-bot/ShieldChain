@@ -7,9 +7,10 @@ import { DashboardPage } from './DashboardPage'
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const INCIDENT_ID = '22222222-2222-4222-8222-222222222222'
-const context = vi.hoisted((): { incidentId: string | null; runId: string | null } => ({
+const context = vi.hoisted((): { incidentId: string | null; runId: string | null; clearSelection: ReturnType<typeof vi.fn> } => ({
   incidentId: '22222222-2222-4222-8222-222222222222',
   runId: '11111111-1111-4111-8111-111111111111',
+  clearSelection: vi.fn(),
 }))
 const health = vi.hoisted(() => ({ getLiveness: vi.fn() }))
 const investigation = vi.hoisted(() => ({ getInvestigation: vi.fn() }))
@@ -37,6 +38,7 @@ beforeEach(() => {
   context.runId = RUN_ID
   health.getLiveness.mockReset().mockResolvedValue({ status: 'ok' })
   investigation.getInvestigation.mockReset().mockResolvedValue(run())
+  context.clearSelection.mockReset()
 })
 
 describe('DashboardPage', () => {
@@ -69,6 +71,14 @@ describe('DashboardPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('offline')
     await user.click(screen.getByRole('button', { name: '重试加载' }))
     expect(await screen.findByText('已确认威胁')).toBeVisible()
+  })
+
+  it('clears a stale investigation selection returned as not found', async () => {
+    investigation.getInvestigation.mockRejectedValueOnce({ status: 404, message: 'Investigation not found' })
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>)
+
+    await waitFor(() => expect(context.clearSelection).toHaveBeenCalledOnce())
+    expect(screen.queryByText('无法加载运行总览')).not.toBeInTheDocument()
   })
 
   it('aborts both health and investigation requests on unmount', async () => {
