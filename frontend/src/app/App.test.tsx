@@ -29,13 +29,14 @@ describe('application shell', () => {
     expect(screen.getByRole('navigation', { name: '主要导航' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toBeInTheDocument()
 
-    for (const name of ['运营总览', '安全运营报告', '实时告警', '知识库', '历史报告']) {
+    for (const name of ['运营总览', '安全运营报告', '实时告警', '知识库']) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument()
     }
 
     expect(screen.getByText('真实数据分析环境')).toBeVisible()
     expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
     expect(screen.queryByRole('link', { name: 'MCP 服务状态' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '历史报告' })).not.toBeInTheDocument()
   })
 
   it('supports keyboard navigation through visible links', async () => {
