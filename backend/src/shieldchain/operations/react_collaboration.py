@@ -86,7 +86,7 @@ AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
     _VULNERABILITIES: {
         "label": "漏洞 MCP",
         "description": (
-            "从指定时间范围的告警标题和规范化证据中提取 CVE 标识及关联告警线索。"
+            "从指定时间范围的告警标题和规范化证据中提取 CVE、漏洞攻击面及关联告警线索。"
             "只读，不进行漏洞扫描或修复。"
         ),
         "use_when": "告警或事件可能涉及公开漏洞，需要整理 CVE 线索并安排资产版本复核时使用。",
@@ -104,9 +104,9 @@ AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
         ),
     },
     _WEAK_PASSWORDS: {
-        "label": "弱口令 MCP",
+        "label": "身份认证 MCP",
         "description": (
-            "从指定时间范围的告警中筛选弱口令、密码喷洒、暴力破解等认证风险线索。"
+            "从指定时间范围的告警中筛选账号关联、弱口令、密码喷洒、暴力破解等认证风险线索。"
             "只读，不读取或展示真实密码。"
         ),
         "use_when": "出现异常登录、认证失败、密码喷洒或暴力破解迹象，需要汇总身份认证风险时使用。",
@@ -254,6 +254,9 @@ class AgentToolBroker:
         tool = self._tools.get(name)
         return tool.label if tool is not None else name
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
     async def call(self, name: str, *, role: str | None = None) -> McpToolCallView:
         if name not in self._tools:
             raise ValueError("tool is not registered")
@@ -392,6 +395,7 @@ class RealDataAgentTeam:
         target_endpoint_id: str | None = None,
         target_file_id: str | None = None,
         rule_ttl_seconds: int = 60,
+        required_observation_tools: tuple[str, ...] = (),
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
         broker = AgentToolBroker(
             tools,
@@ -400,6 +404,9 @@ class RealDataAgentTeam:
             audit_store=audit_store,
             audit_context=audit_context,
         )
+        for tool_name in required_observation_tools:
+            if broker.has_tool(tool_name):
+                await broker.call(tool_name, role="superagent")
         remaining = set(_SPECIALISTS)
         results: list[AgentRoleRunView] = []
         model: str | None = None

@@ -70,12 +70,12 @@ class ResponsePlanReferenceView(BaseModel):
     plan_id: UUID
     revision_id: UUID
     revision: int = Field(ge=0)
-    status: Literal["proposed", "needs_review", "completed_advisory"]
+    status: Literal["proposed", "needs_review", "completed", "completed_advisory"]
     public_summary: str
     action_count: int = Field(ge=0, le=8)
     generation_status: Literal["model_compiled", "deterministic_fallback"]
     fallback_reason_code: str | None = None
-    execution_status: Literal["not_executed"] = "not_executed"
+    execution_status: Literal["not_executed", "verified_completed"] = "not_executed"
 
 
 class AgentRoleRunView(BaseModel):

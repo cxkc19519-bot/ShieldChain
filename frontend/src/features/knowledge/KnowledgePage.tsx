@@ -75,7 +75,7 @@ function Documents({
                         ? '\u004c\u004c\u004d \u5206\u5757\u5931\u8d25\uff0c\u5df2\u4f7f\u7528\u89c4\u5219\u5206\u5757'
                         : version.chunking_failure_category}`
                     : version.chunking_strategy === 'deepseek-semantic-v1'
-                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u0044\u0065\u0065\u0070\u0053\u0065\u0065\u006b \u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
+                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
                       : `\u5206\u5757\u65b9\u5f0f\uff1a${version.chunking_strategy}`}
                 </small>                <div className="compact-actions">
                   <button disabled={busy} type="button" onClick={() => onAction('publish', document.id, version.id)}>发布</button>

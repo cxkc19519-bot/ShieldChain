@@ -15,8 +15,11 @@ from shieldchain.response_planning.persistence import (
     ResponsePlanRevisionRow,
     ResponsePlanRow,
 )
+from shieldchain.tools.approval_store import SqlAlchemyApprovalStore
+from shieldchain.tools.approvals import TrustedToolApprovalService
 from shieldchain.tools.domain import (
     PolicyOutcome,
+    PolicyReason,
     ToolTargetType,
     TrustedToolCall,
     TrustedToolCallStatus,
@@ -67,6 +70,9 @@ class ResponsePlanToolService:
         reason: str,
         now: datetime,
         expected_revision: int | None = None,
+        execution_mode: ToolExecutionMode = ToolExecutionMode.REAL,
+        simulation_auto_approve_critical: bool = False,
+        decision_source: str = "operator",
     ) -> ResponsePlanMutationView:
         if outcome not in {"accepted", "rejected"}:
             raise ValueError("response plan outcome is invalid")
@@ -88,7 +94,16 @@ class ResponsePlanToolService:
                 raise ResponsePlanDecisionConflict("response plan decision is stale")
             if outcome == "rejected":
                 return self._reject(session, plan, actor_id, reason, now)
-            return self._accept(session, plan, actor_id, reason, now)
+            return self._accept(
+                session,
+                plan,
+                actor_id,
+                reason,
+                now,
+                execution_mode=execution_mode,
+                simulation_auto_approve_critical=simulation_auto_approve_critical,
+                decision_source=decision_source,
+            )
 
     def _accept(
         self,
@@ -97,6 +112,10 @@ class ResponsePlanToolService:
         actor_id: UUID,
         reason: str,
         now: datetime,
+        *,
+        execution_mode: ToolExecutionMode,
+        simulation_auto_approve_critical: bool,
+        decision_source: str,
     ) -> ResponsePlanMutationView:
         revision = self._current_revision(session, plan)
         actions = list(
@@ -137,7 +156,17 @@ class ResponsePlanToolService:
             raise ResponsePlanDecisionConflict("response plan decision is stale")
 
         calls = [
-            self._create_call(session, plan, revision, action, actor_id, now) for action in actions
+            self._create_call(
+                session,
+                plan,
+                revision,
+                action,
+                actor_id,
+                now,
+                execution_mode=execution_mode,
+                simulation_auto_approve_critical=simulation_auto_approve_critical,
+            )
+            for action in actions
         ]
         final_status = (
             "needs_review"
@@ -151,8 +180,14 @@ class ResponsePlanToolService:
             plan,
             actor_id,
             "plan_accepted",
-            "operator_accepted",
-            f"响应计划已由操作员接受：{reason}",
+            "zero_touch_auto_accepted"
+            if decision_source == "zero_touch_demo"
+            else "operator_accepted",
+            (
+                f"隔离回放响应计划已由零人工演示策略自动接受：{reason}"
+                if decision_source == "zero_touch_demo"
+                else f"响应计划已由操作员接受：{reason}"
+            ),
             now,
         )
         session.flush()
@@ -213,6 +248,9 @@ class ResponsePlanToolService:
         action: ResponsePlanActionRow,
         actor_id: UUID,
         now: datetime,
+        *,
+        execution_mode: ToolExecutionMode,
+        simulation_auto_approve_critical: bool,
     ) -> TrustedToolCall:
         if action.status != "proposed":
             raise ResponsePlanDecisionConflict("response plan action is not proposed")
@@ -312,7 +350,7 @@ class ResponsePlanToolService:
             case_id=UUID(plan.case_id),  # type: ignore[arg-type]
             run_id=UUID(plan.run_id),
             role=AgentRole.RESPONSE_PLANNING,
-            mode=ToolExecutionMode.REAL,
+            mode=execution_mode,
             automation_enabled=control.automation_enabled if control else True,
             emergency_stop_active=control.emergency_stop_active if control else False,
             allowed_tools=frozenset({definition.identity}),
@@ -322,7 +360,7 @@ class ResponsePlanToolService:
             tool_call_limit=8,
             calls_in_window=recent_count,
             rate_limit=8,
-            simulation_auto_approve_critical=False,
+            simulation_auto_approve_critical=simulation_auto_approve_critical,
             now=now,
         )
         policy = self._policy.evaluate(bound, context)
@@ -336,6 +374,13 @@ class ResponsePlanToolService:
             request_id=f"plan-policy:{action.id}",
             reason=policy.reason,
         )
+        if policy.reason is PolicyReason.AUTOMATIC_SIMULATION_APPROVAL:
+            TrustedToolApprovalService().record_automatic(
+                tenant_id=UUID(plan.tenant_id),
+                call=call,
+                policy=policy,
+                store=SqlAlchemyApprovalStore(session, repo),
+            )
         target = {
             PolicyOutcome.DENY: TrustedToolCallStatus.REJECTED,
             PolicyOutcome.APPROVAL_REQUIRED: TrustedToolCallStatus.AWAITING_APPROVAL,

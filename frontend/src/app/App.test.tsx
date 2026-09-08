@@ -38,6 +38,7 @@ describe('application shell', () => {
     expect(screen.queryByRole('link', { name: 'MCP 服务状态' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '历史报告' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '智能体与 ReAct' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '模型测试' })).not.toBeInTheDocument()
   })
 
   it('supports keyboard navigation through visible links', async () => {

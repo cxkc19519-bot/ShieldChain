@@ -32,7 +32,7 @@ def read_records(path: Path) -> list[dict[str, object]]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"invalid JSON at {path}:{line_number}: {exc}") from exc
         if not isinstance(row, dict):
-            raise ValueError(f"record {line_number} is not an object")
+            raise TypeError(f"record {line_number} is not an object")
         records.append(row)
     return records
 

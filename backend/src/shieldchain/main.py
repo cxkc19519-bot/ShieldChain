@@ -20,8 +20,8 @@ from shieldchain.api.mcp import router as mcp_router
 from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
-from shieldchain.api.wazuh import router as wazuh_router
 from shieldchain.api.vulnerabilities import router as vulnerabilities_router
+from shieldchain.api.wazuh import router as wazuh_router
 from shieldchain.assistant.api import router as assistant_router
 from shieldchain.assistant.service import GroundedAssistantService
 from shieldchain.assistant.store import LocalConversationStore
@@ -62,9 +62,9 @@ from shieldchain.react.safety_loop import (
 from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.tools.firewall_connector import NftablesAdapterProvider
 from shieldchain.tools.wazuh_connector import WazuhAdapterProvider
-from shieldchain.wazuh.service import WazuhAlertService
 from shieldchain.vulnerabilities.agent import VulnerabilityTriageAgent
 from shieldchain.vulnerabilities.service import VulnerabilityWorkflowService
+from shieldchain.wazuh.service import WazuhAlertService
 
 logger = structlog.get_logger(__name__)
 _SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
@@ -259,6 +259,7 @@ def create_app(
         principal_id=settings.rag_demo_principal_id,
         audit_store=agent_tool_audit_store,
         remote_runtime=mcp_remote_runtime,
+        zero_touch_executor=trusted_tools,
     )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(

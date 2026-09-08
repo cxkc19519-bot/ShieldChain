@@ -5,7 +5,11 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { EmptyState, LoadingState } from '../../components/ui/States'
 import { getMcpRunCalls } from '../mcp/api'
 import type { McpRunCall } from '../mcp/types'
+import { getCollaborationTrajectory } from '../agents/api'
+import type { CollaborationTrajectory } from '../agents/types'
+import { listOperationsReports, type OperationsReport } from '../operations/api'
 import { controlToolCall, decideResponsePlan, decideToolCall, getResponsePlan, getToolTrace, setEmergencyStop } from './api'
+import { InvestigationTimeline } from './InvestigationTimeline'
 import './tools.css'
 import type { ResponsePlan, ToolTrace } from './types'
 
@@ -35,6 +39,9 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
   const [trace, setTrace] = useState<ToolTrace | null>(null)
   const [plan, setPlan] = useState<ResponsePlan | null>(null)
   const [mcpCalls, setMcpCalls] = useState<McpRunCall[] | null>(null)
+  const [trajectory, setTrajectory] = useState<CollaborationTrajectory | null>(null)
+  const [investigationReport, setInvestigationReport] = useState<OperationsReport | null>(null)
+  const [trajectoryNotice, setTrajectoryNotice] = useState<string | null>(null)
   const [partialErrors, setPartialErrors] = useState<string[]>([])
   const [reason, setReason] = useState('人工复核后执行')
   const [message, setMessage] = useState<Message | null>(null)
@@ -48,16 +55,21 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
     setTrace(null)
     setPlan(null)
     setMcpCalls(null)
+    setTrajectory(null)
+    setInvestigationReport(null)
+    setTrajectoryNotice(null)
     setPartialErrors([])
     setMessage(null)
     setBusy(false)
   }, [context.runId, initialRunId])
 
   const loadData = async (selectedRunId: string, controller: AbortController) => {
-    const [planResult, traceResult, mcpResult] = await Promise.allSettled([
+    const [planResult, traceResult, mcpResult, trajectoryResult, reportsResult] = await Promise.allSettled([
       getResponsePlan(selectedRunId, controller.signal),
       getToolTrace(selectedRunId, controller.signal),
       getMcpRunCalls(selectedRunId, controller.signal),
+      getCollaborationTrajectory(selectedRunId, controller.signal),
+      listOperationsReports(controller.signal),
     ])
     if (controller.signal.aborted) return []
     const errors: string[] = []
@@ -67,9 +79,34 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
     else { setTrace(null); errors.push(`可信处置：${errorMessage(traceResult.reason)}`) }
     if (mcpResult.status === 'fulfilled') setMcpCalls(mcpResult.value)
     else { setMcpCalls(null); errors.push(`MCP 调用：${errorMessage(mcpResult.reason)}`) }
+    if (trajectoryResult.status === 'fulfilled') { setTrajectory(trajectoryResult.value); setTrajectoryNotice(null) }
+    else {
+      setTrajectory(null)
+      setTrajectoryNotice(errorMessage(trajectoryResult.reason) === 'Agent trajectory not found'
+        ? '该运行尚未生成多智能体协作轨迹。'
+        : '智能体调查时间线暂不可用。')
+    }
+    const matchedReport = reportsResult.status === 'fulfilled'
+      ? reportsResult.value.find((item) => item.run_id === selectedRunId) ?? null
+      : null
+    setInvestigationReport(matchedReport)
+    if (matchedReport && trajectoryResult.status === 'rejected') setTrajectoryNotice(null)
     setPartialErrors(errors)
     return errors
   }
+
+  useEffect(() => {
+    if (embedded || !context.runId) return
+    active.current?.abort()
+    const controller = new AbortController()
+    active.current = controller
+    setBusy(true); setMessage(null)
+    void loadData(context.runId, controller).finally(() => {
+      if (active.current === controller) { active.current = null; setBusy(false) }
+    })
+    return () => controller.abort()
+    // Entering from a live alert should open the investigation immediately.
+  }, [context.runId, embedded])
 
   const load = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -78,6 +115,7 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
     active.current = controller
     setBusy(true); setMessage(null)
     setTrace(null); setPlan(null); setMcpCalls(null); setPartialErrors([])
+    setTrajectory(null); setInvestigationReport(null); setTrajectoryNotice(null)
     try {
       const errors = await loadData(runId.trim(), controller)
       if (!controller.signal.aborted && errors.length === 3) setMessage({ kind: 'error', text: errors.join('；') })
@@ -172,11 +210,14 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
         <p className="tools-control-note">紧急停止只阻止尚未下发的调用；执行中与验证中的动作必须继续查询和核验。</p>
       </div>
 
+      {(trajectory || investigationReport) && <InvestigationTimeline trajectory={trajectory} report={investigationReport} mcpCalls={mcpCalls} plan={plan} />}
+      {trajectoryNotice && (trace || plan || mcpCalls) && <p className="investigation-timeline__notice">{trajectoryNotice}</p>}
+
       {message && <p aria-live="polite" role={message.kind === 'error' ? 'alert' : 'status'} className={`tools-message tools-message--${message.kind}`}>{message.text}</p>}
       {partialErrors.length > 0 && partialErrors.length < 3 && <div className="tools-partial" role="status"><strong>部分公开数据暂不可用</strong><ul>{partialErrors.map((error) => <li key={error}>{error}</li>)}</ul></div>}
       <ol className="tools-safety-stages" aria-label="响应安全阶段">
         <li><strong>1. 建议</strong><span>结构化计划，不代表授权</span></li>
-        <li><strong>2. 接受与审批</strong><span>接受计划不等于批准高风险动作</span></li>
+        <li><strong>2. 接受与审批</strong><span>{plan?.status === 'completed' ? '隔离回放策略自动授权' : '接受计划不等于批准高风险动作'}</span></li>
         <li><strong>3. 执行</strong><span>仅服务端策略允许的绑定调用</span></li>
         <li><strong>4. 验证</strong><span>只有可信回执核验通过才算完成</span></li>
       </ol>
@@ -189,18 +230,18 @@ export function ToolsPage({ initialRunId, embedded = false }: { initialRunId?: s
           const current = plan.revisions.find((item) => item.revision === plan.current_revision)
           if (!current) return <p role="alert">当前修订缺少公开投影，不能执行操作。</p>
           return <>
-            <p>{current.public_summary}</p>
+            <p>{plan.status === 'completed' ? `隔离回放响应计划已完成零人工闭环；${current.actions.length} 项白名单模拟动作均执行成功并通过状态验证。` : current.public_summary}</p>
             {current.reason_code && <p><strong>重规划/停止原因：</strong><code>{current.reason_code}</code></p>}
             {current.actions.length === 0 ? <EmptyState title="当前修订没有可执行动作" detail="失败修订只保留停止与人工复核事实，不自动生成或重放动作。" /> : <ol className="response-plan__actions">{current.actions.map((action) => <li key={action.id}>
               <header><strong>{action.sequence}. {action.tool_name} v{action.tool_version}</strong><span>风险 {action.assessed_risk}</span></header>
               <p>{action.public_reason}</p>
-              <dl><div><dt>目标</dt><dd>{action.target_type} · <code>{action.target}</code></dd></div><div><dt>计划接受</dt><dd>{plan.status === 'proposed' ? '尚未接受' : '已决策'}</dd></div><div><dt>独立工具审批</dt><dd>{action.approval_required ? (action.call_status === 'awaiting_approval' ? '等待审批' : '必须审批') : '无需独立审批'}</dd></div><div><dt>执行</dt><dd>{action.call_status ?? '尚未创建调用'}</dd></div><div><dt>验证</dt><dd>{action.verification_outcome ?? '尚未验证'}</dd></div></dl>
+              <dl><div><dt>目标</dt><dd>{action.target_type} · <code>{action.target}</code></dd></div><div><dt>计划接受</dt><dd>{plan.status === 'proposed' ? '尚未接受' : '已决策'}</dd></div><div><dt>动作授权</dt><dd>{action.approval_required ? (action.call_status === 'succeeded' && plan.status === 'completed' ? '零人工演示策略自动授权' : action.call_status === 'awaiting_approval' ? '等待人工审批' : '必须审批') : '低风险策略自动允许'}</dd></div><div><dt>执行</dt><dd>{action.call_status ?? '尚未创建调用'}</dd></div><div><dt>验证</dt><dd>{action.verification_outcome ?? '尚未验证'}</dd></div></dl>
               <small>动作 ID：<code>{action.id}</code>{action.call_id && <> · 调用 ID：<code>{action.call_id}</code></>}</small>
             </li>)}</ol>}
           </>
         })()}
         {plan.status === 'proposed' && <footer><button disabled={busy || !reason.trim()} type="button" onClick={() => void decidePlan('accept')}>接受计划并进入逐动作策略</button><button className="secondary-button" disabled={busy || !reason.trim()} type="button" onClick={() => void decidePlan('reject')}>拒绝计划</button></footer>}
-        <p className="tools-control-note">接受只允许计划进入服务端逐动作策略；高风险动作仍需单独审批。页面不会提交工具名、参数、风险或策略字段。</p>
+        <p className="tools-control-note">{plan.status === 'completed' ? '隔离回放计划已由零人工演示策略自动接受、执行并验证；页面只展示可信审计结果。' : '接受只允许计划进入服务端逐动作策略；真实环境高风险动作仍需单独审批。页面不会提交工具名、参数、风险或策略字段。'}</p>
       </section>}
 
       {mcpCalls && <section className="mcp-run-calls" aria-labelledby="mcp-run-calls-title"><div className="tools-trace-heading"><div><p className="eyebrow">只读数据获取</p><h3 id="mcp-run-calls-title">Agent Tool / MCP 调用</h3></div><strong>{mcpCalls.length} 个调用</strong></div>{mcpCalls.length === 0 ? <p>该运行没有 Agent Tool/MCP 调用。</p> : <div>{mcpCalls.map((call) => <article key={call.id}><header><strong>{call.tool_alias}</strong><span className="status-badge">{call.status}</span></header><dl><div><dt>来源</dt><dd>{call.provider_kind === 'remote_mcp' ? '外部 MCP' : call.provider_kind === 'rag' ? '本地 RAG' : '内置只读工具'}</dd></div><div><dt>目录修订</dt><dd><code>{call.catalog_revision}</code></dd></div><div><dt>Schema 修订</dt><dd><code>{call.schema_revision}</code></dd></div><div><dt>结果</dt><dd>{call.result_count} 项{call.truncated ? ' · 已截断' : ''}</dd></div></dl><p>{call.summary ?? '调用尚未形成公开摘要。'}</p>{call.reason_code && <code>{call.reason_code}</code>}</article>)}</div>}</section>}

@@ -20,6 +20,7 @@ sample_docs/security_vertical/*.pdf
 
 # Python
 .venv/
+.test-venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -29,6 +30,8 @@ htmlcov/
 
 # Node and frontend builds
 node_modules/
+.pnpm-store/
+pnpm-lock.yaml
 .npm-cache/
 *.tsbuildinfo
 build/

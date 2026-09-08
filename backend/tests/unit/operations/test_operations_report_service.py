@@ -93,7 +93,7 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     Base.metadata.create_all(engine)
     agent = SecurityOperationsReportAgent(
         create_session_factory(engine),
-        settings=Settings(_env_file=None),
+        settings=Settings(_env_file=None, deepseek_api_key=""),
         tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
         store=OperationsReportStore(tmp_path),
         knowledge=None,  # type: ignore[arg-type]
@@ -207,6 +207,35 @@ def test_react_superagent_controls_specialist_order() -> None:
     assert model == "deepseek-test"
     assert calls == []
     assert [item.iteration for item in rows] == list(range(1, 8))
+
+
+def test_isolated_replay_can_require_complete_cross_domain_observations() -> None:
+    team = _team()
+    tools = _tools()
+    decisions = iter(_SPECIALISTS)
+
+    async def choose(remaining, _facts, _results):
+        role = next(decisions)
+        assert role in remaining
+        return role, f"选择 {role}", "local-qwen"
+
+    async def run_role(definition, _broker, _results):
+        return f"{definition.label}完成", "local-qwen", "工具决策：现有证据充分"
+
+    team._choose = choose  # type: ignore[method-assign]
+    team._run_role = run_role  # type: ignore[method-assign]
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    _rows, _model, calls = asyncio.run(
+        team.run(
+            tools,
+            now,
+            now,
+            required_observation_tools=tuple(tool.name for tool in tools),
+        )
+    )
+
+    assert [item.name for item in calls] == [tool.name for tool in tools]
+    assert all(tool.calls == 1 for tool in tools)
 
 
 def test_specialist_model_selects_only_needed_tool() -> None:

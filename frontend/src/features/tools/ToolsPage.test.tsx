@@ -5,8 +5,12 @@ import { ToolsPage } from './ToolsPage'
 
 const api = vi.hoisted(() => ({ getToolTrace: vi.fn(), getResponsePlan: vi.fn(), decideResponsePlan: vi.fn(), decideToolCall: vi.fn(), controlToolCall: vi.fn(), setEmergencyStop: vi.fn() }))
 const mcpApi = vi.hoisted(() => ({ getMcpRunCalls: vi.fn() }))
+const agentApi = vi.hoisted(() => ({ getCollaborationTrajectory: vi.fn() }))
+const operationsApi = vi.hoisted(() => ({ listOperationsReports: vi.fn() }))
 vi.mock('./api', () => api)
 vi.mock('../mcp/api', () => mcpApi)
+vi.mock('../agents/api', () => agentApi)
+vi.mock('../operations/api', () => operationsApi)
 const ID = '11111111-1111-4111-8111-111111111111'
 const ID_2 = '22222222-2222-4222-8222-222222222222'
 const ID_3 = '33333333-3333-4333-8333-333333333333'
@@ -21,8 +25,12 @@ const call = (status: string, id = ID) => ({
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset())
   Object.values(mcpApi).forEach((mock) => mock.mockReset())
+  Object.values(agentApi).forEach((mock) => mock.mockReset())
+  Object.values(operationsApi).forEach((mock) => mock.mockReset())
   api.getResponsePlan.mockRejectedValue(new Error('Response plan not found'))
   mcpApi.getMcpRunCalls.mockResolvedValue([])
+  agentApi.getCollaborationTrajectory.mockRejectedValue(new Error('Agent trajectory not found'))
+  operationsApi.listOperationsReports.mockResolvedValue([])
 })
 
 describe('ToolsPage', () => {
@@ -126,6 +134,46 @@ describe('ToolsPage', () => {
     expect(screen.queryByText('private prompt')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '接受计划并进入逐动作策略' }))
     await waitFor(() => expect(api.decideResponsePlan).toHaveBeenCalledWith(ID_2, 'accept', 0, '人工复核后执行'))
+  })
+
+  it('shows an evidence-backed attack investigation timeline before response actions', async () => {
+    agentApi.getCollaborationTrajectory.mockResolvedValue({
+      run_id: ID, case_id: ID_2, phase: 'action_planned', revision: 3,
+      shared_summary: '已关联异常流量、终端进程与身份账号。',
+      confirmed_facts: ['终端存在异常外联', '账号与进程时间一致'], reason_codes: [],
+      role_statuses: [], budget: { step_limit: 10, steps_used: 4, loop_limit: 3, loops_used: 1, time_limit_seconds: 300, time_used_seconds: 12, token_limit: 1000, tokens_used: 300, cost_limit_usd: 1, cost_used_usd: 0, tool_call_limit: 10, tool_calls_used: 2 },
+      handoffs: [{ id: ID_3, sender: 'alert_triage', receiver: 'threat_investigation', conclusion: '异常流量由 powershell.exe 发起，并关联到账号 user01。', confidence: .92, open_questions: ['确认账号业务用途'], recommended_actions: [], citations: [{ id: ID, kind: 'evidence', source_id: 'wazuh:event-7', observed_at: '2026-07-23T00:00:00Z', integrity_sha256: 'a'.repeat(64) }], created_at: '2026-07-23T00:00:00Z' }],
+      citations: [], updated_at: '2026-07-23T00:00:00Z',
+    })
+    api.getToolTrace.mockResolvedValue({ run_id: ID, calls: [] })
+    mcpApi.getMcpRunCalls.mockResolvedValue([{ id: ID, role: 'threat_investigation', direction: 'internal', provider_kind: 'builtin', provider_id: 'local', tool_alias: 'query_process_tree', catalog_revision: '1', schema_revision: '1', status: 'succeeded', reason_code: null, result_count: 1, summary: '定位到终端进程树。', duration_ms: 12, attempt: 1, truncated: false, created_at: '2026-07-23T00:00:01Z', finished_at: '2026-07-23T00:00:02Z' }])
+    render(<ToolsPage />)
+    fireEvent.change(screen.getByLabelText('调查运行 ID'), { target: { value: ID } })
+    fireEvent.click(screen.getByRole('button', { name: '查看处置轨迹' }))
+
+    expect(await screen.findByRole('heading', { name: '智能体攻击调查时间线' })).toBeVisible()
+    expect(screen.getByText('异常流量由 powershell.exe 发起，并关联到账号 user01。')).toBeVisible()
+    expect(screen.getByText('wazuh:event-7')).toBeVisible()
+    expect(screen.getAllByText('定位到终端进程树。')).toHaveLength(2)
+    expect(screen.getByText(/不展示隐藏思维链/)).toBeVisible()
+  })
+
+  it('uses the public operations report timeline for an automatic Wazuh investigation', async () => {
+    api.getToolTrace.mockRejectedValue(new Error('Trusted tool trace not found'))
+    operationsApi.listOperationsReports.mockResolvedValue([{
+      id: 'report-1', run_id: ID, run_status: 'completed', generated_at: '2026-09-07T15:56:47Z',
+      start_at: '2026-09-07T15:50:00Z', end_at: '2026-09-07T16:00:00Z', agent_name: '安全运营报告智能体', model: 'shieldchain-qwen3-30b',
+      stages: [], collaboration: [], tool_calls: [], response_plan: null, cross_domain: [], markdown: '', html: '',
+      reasoning_trace: [{ sequence: 1, phase: 'observe', title: '观测：发现异常网络流量', detail: 'NTA 告警达到调查阈值。', evidence: ['wazuh:alert-1'], domains: ['网络流量'], status: 'completed', confidence: .9 }],
+      closure: { status: 'analysis_complete', observed: '已完成隔离回放告警调查。', decision: '建议人工复核。', action: '未执行动作。', verification: '等待验证。', feedback: '补充证据后重规划。', human_approval_required: true },
+    }])
+    render(<ToolsPage initialRunId={ID} embedded />)
+
+    expect(await screen.findByRole('heading', { name: '智能体攻击调查时间线' })).toBeVisible()
+    expect(screen.getByText('观测：发现异常网络流量')).toBeVisible()
+    expect(screen.getByText('NTA 告警达到调查阈值。')).toBeVisible()
+    expect(screen.getByText('wazuh:alert-1')).toBeVisible()
+    expect(screen.queryByText('该运行尚未生成多智能体协作轨迹。')).not.toBeInTheDocument()
   })
 
   it('keeps a successful automation restore when the current run has no trusted trace', async () => {

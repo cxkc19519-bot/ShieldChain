@@ -81,7 +81,9 @@ class QwenExperienceService:
             provider=self.provider,
         )
 
-    async def chat(self, payload: QwenExperienceChatRequest, *, model: str | None = None) -> QwenExperienceChatResponse:
+    async def chat(
+        self, payload: QwenExperienceChatRequest, *, model: str | None = None
+    ) -> QwenExperienceChatResponse:
         conversation = tuple(
             ChatMessage(role=message.role, content=message.content) for message in payload.messages
         )
@@ -90,7 +92,11 @@ class QwenExperienceService:
         results: tuple[BingSearchResult, ...] = ()
         try:
             async with httpx.AsyncClient() as client:
-                settings = self._settings.model_copy(update={"deepseek_model": model}) if model else self._settings
+                settings = (
+                    self._settings.model_copy(update={"deepseek_model": model})
+                    if model
+                    else self._settings
+                )
                 llm = DeepSeekClient(settings, client, request_timeout=120.0)
                 planner = await llm.chat(
                     ChatRequest(

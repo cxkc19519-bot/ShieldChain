@@ -8,9 +8,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
 from shieldchain.agents.domain import AgentRole, BudgetSnapshot, EvidenceReference
 from shieldchain.incidents.persistence import (
     EvidenceRecordRow,
@@ -47,6 +44,8 @@ from shieldchain.tools.gateway_store import SqlAlchemyGatewayStore
 from shieldchain.tools.policy import ToolExecutionMode, ToolPolicyContext
 from shieldchain.tools.registry import default_tool_registry
 from shieldchain.tools.simulation import OfflineSimulationAdapter
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 NOW = datetime(2026, 7, 23, 23, tzinfo=UTC)
 TENANT = UUID("00000000-0000-4000-8000-000000000001")

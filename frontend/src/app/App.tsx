@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, ShieldCheck, Bug } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, ShieldCheck, Bug } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -13,7 +13,6 @@ const navigation = [
   { label: '漏洞闭环', icon: Bug, to: '/vulnerabilities' },
   { label: '知识库', icon: Database, to: '/knowledge' },
   { label: '智能助手', icon: MessageCircle, to: '/assistant' },
-  { label: '模型测试', icon: Sparkles, to: '/qwen-chat' },
 ]
 
 export function App() {

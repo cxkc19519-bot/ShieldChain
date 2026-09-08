@@ -60,6 +60,7 @@ from shieldchain.tools.plan_service import (
 from shieldchain.tools.registry import default_tool_registry
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository, _call
 from shieldchain.tools.simulation import OfflineSimulationAdapter
+from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhCaseRunRow
 
 NOW = datetime(2026, 8, 23, 15, tzinfo=UTC)
 TENANT = UUID("00000000-0000-4000-8000-000000000001")
@@ -73,6 +74,7 @@ PLAN = UUID("00000000-0000-4000-8000-000000000305")
 REVISION = UUID("00000000-0000-4000-8000-000000000306")
 QUERY_ACTION = UUID("00000000-0000-4000-8000-000000000307")
 BLOCK_ACTION = UUID("00000000-0000-4000-8000-000000000308")
+WAZUH_ALERT = UUID("00000000-0000-4000-8000-000000000310")
 
 
 @pytest.fixture
@@ -193,6 +195,39 @@ def plan_context(tmp_path: Path):
             )
         )
         session.add(
+            WazuhAlertRow(
+                id=str(WAZUH_ALERT),
+                tenant_id=str(TENANT),
+                external_id="nta-replay:zero-touch-test",
+                occurred_at=NOW,
+                severity=12,
+                rule_id="suricata:9000090",
+                title="NTA 隔离回放：零人工闭环测试",
+                agent_id="002",
+                agent_name="nta-isolated-replay-suricata",
+                mitre_ids_json=[],
+                process_name=None,
+                parent_process_name=None,
+                source_ip="203.0.113.8",
+                destination_ip=None,
+                destination_port=None,
+                evidence_json={
+                    "source_kind": "nta_pcap_isolated_replay",
+                    "isolated_docker_network": True,
+                },
+                received_at=NOW,
+            )
+        )
+        session.add(
+            WazuhCaseRunRow(
+                run_id=str(RUN),
+                case_id=str(CASE),
+                tenant_id=str(TENANT),
+                alert_id=str(WAZUH_ALERT),
+                created_at=NOW,
+            )
+        )
+        session.add(
             ResponsePlanRow(
                 id=str(PLAN),
                 tenant_id=str(TENANT),
@@ -298,6 +333,35 @@ def _adapter() -> OfflineSimulationAdapter:
         endpoint_targets=frozenset(),
         account_targets=frozenset(),
     )
+
+
+def test_isolated_replay_plan_completes_without_human_approval(plan_context) -> None:
+    _plan_service, factory = plan_context
+
+    result = TrustedToolApiService(factory).execute_zero_touch_plan(
+        tenant_id=TENANT,
+        plan_id=PLAN,
+        now=NOW,
+    )
+
+    assert result.plan_status == "completed"
+    assert result.loop_status is ReactLoopStatus.COMPLETED
+    with factory() as session:
+        calls = list(
+            session.scalars(
+                select(TrustedToolCallRow)
+                .where(TrustedToolCallRow.run_id == str(RUN))
+                .order_by(TrustedToolCallRow.created_at, TrustedToolCallRow.id)
+            )
+        )
+        assert [row.status for row in calls] == ["succeeded", "succeeded"]
+        assert session.scalar(select(func.count()).select_from(ToolApprovalRow)) == 1
+        events = list(
+            session.scalars(
+                select(ResponsePlanEventRow).where(ResponsePlanEventRow.plan_id == str(PLAN))
+            )
+        )
+        assert any(row.reason_code == "zero_touch_auto_accepted" for row in events)
 
 
 class NoopSafetyLoop:

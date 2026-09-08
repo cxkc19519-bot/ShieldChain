@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import struct
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[2] / "scripts" / "nta" / "slice_pcap_time.py"
@@ -76,11 +76,11 @@ class SlicePcapTests(unittest.TestCase):
             window.start,
             datetime(2018, 2, 21, 10, 9, tzinfo=timezone.utc).timestamp(),
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(argparse.ArgumentTypeError):
             slicer.parse_window(
                 "../bad,2018-02-21T10:09:00+00:00,2018-02-21T10:19:00+00:00"
             )
-        with self.assertRaises(Exception):
+        with self.assertRaises(argparse.ArgumentTypeError):
             slicer.parse_window("bad,2018-02-21T10:09:00,2018-02-21T10:19:00")
 
 

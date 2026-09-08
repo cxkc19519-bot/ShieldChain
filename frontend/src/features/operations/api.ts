@@ -22,12 +22,12 @@ export type ResponsePlanReference = {
   plan_id: string
   revision_id: string
   revision: number
-  status: 'proposed' | 'needs_review' | 'completed_advisory'
+  status: 'proposed' | 'needs_review' | 'completed' | 'completed_advisory'
   public_summary: string
   action_count: number
   generation_status: 'model_compiled' | 'deterministic_fallback'
   fallback_reason_code: string | null
-  execution_status: 'not_executed'
+  execution_status: 'not_executed' | 'verified_completed'
 }
 
 export type ReasoningStep = {
@@ -132,12 +132,12 @@ function responsePlan(value: unknown): ResponsePlanReference {
     plan_id: text(item.plan_id),
     revision_id: text(item.revision_id),
     revision: integer(item.revision),
-    status: choice(item.status, ['proposed', 'needs_review', 'completed_advisory'] as const),
+    status: choice(item.status, ['proposed', 'needs_review', 'completed', 'completed_advisory'] as const),
     public_summary: text(item.public_summary),
     action_count: integer(item.action_count, 8),
     generation_status: choice(item.generation_status, ['model_compiled', 'deterministic_fallback'] as const),
     fallback_reason_code: nullableText(item.fallback_reason_code),
-    execution_status: choice(item.execution_status, ['not_executed'] as const),
+    execution_status: choice(item.execution_status, ['not_executed', 'verified_completed'] as const),
   }
 }
 

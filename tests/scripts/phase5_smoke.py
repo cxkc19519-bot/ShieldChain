@@ -7,9 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
 from shieldchain.agents.domain import (
     AgentRole,
     BudgetSnapshot,
@@ -45,6 +42,8 @@ from shieldchain.tools.repositories import (
     TrustedToolIdempotencyConflict,
 )
 from shieldchain.tools.simulation import OfflineSimulationAdapter
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 NOW = datetime(2026, 7, 23, 12, tzinfo=UTC)
 TENANT = UUID("00000000-0000-4000-8000-000000000001")

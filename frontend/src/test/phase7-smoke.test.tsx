@@ -52,7 +52,7 @@ describe('Phase 7 cross-page smoke', () => {
     }
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/reports/history', expect.objectContaining({ method: 'GET' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/integrations/wazuh/false-positive-metrics', expect.any(Object))
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     for (const [url] of fetchMock.mock.calls) {
       expect(url).toEqual(expect.stringMatching(/^\/api\/v1\//))
     }

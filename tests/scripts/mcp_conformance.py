@@ -8,14 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from mcp import Client
-from sqlalchemy import select
-
 from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url, create_session_factory
 from shieldchain.mcp_server import create_mcp_server
 from shieldchain.operations.persistence import AgentToolCallRow
 from shieldchain.wazuh.persistence import WazuhAlertRow
+from sqlalchemy import select
 
 
 async def _verify(database: Path) -> None:

@@ -4,7 +4,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 RULES_PATH = (
     Path(__file__).resolve().parents[2]
     / "config"

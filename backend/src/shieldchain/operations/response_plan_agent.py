@@ -36,7 +36,7 @@ class OperationsResponsePlanResult:
 
 
 class OperationsResponsePlanAgent:
-    """Generate an advisory-only strict plan for a report-level operations run."""
+    """Generate a strict advisory or case-bound response plan."""
 
     def __init__(
         self,
@@ -154,7 +154,9 @@ class OperationsResponsePlanAgent:
                 "不得输出 Markdown、解释文字或第二个对象。只能从 allowed_actions 复制允许的"
                 "工具、证据引用、参数、期望状态和验证器；不得创造或修改目标。"
                 "allowed_actions 为空时 assumptions 和 actions 必须为空。"
-                "候选只是一份待人工审批计划，"
+                "allowed_actions 非空时必须基于已确认案件证据选择至少一项改变状态的响应动作，"
+                "并原样使用其验证器；不得只选择查询动作。"
+                "候选只是未经策略引擎授权的计划，"
                 "不能声称批准、执行、"
                 "验证或完成处置。stop_conditions 至少一项。不得输出 tenant、principal、role、risk、"
                 "approval、policy、幂等键、timeout、credential、URL、Shell、命令或代码。",
@@ -168,9 +170,9 @@ class OperationsResponsePlanAgent:
             self._context(run_id, now, response.model, case_id=case_id),
         )
         valid_advisory = (
-            case_id is None
-            and compiled.status is ResponsePlanStatus.COMPLETED_ADVISORY
+            compiled.status is ResponsePlanStatus.COMPLETED_ADVISORY
             and not compiled.action_ids
+            and (case_id is None or not (actionable_ip or actionable_endpoint))
         )
         valid_case_plan = (
             case_id is not None
@@ -185,7 +187,7 @@ class OperationsResponsePlanAgent:
                 used_fallback=False,
                 decision_reason=(
                     "模型候选已通过严格 Schema、案件绑定和服务端编译；"
-                    "计划仍需人工接受及逐动作审批，尚未执行。"
+                    "计划尚未执行，后续由服务端响应策略决定自动闭环或人工审批。"
                 ),
             )
         reason_code = compiled.reason_code or "operations_report_action_forbidden"

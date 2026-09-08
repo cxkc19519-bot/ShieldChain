@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-
 MAGIC = {
     b"\xd4\xc3\xb2\xa1": ("<", 1_000_000),
     b"\xa1\xb2\xc3\xd4": (">", 1_000_000),

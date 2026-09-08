@@ -10,7 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import func, select
 
-from shieldchain.agents.persistence import AgentRunRow
+from shieldchain.agents.persistence import AgentRunRow, CaseContextRow
 from shieldchain.core.config import Settings
 from shieldchain.db.base import Base
 from shieldchain.db.session import create_engine_from_url, create_session_factory
@@ -28,10 +28,14 @@ from shieldchain.response_planning.persistence import (
     ResponsePlanRow,
 )
 from shieldchain.tools.persistence import TrustedToolCallRow
+from shieldchain.wazuh.persistence import WazuhCaseRunRow
 
 NOW = datetime(2026, 8, 23, 14, tzinfo=UTC)
 TENANT = UUID("00000000-0000-4000-8000-000000000001")
 RUN = UUID("00000000-0000-4000-8000-000000000201")
+CASE_RUN = UUID("00000000-0000-4000-8000-000000000206")
+WAZUH_CASE = UUID("00000000-0000-4000-8000-000000000207")
+WAZUH_ALERT = UUID("00000000-0000-4000-8000-000000000208")
 FOREIGN_RUN = UUID("00000000-0000-4000-8000-000000000202")
 FOREIGN_CASE = UUID("00000000-0000-4000-8000-000000000203")
 FOREIGN_EVIDENCE = UUID("00000000-0000-4000-8000-000000000204")
@@ -56,6 +60,48 @@ def planner_context(tmp_path: Path):
                 revision=0,
                 created_at=NOW,
                 updated_at=NOW,
+            )
+        )
+        session.add(
+            AgentRunRow(
+                id=str(CASE_RUN),
+                tenant_id=str(TENANT),
+                principal_id=str(UUID(int=2)),
+                run_kind="operations_report",
+                status="running",
+                goal="Generate a bounded Wazuh case report.",
+                catalog_revision="test-v1",
+                revision=0,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.flush()
+        session.add(
+            CaseContextRow(
+                id=str(WAZUH_CASE),
+                run_id=str(CASE_RUN),
+                tenant_id=str(TENANT),
+                revision=0,
+                phase="response_planning",
+                user_goal="Investigate the Wazuh review case.",
+                hypotheses_json=[],
+                risks_json=[],
+                plan_json=[],
+                step_status_json={},
+                disposition_status="pending",
+                budget_json={},
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.add(
+            WazuhCaseRunRow(
+                run_id=str(CASE_RUN),
+                case_id=str(WAZUH_CASE),
+                tenant_id=str(TENANT),
+                alert_id=str(WAZUH_ALERT),
+                created_at=NOW,
             )
         )
         session.add(
@@ -158,13 +204,19 @@ def _candidate(summary: str = "建议人工复核当前报告线索。") -> dict
     }
 
 
-def _generate(planner: OperationsResponsePlanAgent):
+def _generate(
+    planner: OperationsResponsePlanAgent,
+    *,
+    run_id: UUID = RUN,
+    case_id: UUID | None = None,
+):
     return asyncio.run(
         planner.generate(
-            run_id=RUN,
+            run_id=run_id,
             public_handoffs=[{"role": "threat_investigation", "summary": "存在待复核线索。"}],
             observation_summaries="告警工具：发现一条待复核告警。",
             now=NOW,
+            case_id=case_id,
         )
     )
 
@@ -201,6 +253,35 @@ def test_valid_model_candidate_creates_advisory_plan_without_execution(planner_c
         assert session.scalar(select(func.count()).select_from(ResponsePlanRow)) == 1
         assert session.scalar(select(func.count()).select_from(ResponsePlanActionRow)) == 0
         assert session.scalar(select(func.count()).select_from(TrustedToolCallRow)) == 0
+
+
+def test_case_without_actionable_target_creates_advisory_without_fallback(
+    planner_context,
+) -> None:
+    planner, factory = planner_context
+
+    async def chat(_system: str, _user: str):
+        return SimpleNamespace(
+            content=json.dumps(
+                _candidate("案件缺少可安全处置的目标，建议人工补充证据。"),
+                ensure_ascii=False,
+            ),
+            model="test-model",
+        )
+
+    planner._chat = chat  # type: ignore[method-assign]
+    result = _generate(planner, run_id=CASE_RUN, case_id=WAZUH_CASE)
+
+    assert result.used_fallback is False
+    assert result.reference.generation_status == "model_compiled"
+    assert result.reference.status == "completed_advisory"
+    assert result.reference.action_count == 0
+    assert result.reference.execution_status == "not_executed"
+    with factory() as session:
+        plan = session.get(ResponsePlanRow, str(result.reference.plan_id))
+        assert plan is not None
+        assert plan.run_id == str(CASE_RUN)
+        assert plan.case_id == str(WAZUH_CASE)
 
 
 @pytest.mark.parametrize(

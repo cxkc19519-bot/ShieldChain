@@ -8,6 +8,13 @@ from shieldchain.main import create_app
 
 
 @pytest.fixture(autouse=True)
+def isolate_external_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep offline tests deterministic even when the developer shell has a live key."""
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def reset_structlog_configuration() -> Iterator[None]:
     """Prevent a captured output stream configured by one test leaking into the next."""
     yield

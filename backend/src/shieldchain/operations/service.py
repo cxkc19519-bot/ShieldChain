@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import httpx
@@ -106,6 +107,18 @@ class WazuhCaseScope:
     rule_ttl_seconds: int
     occurred_at: datetime
     title: str
+    isolated_replay: bool
+
+
+class ZeroTouchOutcome(Protocol):
+    plan_status: str
+    reason_code: str
+
+
+class ZeroTouchResponseExecutor(Protocol):
+    def execute_zero_touch_plan(
+        self, *, tenant_id: UUID, plan_id: UUID, now: datetime
+    ) -> ZeroTouchOutcome: ...
 
 
 class SecurityOperationsReportAgent:
@@ -126,6 +139,7 @@ class SecurityOperationsReportAgent:
         audit_store: AgentToolAuditStore | None = None,
         remote_runtime: McpRemoteRuntime | None = None,
         response_plan_agent: OperationsResponsePlanAgent | None = None,
+        zero_touch_executor: ZeroTouchResponseExecutor | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
@@ -141,6 +155,7 @@ class SecurityOperationsReportAgent:
             session_factory,
             tenant_id=tenant_id,
         )
+        self._zero_touch_executor = zero_touch_executor
         self._team = RealDataAgentTeam(
             settings,
             knowledge,
@@ -191,6 +206,25 @@ class SecurityOperationsReportAgent:
                 tools=self._tools + remote_catalog.tools,
                 case_scope=case_scope,
             )
+            if (
+                case_scope is not None
+                and case_scope.isolated_replay
+                and report.response_plan is not None
+                and report.response_plan.status == "proposed"
+            ):
+                if self._zero_touch_executor is None:
+                    raise RuntimeError("isolated replay zero-touch executor is unavailable")
+                outcome = self._zero_touch_executor.execute_zero_touch_plan(
+                    tenant_id=self._tenant_id,
+                    plan_id=report.response_plan.plan_id,
+                    now=datetime.now(UTC),
+                )
+                if outcome.plan_status != "completed":
+                    raise RuntimeError(
+                        f"isolated replay zero-touch loop stopped: {outcome.reason_code}"
+                    )
+                report = self._zero_touch_completed_report(report)
+                self._store.save(report)
         except asyncio.CancelledError:
             self._finish_run(run_id, "cancelled", datetime.now(UTC))
             raise
@@ -199,6 +233,89 @@ class SecurityOperationsReportAgent:
             raise
         self._finish_run(run_id, "completed", datetime.now(UTC))
         return report
+
+    def _zero_touch_completed_report(
+        self, report: OperationsReportView
+    ) -> OperationsReportView:
+        reference = report.response_plan
+        if reference is None:
+            raise RuntimeError("zero-touch report is missing its response plan")
+        completed_reference = reference.model_copy(
+            update={
+                "status": "completed",
+                "execution_status": "verified_completed",
+                "public_summary": (
+                    "隔离回放响应计划已由服务端零人工策略自动接受；"
+                    f"{reference.action_count} 项白名单模拟动作均执行成功并通过状态验证。"
+                ),
+            }
+        )
+        stages = [
+            item.model_copy(
+                update={
+                    "status": "completed",
+                    "detail": (
+                        f"零人工演示策略已自动接受计划并完成 {reference.action_count} 项"
+                        "模拟安全动作；执行后状态已由只读验证器确认。"
+                    ),
+                }
+            )
+            if item.key == "response_plan"
+            else item
+            for item in report.stages
+        ]
+        reasoning_trace = [
+            item.model_copy(
+                update={
+                    "status": "completed",
+                    "detail": (
+                        "隔离回放计划已由服务端策略自动授权，并调用白名单内的模拟安全工具。"
+                        if item.phase == "act"
+                        else "已重新查询响应目标状态，执行结果与计划期望状态一致。"
+                    ),
+                    "confidence": 1.0,
+                }
+            )
+            if item.phase in {"act", "verify"}
+            else item
+            for item in report.reasoning_trace
+        ]
+        collaboration = [
+            item.model_copy(update={"response_plan": completed_reference})
+            if item.role == "response_planning" and item.response_plan is not None
+            else item
+            for item in report.collaboration
+        ]
+        closure = ClosureLoopView(
+            status="closed",
+            observed=report.closure.observed,
+            decision=report.closure.decision,
+            action=(
+                f"零人工演示策略自动执行了 {reference.action_count} 项白名单模拟安全动作。"
+            ),
+            verification="所有动作均取得执行回执，且执行后只读状态验证通过。",
+            feedback="闭环已完成；执行、验证和策略记录已保存，可按运行 ID 回放。",
+            human_approval_required=False,
+        )
+        markdown = (
+            report.markdown
+            + "\n\n## 零人工演示闭环\n\n"
+            + f"- 自动执行动作：{reference.action_count} 项\n"
+            + "- 策略结果：隔离回放白名单自动授权\n"
+            + "- 验证结果：执行后状态验证通过\n"
+            + "- 人工干预：0 次\n"
+        )
+        return report.model_copy(
+            update={
+                "stages": stages,
+                "collaboration": collaboration,
+                "response_plan": completed_reference,
+                "reasoning_trace": reasoning_trace,
+                "closure": closure,
+                "markdown": markdown,
+                "html": self._markdown_to_html(markdown),
+            }
+        )
 
     async def _generate_report(
         self,
@@ -234,6 +351,16 @@ class SecurityOperationsReportAgent:
             target_endpoint_id=case_scope.agent_id if case_scope else None,
             target_file_id=case_scope.file_id if case_scope else None,
             rule_ttl_seconds=case_scope.rule_ttl_seconds if case_scope else 60,
+            required_observation_tools=(
+                (
+                    "security.events.list",
+                    "security.alerts.list",
+                    "security.vulnerabilities.list",
+                    "security.weak_passwords.list",
+                )
+                if case_scope is not None and case_scope.isolated_replay
+                else ()
+            ),
         )
         response_plan = next(
             (
@@ -430,7 +557,11 @@ class SecurityOperationsReportAgent:
                         tenant_id=str(self._tenant_id),
                         revision=0,
                         phase="response_planning",
-                        user_goal="分析真实 Wazuh 告警并形成需要人工审批的受控响应计划。",
+                        user_goal=(
+                            "分析隔离 PCAP 回放告警并形成可由零人工策略自动执行的受控响应计划。"
+                            if case_scope is not None and case_scope.isolated_replay
+                            else "分析真实 Wazuh 告警并形成需要人工审批的受控响应计划。"
+                        ),
                         hypotheses_json=[],
                         risks_json=[],
                         plan_json=["告警分诊", "威胁研判", "知识检索", "响应规划", "验证", "报告"],
@@ -507,6 +638,10 @@ class SecurityOperationsReportAgent:
                 rule_ttl_seconds=rule_ttl_seconds,
                 occurred_at=self._utc(alert.occurred_at),
                 title=alert.title,
+                isolated_replay=(
+                    alert.evidence_json.get("source_kind") == "nta_pcap_isolated_replay"
+                    and alert.evidence_json.get("isolated_docker_network") is True
+                ),
             )
 
     def _wazuh_evidence_row(
@@ -604,9 +739,10 @@ class SecurityOperationsReportAgent:
 
         definitions = (
             ("events", "事件调查", "security.events.list", "事件 MCP"),
+            ("network_traffic", "网络流量", "security.alerts.list", "Suricata / Wazuh"),
             ("endpoint_detection", "终端与检测", "security.alerts.list", "告警 MCP"),
             ("vulnerabilities", "漏洞管理", "security.vulnerabilities.list", "漏洞 MCP"),
-            ("identity", "身份认证", "security.weak_passwords.list", "弱口令 MCP"),
+            ("identity", "身份认证", "security.weak_passwords.list", "身份认证 MCP"),
             ("knowledge", "知识依据", "knowledge.rag.retrieve", "本地知识库 RAG"),
         )
         by_name: dict[str, list[McpToolCallView]] = {}

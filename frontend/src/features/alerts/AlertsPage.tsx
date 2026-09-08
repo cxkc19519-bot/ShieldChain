@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 
 import { PageHeader } from '../../components/ui/PageHeader'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/States'
@@ -10,7 +10,7 @@ type ReviewCase = {
   tracking_id: string
   alert_id: string
   source: 'wazuh'
-  status: 'needs_review' | 'investigated'
+  status: 'needs_review' | 'investigating' | 'investigated' | 'investigation_failed'
   run_id: string | null
   severity: number
   rule_id: string
@@ -49,7 +49,7 @@ function asCase(value: unknown): ReviewCase {
   const item = value as Record<string, unknown>
   const keys = ['id', 'tracking_id', 'alert_id', 'source', 'status', 'run_id', 'severity', 'rule_id', 'title', 'endpoint', 'created_at', 'updated_at', 'triage_assessment', 'disposition']
   if (keys.some((key) => !(key in item)) || Object.keys(item).some((key) => !keys.includes(key))) throw new Error('告警服务返回了无效数据')
-  if (typeof item.id !== 'string' || typeof item.tracking_id !== 'string' || typeof item.alert_id !== 'string' || item.source !== 'wazuh' || !['needs_review', 'investigated'].includes(String(item.status)) || (item.run_id !== null && typeof item.run_id !== 'string') || typeof item.severity !== 'number' || typeof item.rule_id !== 'string' || typeof item.title !== 'string' || typeof item.endpoint !== 'string' || typeof item.created_at !== 'string' || typeof item.updated_at !== 'string' || (item.triage_assessment !== null && (typeof item.triage_assessment !== 'object' || Array.isArray(item.triage_assessment))) || (item.disposition !== null && (typeof item.disposition !== 'object' || Array.isArray(item.disposition)))) throw new Error('告警服务返回了无效数据')
+  if (typeof item.id !== 'string' || typeof item.tracking_id !== 'string' || typeof item.alert_id !== 'string' || item.source !== 'wazuh' || !['needs_review', 'investigating', 'investigated', 'investigation_failed'].includes(String(item.status)) || (item.run_id !== null && typeof item.run_id !== 'string') || typeof item.severity !== 'number' || typeof item.rule_id !== 'string' || typeof item.title !== 'string' || typeof item.endpoint !== 'string' || typeof item.created_at !== 'string' || typeof item.updated_at !== 'string' || (item.triage_assessment !== null && (typeof item.triage_assessment !== 'object' || Array.isArray(item.triage_assessment))) || (item.disposition !== null && (typeof item.disposition !== 'object' || Array.isArray(item.disposition)))) throw new Error('告警服务返回了无效数据')
   return item as ReviewCase
 }
 
@@ -90,22 +90,6 @@ async function submitDisposition(caseId: string, input: {
   }
 }
 
-async function investigateCase(caseId: string): Promise<string> {
-  const response = await fetch(`/api/v1/integrations/wazuh/cases/${encodeURIComponent(caseId)}/investigate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rule_ttl_seconds: 60 }),
-  })
-  let payload: unknown
-  try { payload = await response.json() } catch { throw new Error('调查服务返回了无效响应') }
-  if (!response.ok || typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    const error = typeof payload === 'object' && payload !== null && !Array.isArray(payload) ? (payload as Record<string, unknown>).error : null
-    const message = typeof error === 'object' && error !== null && !Array.isArray(error) && typeof (error as Record<string, unknown>).message === 'string' ? String((error as Record<string, unknown>).message) : '无法启动智能体调查'
-    throw new Error(message)
-  }
-  const runId = (payload as Record<string, unknown>).run_id
-  if (typeof runId !== 'string') throw new Error('调查结果缺少运行 ID')
-  return runId
-}
-
 async function startDemoReplay(): Promise<DemoReplayStatus> {
   const response = await fetch('/api/v1/nta/demo-replay/start', { method: 'POST' })
   const payload: unknown = await response.json()
@@ -125,12 +109,10 @@ async function getDemoReplayStatus(): Promise<DemoReplayStatus> {
 }
 
 export function AlertsPage() {
-  const navigate = useNavigate()
   const [items, setItems] = useState<ReviewCase[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
-  const [runningCase, setRunningCase] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<FalsePositiveMetrics | null>(null)
   const [reviewingCase, setReviewingCase] = useState<string | null>(null)
   const [decision, setDecision] = useState<CaseDisposition['decision']>('needs_more_evidence')
@@ -141,16 +123,15 @@ export function AlertsPage() {
   const [demoReplay, setDemoReplay] = useState<DemoReplayStatus | null>(null)
   const [startingDemoReplay, setStartingDemoReplay] = useState(false)
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true)
-    setError(null)
+  const refresh = useCallback(async (signal?: AbortSignal, quiet = false) => {
+    if (!quiet) { setLoading(true); setError(null) }
     try {
       const [cases, nextMetrics] = await Promise.all([listReviewCases(signal), loadMetrics(signal)])
       setItems(cases)
       setMetrics(nextMetrics)
     }
     catch (reason) { if (!signal?.aborted) setError(reason instanceof Error ? reason.message : '无法加载实时告警') }
-    finally { if (!signal?.aborted) setLoading(false) }
+    finally { if (!signal?.aborted && !quiet) setLoading(false) }
   }, [])
 
   useEffect(() => {
@@ -158,6 +139,13 @@ export function AlertsPage() {
     void refresh(controller.signal)
     return () => controller.abort()
   }, [attempt, refresh])
+
+  useEffect(() => {
+    if (!items.some((item) => item.status === 'needs_review' || item.status === 'investigating')) return
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => void refresh(controller.signal, true), 2500)
+    return () => { window.clearTimeout(timer); controller.abort() }
+  }, [items, refresh])
 
   useEffect(() => {
     if (demoReplay?.state !== 'running') return
@@ -176,14 +164,6 @@ export function AlertsPage() {
     try { setDemoReplay(await startDemoReplay()) }
     catch (reason) { setError(reason instanceof Error ? reason.message : '演示回放服务不可用') }
     finally { setStartingDemoReplay(false) }
-  }
-
-  const investigate = async (item: ReviewCase) => {
-    setRunningCase(item.id)
-    setError(null)
-    try { navigate(`/response?run_id=${encodeURIComponent(await investigateCase(item.id))}`) }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '无法启动智能体调查') }
-    finally { setRunningCase(null) }
   }
 
   const openReview = (item: ReviewCase) => {
@@ -214,7 +194,9 @@ export function AlertsPage() {
     if (item.disposition?.decision === 'false_positive') return '已确认误报'
     if (item.disposition?.decision === 'true_positive') return '已确认有效'
     if (item.disposition?.decision === 'needs_more_evidence') return '需要补充证据'
-    return item.status === 'investigated' ? '待人工定性' : '待人工复核'
+    if (item.status === 'investigated') return '待人工定性'
+    if (item.status === 'investigation_failed') return '调查失败待处理'
+    return item.status === 'investigating' ? '智能体调查中' : '等待自动调查'
   }
 
   return <section aria-labelledby="alerts-title" className="page-card alerts-page">
@@ -222,7 +204,7 @@ export function AlertsPage() {
       id="alerts-title"
       eyebrow="Wazuh · 人工复核队列"
       title="实时告警"
-      description="达到阈值的 Wazuh 告警先进入人工复核队列；只有操作员点击启动，智能体才会调查并生成需再次审批的响应计划。"
+      description="达到阈值的 Wazuh 告警会自动调用智能体完成调查并生成响应计划；人工仍负责告警定性、计划接受和高风险动作审批。"
       actions={<div className="alert-case__buttons"><button type="button" disabled={startingDemoReplay || demoReplay?.state === 'running'} onClick={() => void runDemoReplay}>{startingDemoReplay || demoReplay?.state === 'running' ? '隔离回放中…' : '随机演示回放'}</button><button type="button" onClick={() => setAttempt((value) => value + 1)}>刷新列表</button></div>}
     />
     {demoReplay && <p className="alert-case__note" role="status">{demoReplay.state === 'running' ? `正在隔离回放：${demoReplay.sample?.title ?? '已验收样本'}。` : demoReplay.state === 'completed' ? `回放完成：${demoReplay.sample?.title ?? '样本'}，已导入 ${demoReplay.alert_count ?? 0} 条告警。` : demoReplay.state === 'failed' ? '演示回放失败；未导入告警，请查看服务器运行记录。' : '演示回放服务已就绪。'}</p>}
@@ -259,7 +241,7 @@ export function AlertsPage() {
           <p className="alert-case__note disposition-form__wide">保存只记录人工结论和抑制建议，不会删除告警或自动修改 Wazuh 规则。</p>
           <div className="disposition-form__actions"><button type="button" className="secondary-button" onClick={() => setReviewingCase(null)}>取消</button><button type="button" disabled={saving || rationale.trim().length < 10} onClick={() => void saveDisposition(item)}>{saving ? '保存中…' : '保存人工定性'}</button></div>
         </div>}
-        <div className="alert-case__actions"><p className="alert-case__note">{item.status === 'investigated' ? '智能体调查已完成；误报结论、计划接受和动作审批仍由操作员决定。' : '当前仅保留规范化告警证据，尚未启动智能体或处置操作。'}</p><div className="alert-case__buttons">{item.run_id ? <><Link to={`/response?run_id=${encodeURIComponent(item.run_id)}`}>进入处置中心</Link><button type="button" onClick={() => openReview(item)}>人工定性</button></> : <button type="button" disabled={runningCase !== null} onClick={() => void investigate(item)}>{runningCase === item.id ? '智能体分析中…' : '启动智能体调查'}</button>}</div></div>
+        <div className="alert-case__actions"><p className="alert-case__note">{item.status === 'investigated' ? '智能体调查已完成；误报结论、计划接受和动作审批仍由操作员决定。' : item.status === 'investigation_failed' ? '本次自动调查未能完成，告警证据仍被保留，请刷新或联系管理员重试。' : '告警已自动调用智能体调查，页面会在调查完成后更新。'}</p><div className="alert-case__buttons">{item.status === 'investigated' && item.run_id ? <><Link to={`/response?run_id=${encodeURIComponent(item.run_id)}`}>进入处置中心</Link><button type="button" onClick={() => openReview(item)}>人工定性</button></> : <span className="alert-case__pending" role="status">{item.status === 'investigation_failed' ? '智能体调查失败' : '智能体自动调查中…'}</span>}</div></div>
       </article>)}
     </div>}
   </section>

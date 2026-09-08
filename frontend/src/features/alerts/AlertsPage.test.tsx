@@ -76,4 +76,20 @@ describe('AlertsPage false-positive governance', () => {
     expect(screen.getByText(/不会删除告警或自动修改 Wazuh 规则/)).toBeVisible()
     expect(screen.getByRole('button', { name: '保存人工定性' })).toBeDisabled()
   })
+
+  it('shows automatic investigation progress instead of a manual start button', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/false-positive-metrics')) return Promise.resolve(new Response(JSON.stringify({ reviewed_cases: 0, false_positives: 0, true_positives: 0, needs_more_evidence: 0, false_positive_rate: null, proposed_suppressions: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      return Promise.resolve(new Response(JSON.stringify({ items: [{
+        id: '00000000-0000-4000-8000-000000000011', tracking_id: 'WAZ-2026-0002', alert_id: '00000000-0000-4000-8000-000000000012', source: 'wazuh', status: 'investigating', run_id: '00000000-0000-4000-8000-000000000013',
+        severity: 12, rule_id: '9000085', title: '自动调查告警', endpoint: 'nta-replay', created_at: '2026-09-07T01:00:00Z', updated_at: '2026-09-07T01:00:00Z', triage_assessment: null, disposition: null,
+      }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    })
+    render(<MemoryRouter><AlertsPage /></MemoryRouter>)
+
+    expect(await screen.findByText('智能体自动调查中…')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启动智能体调查' })).not.toBeInTheDocument()
+    expect(screen.getByText(/页面会在调查完成后更新/)).toBeVisible()
+  })
 })

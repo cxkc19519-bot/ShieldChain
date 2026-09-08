@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     wazuh_webhook_token: SecretStr = SecretStr("")
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
+    wazuh_auto_investigation_enabled: bool = False
     nta_demo_replay_enabled: bool = False
     nta_demo_replay_runner_url: AnyHttpUrl | None = None
     nta_demo_replay_runner_token: SecretStr = SecretStr("")

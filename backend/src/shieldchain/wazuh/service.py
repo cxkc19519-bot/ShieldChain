@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from shieldchain.agents.persistence import AgentRunRow
 from shieldchain.wazuh.persistence import (
     WazuhAlertRow,
     WazuhCaseDispositionRow,
@@ -238,13 +239,22 @@ class WazuhAlertService:
         row: WazuhReviewCaseRow,
         run_id: str | None = None,
         *,
+        run_status: str | None = None,
         disposition: WazuhCaseDispositionView | None = None,
     ) -> WazuhReviewCaseView:
+        status = "needs_review"
+        if run_id is not None:
+            if run_status == "completed":
+                status = "investigated"
+            elif run_status in {"failed", "cancelled"}:
+                status = "investigation_failed"
+            else:
+                status = "investigating"
         return WazuhReviewCaseView(
             id=UUID(row.id),
             tracking_id=f"WAZ-{row.tracking_year}-{row.tracking_sequence:04d}",
             alert_id=UUID(row.alert_id),
-            status="investigated" if run_id else "needs_review",
+            status=status,
             run_id=UUID(run_id) if run_id else None,
             severity=row.severity,
             rule_id=row.rule_id,
@@ -286,6 +296,14 @@ class WazuhAlertService:
                 WazuhCaseRunRow.tenant_id == row.tenant_id,
             )
         )
+        run_status = None
+        if run_id is not None:
+            run_status = session.scalar(
+                select(AgentRunRow.status).where(
+                    AgentRunRow.id == run_id,
+                    AgentRunRow.tenant_id == row.tenant_id,
+                )
+            )
         disposition = session.scalar(
             select(WazuhCaseDispositionRow)
             .where(
@@ -301,6 +319,7 @@ class WazuhAlertService:
         return self._review_case_view(
             row,
             run_id,
+            run_status=run_status,
             disposition=self._disposition_view(disposition) if disposition else None,
         )
 

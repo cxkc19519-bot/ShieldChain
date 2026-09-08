@@ -17,8 +17,8 @@ import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
-
 
 DATASET_NAME = os.environ.get("SHIELDCHAIN_NTA_DATASET_NAME", "NTA PCAP dataset")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -519,7 +519,7 @@ def _periodic_connections(
         if len(values) < 12:
             continue
         ordered = sorted(values)
-        intervals = [right - left for left, right in zip(ordered, ordered[1:])]
+        intervals = [right - left for left, right in pairwise(ordered)]
         usable = [value for value in intervals if value > 0]
         if not usable:
             continue
@@ -987,7 +987,7 @@ def main() -> int:
         if args.all or args.sample_list
         else choose_samples(samples, max(1, args.limit))
     )
-    run_id = datetime.now().strftime("run-%Y%m%d-%H%M%S")
+    run_id = datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
     run_dir = RESULT_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     events: list[dict[str, object]] = []

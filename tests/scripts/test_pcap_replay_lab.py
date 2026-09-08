@@ -139,8 +139,19 @@ def test_build_events_deduplicates_signatures_and_records_isolation() -> None:
         assert len(events) == 1
         assert events[0]["severity"] == 12
         assert events[0]["rule_id"] == "suricata:9000001"
+        assert events[0]["agent_id"] == "002"
+        assert events[0]["source_ip"].startswith("198.51.100.")
+        assert events[0]["destination_ip"] == "172.18.0.10"
+        assert events[0]["mitre_ids"] == ["T1190"]
         assert events[0]["evidence"]["isolated_docker_network"] is True
         assert events[0]["evidence"]["source_kind"] == "nta_pcap_isolated_replay"
+        assert events[0]["evidence"]["endpoint_context_provenance"].startswith(
+            "demo_scenario_mapping"
+        )
+        assert events[0]["evidence"]["identity_account"] == "svc-replay-demo"
+        assert events[0]["evidence"]["vulnerability_evidence_level"].endswith(
+            "asset_version_unconfirmed"
+        )
 
 
 def test_build_events_ignores_informational_alerts() -> None:

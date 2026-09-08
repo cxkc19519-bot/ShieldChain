@@ -4,14 +4,14 @@ from fastapi import APIRouter, Request
 
 from shieldchain.core.errors import ApiError
 
+from .model_control import ControlError, catalog, inference, select
 from .schemas import (
+    ModelSelectionRequest,
     QwenExperienceChatRequest,
     QwenExperienceChatResponse,
     QwenExperienceStatusResponse,
 )
 from .service import QwenExperienceService, QwenExperienceUnavailable
-from .model_control import ControlError, catalog, select, inference
-from .schemas import ModelSelectionRequest
 
 router = APIRouter(prefix="/qwen", tags=["qwen-experience"])
 
