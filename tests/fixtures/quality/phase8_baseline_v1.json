@@ -1,0 +1,20 @@
+{
+  "schema_version": "shieldchain.quality.baseline-budget/v1",
+  "profile": "offline-local",
+  "scenarios": {
+    "health_live_http": {
+      "unit": "milliseconds",
+      "warmup_iterations": 3,
+      "sample_count": 25,
+      "percentile": "p95",
+      "maximum": 100.0
+    },
+    "rag_dataset_load": {
+      "unit": "milliseconds",
+      "warmup_iterations": 3,
+      "sample_count": 25,
+      "percentile": "p95",
+      "maximum": 100.0
+    }
+  }
+}

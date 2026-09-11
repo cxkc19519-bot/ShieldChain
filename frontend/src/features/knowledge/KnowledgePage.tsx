@@ -1,0 +1,378 @@
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+
+import { PageHeader } from '../../components/ui/PageHeader'
+import { EmptyState, LoadingState } from '../../components/ui/States'
+import {
+  createKnowledgeBase,
+  deleteDocument,
+  deleteKnowledgeBase,
+  listDocumentChunks,
+  listDocuments,
+  listKnowledgeBases,
+  publishVersion,
+  rebuildDocumentVersion,
+  retrieveKnowledge,
+  rollbackVersion,
+  runEvaluation,
+  uploadDocument,
+} from './api'
+import type {
+  EvaluationSummary,
+  KnowledgeBase,
+  KnowledgeChunk,
+  KnowledgeDocument,
+  RetrievalResult,
+} from './types'
+import './knowledge.css'
+
+const ACCEPTED_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md', '.html']
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : '操作失败，请稍后重试'
+}
+
+function Status({ value }: { value: string }) {
+  const warning = ['failed', 'degraded', 'delete_pending'].includes(value)
+  return <span className={`knowledge-status ${warning ? 'knowledge-status--warning' : ''}`}>{value}</span>
+}
+
+function Documents({
+  documents,
+  busy,
+  chunksByVersion,
+  onAction,
+  onChunks,
+}: {
+  documents: KnowledgeDocument[]
+  busy: boolean
+  chunksByVersion: Record<string, KnowledgeChunk[] | undefined>
+  onAction: (action: 'publish' | 'rollback' | 'rebuild' | 'delete', documentId: string, versionId?: string) => void
+  onChunks: (documentId: string, versionId: string) => void
+}) {
+  if (documents.length === 0) return <p className="knowledge-empty">尚未上传文档。</p>
+  return (
+    <ul className="document-list">
+      {documents.map((document) => (
+        <li key={document.id}>
+          <div className="document-heading">
+            <div><strong>{document.original_filename}</strong><small>{document.media_type}</small></div>
+            <div><Status value={document.status} /></div>
+          </div>
+          <div className="version-list">
+            {document.versions.map((version) => (
+              <article key={version.id} aria-label={`${document.original_filename} 版本 ${version.version_number}`}>
+                <div>
+                  <strong>v{version.version_number}</strong>
+                  {version.id === document.current_version_id && <span className="current-version">当前版本</span>}
+                  <Status value={version.index_status} />
+                </div>
+                <small>
+                  {version.chunking_failure_category
+                    ? `\u5206\u5757\u964d\u7ea7\uff1a${version.chunking_failure_category === 'unavailable'
+                        ? '\u004c\u004c\u004d \u5206\u5757\u5931\u8d25\uff0c\u5df2\u4f7f\u7528\u89c4\u5219\u5206\u5757'
+                        : version.chunking_failure_category}`
+                    : version.chunking_strategy === 'deepseek-semantic-v1'
+                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
+                      : `\u5206\u5757\u65b9\u5f0f\uff1a${version.chunking_strategy}`}
+                </small>                <div className="compact-actions">
+                  <button disabled={busy} type="button" onClick={() => onAction('publish', document.id, version.id)}>发布</button>
+                  <button disabled={busy || version.id === document.current_version_id} type="button" onClick={() => onAction('rollback', document.id, version.id)}>回滚到此版本</button>
+                  <button disabled={busy} type="button" onClick={() => onAction('rebuild', document.id, version.id)}>重建索引</button>
+                  <button disabled={busy} type="button" onClick={() => onChunks(document.id, version.id)}>{chunksByVersion[version.id] ? "\u6536\u8d77\u5206\u5757" : "\u67e5\u770b\u5206\u5757"}</button>
+                </div>
+                {chunksByVersion[version.id] && (
+                  <ol className="chunk-list" aria-label={`${document.original_filename} chunks`}>
+                    {chunksByVersion[version.id]?.length ? chunksByVersion[version.id]?.map((chunk) => (
+                      <li key={chunk.id}>
+                        <strong>{`\u5757 #${chunk.ordinal + 1}`}</strong>
+                        <small>{`\u5b57\u7b26 ${chunk.offset}\u2013${chunk.offset + chunk.length} \u00b7 ${chunk.length} \u5b57\u7b26`}</small>
+                        <pre>{chunk.text}</pre>
+                      </li>
+                    )) : <li className="knowledge-empty">{"\u8be5\u7248\u672c\u6682\u672a\u751f\u6210\u53ef\u67e5\u770b\u7684\u5206\u5757\u3002"}</li>}
+                  </ol>
+                )}
+              </article>
+            ))}
+          </div>
+          <button className="danger-button" disabled={busy} type="button" onClick={() => onAction('delete', document.id)}>删除文档</button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function SearchResult({ result }: { result: RetrievalResult }) {
+  return (
+    <section className="search-result" aria-labelledby="retrieval-result-title">
+      <h3 id="retrieval-result-title">检索结果</h3>
+      {result.degradations.length > 0 && (
+        <div className="degradation" role="status">{result.degradations.map((item) => <p key={item.kind}>检索降级 · {item.kind}/{item.error_category}：{item.message}</p>)}</div>
+      )}
+      {result.refusal_reason ? (
+        <div className="refusal" role="alert">
+          <strong>已拒绝生成无依据答案 · {result.refusal_reason}</strong>
+          <p>当前证据不满足安全回答条件，请补充或核验证据后重试。</p>
+        </div>
+      ) : <p className="answer">{result.answer}</p>}
+      <p><small>查询：{result.query}</small></p>
+      {result.hits.length > 0 && <ol className="citation-list" aria-label="混合召回结果">{result.hits.map((hit) => (
+        <li key={hit.chunk_id}>
+          <strong>{hit.document_title} · 融合 {hit.fusion_score.toFixed(4)}</strong>
+          <p>{hit.excerpt}</p>
+          <small>{hit.heading_path.join(' / ') || hit.structural_location || '未标注位置'}{hit.page_number ? ` · 第 ${hit.page_number} 页` : ''}</small>
+          <dl className="score-grid"><dt>BM25</dt><dd>{hit.bm25_score ?? '不可用'}</dd><dt>向量</dt><dd>{hit.vector_score ?? '不可用'}</dd><dt>重排</dt><dd>{hit.reranker_score ?? '不可用'}</dd></dl>
+        </li>
+      ))}</ol>}
+      {result.citations.length > 0 && (
+        <ol className="citation-list">
+          {result.citations.map((citation) => (
+            <li key={citation.citation_id}>
+              <details>
+                <summary>{citation.document_title} · {citation.heading_path.join(' / ') || citation.structural_location || '未标注位置'}</summary>
+                <p>{citation.excerpt}</p>
+                <dl className="score-grid">
+                  <dt>文档版本</dt><dd>{citation.document_version_id}</dd>
+                  <dt>页码</dt><dd>{citation.page_number ?? '—'}</dd>
+                  <dt>内容块</dt><dd>{citation.chunk_id}</dd>
+                  <dt>BM25</dt><dd>{citation.bm25_score ?? '不可用'}</dd>
+                  <dt>向量</dt><dd>{citation.vector_score ?? '不可用'}</dd>
+                  <dt>融合</dt><dd>{citation.fusion_score}</dd>
+                  <dt>重排</dt><dd>{citation.reranker_score ?? '不可用'}</dd>
+                  <dt>完整性摘要</dt><dd><code>{citation.integrity_sha256}</code></dd>
+                </dl>
+              </details>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  )
+}
+
+function Evaluation({ summary }: { summary: EvaluationSummary }) {
+  return (
+    <section aria-labelledby="evaluation-title" className="evaluation-summary">
+      <h3 id="evaluation-title">评测摘要</h3>
+      <p><strong>{summary.dataset_id}</strong> · {summary.dataset_version} · {summary.case_count} 条</p>
+      {summary.dataset_sha256 && <p>数据集 SHA-256：<code>{summary.dataset_sha256}</code></p>}
+      <p className={`quality-gate ${summary.quality_gate_passed ? '' : 'quality-gate--failed'}`}>{summary.quality_gate_passed ? '质量门禁通过' : '质量门禁未通过'}</p>
+      <dl className="metric-grid">{Object.entries(summary.metrics).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl>
+      <details>
+        <summary>查看门禁阈值</summary>
+        <dl className="metric-grid">{Object.entries(summary.thresholds).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}</dl>
+      </details>
+      <h4>逐题诊断</h4>
+      <ol className="result-list">{summary.case_results.map((item) => (
+        <li key={item.case_id}>
+          <details>
+            <summary>{item.passed ? '通过' : '未通过'} · {item.case_id} · {item.language}</summary>
+            <p>{item.query}</p>
+            <dl className="score-grid">
+              <dt>期望文档</dt><dd>{item.expected_document_ids.join('；') || '无（应拒答）'}</dd>
+              <dt>BM25 基线</dt><dd>{item.baseline_document_ids.join('；') || '无'}</dd>
+              <dt>最终召回</dt><dd>{item.retrieved_document_ids.join('；') || '无'}</dd>
+              <dt>实际引用</dt><dd>{item.cited_document_ids.join('；') || '无'}</dd>
+              <dt>拒答</dt><dd>期望 {item.expected_refusal ? '是' : '否'} / 实际 {item.actual_refusal ? '是' : '否'}</dd>
+              <dt>Recall@5</dt><dd>{item.recall_at_k?.toFixed(3) ?? '不适用'}</dd>
+              <dt>引用精确率</dt><dd>{item.citation_precision?.toFixed(3) ?? '不适用'}</dd>
+              <dt>抽取忠实度</dt><dd>{item.extractive_faithfulness?.toFixed(3) ?? '不适用'}</dd>
+              <dt>失败原因</dt><dd>{item.failure_reasons.join('；') || '无'}</dd>
+            </dl>
+          </details>
+        </li>
+      ))}</ol>
+    </section>
+  )
+}
+
+export function KnowledgePage() {
+  const [bases, setBases] = useState<KnowledgeBase[]>([])
+  const [documents, setDocuments] = useState<Record<string, KnowledgeDocument[]>>({})
+  const [chunksByVersion, setChunksByVersion] = useState<Record<string, KnowledgeChunk[] | undefined>>({})
+  const [selectedId, setSelectedId] = useState('')
+  const [query, setQuery] = useState('')
+  const [newBaseName, setNewBaseName] = useState('')
+  const [result, setResult] = useState<RetrievalResult | null>(null)
+  const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
+  const uploadFormRef = useRef<HTMLFormElement>(null)
+  const [selectedFileName, setSelectedFileName] = useState("")
+  const activeRequest = useRef<AbortController | null>(null)
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const response = await listKnowledgeBases(signal)
+    setBases(response)
+    const documentLists = await Promise.all(response.map(async (base) => [base.id, await listDocuments(base.id, signal)] as const))
+    setDocuments(Object.fromEntries(documentLists))
+    setSelectedId((current) => response.some((item) => item.id === current) ? current : response[0]?.id ?? '')
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setInitialLoading(true)
+    void load(controller.signal)
+      .catch((reason: unknown) => { if (!controller.signal.aborted) setError(errorMessage(reason)) })
+      .finally(() => { if (!controller.signal.aborted) setInitialLoading(false) })
+    return () => {
+      controller.abort()
+      activeRequest.current?.abort()
+    }
+  }, [load])
+
+  const execute = async (operation: (signal: AbortSignal) => Promise<void>, success: string, pendingNotice?: string) => {
+    activeRequest.current?.abort()
+    const controller = new AbortController()
+    activeRequest.current = controller
+    setBusy(true)
+    setError(null)
+    setNotice(pendingNotice ?? null)
+    try {
+      await operation(controller.signal)
+      await load(controller.signal)
+      setNotice(success)
+    } catch (reason) {
+      if (!controller.signal.aborted) setError(errorMessage(reason))
+    } finally {
+      if (activeRequest.current === controller) activeRequest.current = null
+      setBusy(false)
+    }
+  }
+
+  const handleUpload = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const file = form.get('file')
+    if (!(file instanceof File) || file.size === 0) {
+      setError('请选择一个非空文档')
+      return
+    }
+    const lowerName = file.name.toLowerCase()
+    if (!ACCEPTED_EXTENSIONS.some((extension) => lowerName.endsWith(extension)) || file.size > MAX_UPLOAD_BYTES) {
+      setError('仅支持 PDF、DOCX、XLSX、CSV、TXT、Markdown、HTML，且文件不得超过 20 MB')
+      return
+    }
+    const formElement = event.currentTarget
+    void execute(async (signal) => {
+      const uploaded = await uploadDocument(selectedId, file, signal)
+      setDocuments((current) => ({ ...current, [selectedId]: [uploaded, ...(current[selectedId] ?? []).filter((item) => item.id !== uploaded.id)] }))
+      formElement.reset()
+      setSelectedFileName("")
+    }, "\u6587\u6863\u5df2\u4e0a\u4f20\u5e76\u5b8c\u6210\u7d22\u5f15", "\u6b63\u5728\u4e0a\u4f20\u5e76\u5efa\u7acb\u7d22\u5f15\uff0c\u8bf7\u7a0d\u5019\u2026")
+  }
+
+  const handleRemoveSelectedFile = () => {
+    uploadFormRef.current?.reset()
+    setSelectedFileName("")
+  }
+
+  const handleAction = (action: 'publish' | 'rollback' | 'rebuild' | 'delete', documentId: string, versionId?: string) => {
+    if (action === 'delete' && !window.confirm('确认删除此文档及其索引？该操作不可撤销。')) return
+    void execute(async (signal) => {
+      if (action === 'delete') await deleteDocument(documentId, signal)
+      else if (action === 'publish') await publishVersion(documentId, versionId as string, signal)
+      else if (action === 'rollback') await rollbackVersion(documentId, versionId as string, signal)
+      else await rebuildDocumentVersion(documentId, versionId as string, signal)
+    }, action === 'delete' ? '文档删除任务已提交' : '版本操作已提交')
+  }
+
+  const handleChunks = (documentId: string, versionId: string) => {
+    if (chunksByVersion[versionId]) {
+      setChunksByVersion((current) => ({ ...current, [versionId]: undefined }))
+      return
+    }
+    void execute(async (signal) => {
+      const chunks = await listDocumentChunks(documentId, versionId, signal)
+      setChunksByVersion((current) => ({ ...current, [versionId]: chunks }))
+    }, "\u5df2\u52a0\u8f7d\u6587\u6863\u5206\u5757")
+  }
+
+  const selected = bases.find((item) => item.id === selectedId)
+
+  return (
+    <section aria-labelledby="knowledge-title" className="page-card knowledge-page">
+      <PageHeader id="knowledge-title" title="知识库" centered />
+
+      {error && <p className="knowledge-message knowledge-message--error" role="alert">{error}</p>}
+      {notice && <p className="knowledge-message" role="status">{notice}</p>}
+      {initialLoading && <LoadingState title="正在加载知识库" detail="正在读取公开知识库与文档状态。" />}
+      {!initialLoading && (
+      <div className="knowledge-layout">
+        <aside className="knowledge-bases" aria-label="知识库列表">
+          <h3>知识库</h3>
+          <form className="create-base" onSubmit={(event) => {
+            event.preventDefault()
+            const name = newBaseName.trim()
+            if (!name) return
+            void execute(async (signal) => {
+              const created = await createKnowledgeBase(name, signal)
+              setSelectedId(created.id)
+              setNewBaseName('')
+            }, '知识库已创建')
+          }}>
+            <label className="sr-only" htmlFor="new-knowledge-base">新知识库名称</label>
+            <input id="new-knowledge-base" maxLength={200} value={newBaseName} onChange={(event) => setNewBaseName(event.target.value)} placeholder="新知识库名称" />
+            <button disabled={busy || newBaseName.trim().length === 0} type="submit">创建</button>
+          </form>
+          {bases.length === 0 ? <p>暂无可用知识库</p> : bases.map((base) => (
+            <button key={base.id} type="button" aria-pressed={base.id === selectedId} onClick={() => setSelectedId(base.id)}>
+              <strong>{base.name}</strong><span>{documents[base.id]?.length ?? 0} 个文档</span>
+            </button>
+          ))}
+        </aside>
+
+        <div className="knowledge-workspace">
+          {selected ? <>
+            <header className="workspace-header">
+              <div><h3>{selected.name}</h3><p>{selected.status} · {selected.default_sensitivity} · {selected.version_policy}</p></div>
+              <div className="workspace-actions"><button disabled={busy} type="button" onClick={() => void execute(async (signal) => {
+                const summary = await runEvaluation(selected.id, signal)
+                setEvaluation(summary)
+              }, '固定基准评测已完成')}>运行评测</button>              <button className="danger-button" disabled={busy} type="button" onClick={() => {
+                if (window.confirm("\u786e\u8ba4\u5220\u9664\u8be5\u77e5\u8bc6\u5e93\u53ca\u5176\u4e2d\u5168\u90e8\u6587\u6863\u3001\u5206\u5757\u4e0e\u5411\u91cf\u7d22\u5f15\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002")) {
+                  void execute((signal) => deleteKnowledgeBase(selected.id, signal), "\u77e5\u8bc6\u5e93\u5df2\u5220\u9664")
+                }
+              }}>{"\u5220\u9664\u77e5\u8bc6\u5e93"}</button>
+            </div>
+            </header>
+
+            <form ref={uploadFormRef} className="upload-panel" onSubmit={handleUpload}>
+              <label htmlFor="knowledge-file">上传本地文档</label>
+              <p>只读取你选择的文件；不接受本机路径或远程 URL。</p>
+              <div className="upload-file-actions">
+                <input id="knowledge-file" name="file" type="file" required accept={ACCEPTED_EXTENSIONS.join(',')} onChange={(event) => setSelectedFileName(event.currentTarget.files?.[0]?.name ?? "")} />
+                {selectedFileName && <button disabled={busy} type="button" onClick={handleRemoveSelectedFile}>{"\u79fb\u9664\u6587\u4ef6"}</button>}
+              </div>
+              <button disabled={busy} type="submit">{busy ? "\u6b63\u5728\u4e0a\u4f20\u5e76\u7d22\u5f15\u2026" : "\u4e0a\u4f20\u5e76\u7d22\u5f15"}</button>
+              {busy && <p className="upload-progress" role="status">{"\u6b63\u5728\u5904\u7406\u6587\u6863\u548c\u5efa\u7acb\u5411\u91cf\u7d22\u5f15\uff0c\u8bf7\u4e0d\u8981\u5173\u95ed\u6b64\u9875\u3002"}</p>}
+            </form>
+
+            <section aria-labelledby="documents-title">
+              <h3 id="documents-title">文档与版本</h3>
+              <Documents documents={documents[selected.id] ?? []} busy={busy} chunksByVersion={chunksByVersion} onAction={handleAction} onChunks={handleChunks} />
+            </section>
+
+            <form className="search-panel" onSubmit={(event) => {
+              event.preventDefault()
+              const normalized = query.trim()
+              if (!normalized) return
+              void execute(async (signal) => {
+                setResult(await retrieveKnowledge(selected.id, normalized, signal))
+              }, '检索完成')
+            }}>
+              <label htmlFor="knowledge-query">检索知识库</label>
+              <div><input id="knowledge-query" value={query} maxLength={2_000} onChange={(event) => setQuery(event.target.value)} placeholder="输入安全运营问题" />
+                <button disabled={busy || query.trim().length === 0} type="submit">混合检索</button></div>
+            </form>
+            {result && <SearchResult result={result} />}
+            {evaluation && <Evaluation summary={evaluation} />}
+          </> : <EmptyState title="暂无可用知识库" detail="创建知识库后即可上传本地文档并运行安全检索。" />}
+        </div>
+      </div>
+      )}
+    </section>
+  )
+}

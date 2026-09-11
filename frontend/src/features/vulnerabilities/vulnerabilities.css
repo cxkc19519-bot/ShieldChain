@@ -1,0 +1,45 @@
+.vulnerabilities-page { display: grid; gap: 1rem; }
+.vulnerability-demo-message { margin: 0; padding: .8rem 1rem; border: 1px solid #86efac; border-radius: .7rem; background: #f0fdf4; color: #166534; }
+.vulnerability-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; }
+.vulnerability-metrics div { padding: .9rem; border: 1px solid var(--color-border); border-radius: .75rem; background: var(--color-surface); }
+.vulnerability-metrics span { display: block; color: var(--color-text-muted); font-size: .78rem; }
+.vulnerability-metrics strong { display: block; margin-top: .25rem; font-size: 1.35rem; }
+.vulnerability-list { display: grid; gap: 1rem; }
+.vulnerability-card { border: 1px solid var(--color-border); border-left: 4px solid #64748b; border-radius: .85rem; padding: 1rem; background: white; }
+.vulnerability-card.severity-critical { border-left-color: #dc2626; }.vulnerability-card.severity-high { border-left-color: #ea580c; }.vulnerability-card.severity-medium { border-left-color: #d97706; }
+.vulnerability-card > header { display: flex; justify-content: space-between; gap: 1rem; }.vulnerability-card h3 { margin: .2rem 0; }
+.vulnerability-card__header-actions { display: flex; align-items: flex-start; gap: .55rem; }
+.vulnerability-status { padding: .3rem .6rem; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: .8rem; white-space: nowrap; }
+.vulnerability-expand-button { display: inline-flex; align-items: center; gap: .3rem; min-width: 6.5rem; justify-content: center; padding: .38rem .65rem; }
+.vulnerability-card__details { display: grid; }
+.vulnerability-card dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }.vulnerability-card dt { color: var(--color-text-muted); font-size: .78rem; }.vulnerability-card dd { margin: .2rem 0 0; }
+.agent-triage { margin: .9rem 0; padding: .9rem; border-radius: .7rem; background: #f5f7ff; }.agent-triage p { margin: .35rem 0; line-height: 1.55; }.agent-triage small { color: var(--color-text-muted); }
+.agent-triage > div { margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--color-border); }
+.vulnerability-action-form { display: grid; gap: .55rem; margin: .8rem 0; }.vulnerability-action-form input, .vulnerability-action-form textarea { border: 1px solid var(--color-border); border-radius: .55rem; padding: .65rem; }.vulnerability-action-form textarea { min-height: 5rem; resize: vertical; }
+.vulnerability-actions { display: flex; flex-wrap: wrap; gap: .55rem; margin: .75rem 0; }.vulnerability-actions button { display: inline-flex; align-items: center; gap: .35rem; }
+.vulnerability-actions .vulnerability-delete-button { margin-left: auto; border-color: var(--color-danger); background: var(--color-danger); color: #fff; }
+.vulnerability-actions .vulnerability-delete-button:disabled { cursor: not-allowed; opacity: .6; }
+.vulnerability-tool-receipts { display: grid; gap: .55rem; margin: .9rem 0; padding: .9rem; border: 1px solid #bfdbfe; border-radius: .7rem; background: #eff6ff; }
+.vulnerability-tool-receipts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem .75rem; padding-top: .55rem; border-top: 1px solid #bfdbfe; }
+.vulnerability-tool-receipts span { color: #166534; font-size: .82rem; font-weight: 700; }.vulnerability-tool-receipts p { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); }
+.vulnerability-tool-receipts span.failed { color: #b91c1c; }
+.vulnerability-timeline { padding-left: 1.2rem; }.vulnerability-timeline li { margin: .7rem 0; }.vulnerability-timeline span { margin-left: .7rem; color: var(--color-text-muted); font-size: .78rem; }.vulnerability-timeline p { margin: .2rem 0; }
+.vulnerability-workflow-overlay { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 1.25rem; background: rgb(5 34 58 / 48%); backdrop-filter: blur(4px); }
+.vulnerability-workflow-dialog { width: min(1320px, 96vw); max-height: 92vh; overflow: auto; border: 1px solid #a9d5f3; border-radius: 1rem; background: #f7fbfe; box-shadow: 0 24px 70px rgb(4 50 79 / 28%); }
+.vulnerability-workflow-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.3rem 1.4rem 1rem; border-bottom: 1px solid #cfe7f7; }
+.vulnerability-workflow-dialog h2 { margin: .15rem 0 .3rem; font-size: clamp(1.7rem, 3vw, 2.5rem); }.vulnerability-workflow-dialog header p { margin: 0; color: var(--color-text-muted); }
+.vulnerability-workflow-dialog .icon-button { display: grid; min-width: 2.6rem; min-height: 2.6rem; padding: 0; place-items: center; border: 1px solid #b7d9ef; background: #fff; color: #176da6; }
+.vulnerability-workflow-notice { margin: 0; padding: .85rem 1.4rem; border-bottom: 1px solid #d6e9f6; color: var(--color-text-muted); }
+.vulnerability-workflow-chain { display: grid; grid-auto-columns: minmax(12.5rem, 1fr); grid-auto-flow: column; gap: 1.15rem; margin: 0; padding: 1.2rem 1.4rem; overflow-x: auto; list-style: none; }
+.vulnerability-workflow-chain li { position: relative; min-height: 11.5rem; padding: 1rem .85rem; border: 1px solid #b9daf0; border-top: 3px solid #1384b7; border-radius: .75rem; background: #fff; }
+.vulnerability-workflow-chain li:not(:last-child)::after { content: '→'; position: absolute; top: 48%; right: -1rem; z-index: 2; color: #1685b8; font-size: 1.2rem; }
+.vulnerability-workflow-chain li.is-failed { border-top-color: #dc2626; background: #fff7f7; }.vulnerability-workflow-chain li.is-replan { border-top-color: #d97706; background: #fffbeb; }
+.vulnerability-workflow-chain__index { position: absolute; top: .6rem; right: .65rem; color: #c2e0f2; font-size: 1.15rem; font-weight: 800; }
+.vulnerability-workflow-chain strong { display: block; margin: .55rem 0 .45rem; color: #074d79; }.vulnerability-workflow-chain p { margin: 0 0 .7rem; overflow-wrap: anywhere; color: #355b73; font-size: .86rem; line-height: 1.5; }.vulnerability-workflow-chain small { display: block; margin-top: .35rem; color: var(--color-text-muted); font-size: .72rem; line-height: 1.4; }.vulnerability-workflow-chain__facts { color: #075985 !important; font-weight: 700; overflow-wrap: anywhere; }
+.vulnerability-workflow-empty { margin: 1.2rem 1.4rem; padding: 1rem; border: 1px dashed #b9daf0; border-radius: .75rem; color: var(--color-text-muted); text-align: center; }
+.vulnerability-workflow-gaps, .vulnerability-workflow-audit { margin: 0 1.4rem 1.2rem; padding: 1rem 1.1rem; border: 1px solid #c9e2f3; border-radius: .8rem; background: #fff; }
+.vulnerability-workflow-gaps h3, .vulnerability-workflow-audit h3 { margin: 0 0 .7rem; }.vulnerability-workflow-gaps ul { margin: 0; padding-left: 1.2rem; }.vulnerability-workflow-gaps li { margin: .35rem 0; color: #526c7e; }
+.vulnerability-workflow-audit > ol { margin: 0; padding-left: 1.35rem; }.vulnerability-workflow-audit li { padding: .55rem .25rem; border-bottom: 1px solid #e0edf5; }.vulnerability-workflow-audit li:last-child { border-bottom: 0; }
+.vulnerability-workflow-audit li > div { display: flex; justify-content: space-between; gap: 1rem; }.vulnerability-workflow-audit span, .vulnerability-workflow-audit small { color: var(--color-text-muted); font-size: .78rem; }.vulnerability-workflow-audit p { margin: .3rem 0; line-height: 1.5; }
+@media (max-width: 900px) { .vulnerability-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.vulnerability-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .vulnerability-card > header, .vulnerability-card__header-actions { align-items: flex-start; flex-direction: column; }.vulnerability-workflow-overlay { padding: 0; }.vulnerability-workflow-dialog { width: 100vw; max-height: 100vh; border-radius: 0; }.vulnerability-workflow-chain { grid-auto-columns: minmax(11.5rem, 78vw); }.vulnerability-workflow-audit li > div { align-items: flex-start; flex-direction: column; gap: .2rem; } }

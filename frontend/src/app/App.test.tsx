@@ -1,0 +1,130 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { appRoutes } from './router'
+
+const getLivenessMock = vi.hoisted(() => vi.fn())
+
+vi.mock('../api/client', () => ({
+  getLiveness: getLivenessMock,
+}))
+
+function renderRoute(path = '/') {
+  const router = createMemoryRouter(appRoutes, { initialEntries: [path] })
+  return render(<RouterProvider router={router} />)
+}
+
+beforeEach(() => {
+  getLivenessMock.mockReset()
+})
+
+describe('application shell', () => {
+  it('renders the product identity, navigation, and semantic landmarks', async () => {
+    getLivenessMock.mockResolvedValue({ status: 'ok' })
+    renderRoute()
+
+    expect(screen.getByRole('banner')).toHaveTextContent(/ShieldChain/i)
+    expect(screen.getByRole('navigation', { name: '主要导航' })).toBeInTheDocument()
+    expect(screen.getByRole('main')).toBeInTheDocument()
+
+    for (const name of ['运营总览', '安全运营报告', '实时告警', '知识库']) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
+    }
+
+    expect(screen.getByText('真实数据分析环境')).toBeVisible()
+    expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
+    expect(screen.getByRole('link', { name: '在新窗口打开智能助手' })).toHaveAttribute('href', '/assistant')
+    expect(screen.getByRole('link', { name: '在新窗口打开智能助手' })).toHaveAttribute('target', '_blank')
+    const workspaceLinks = Array.from(document.querySelectorAll('.nav-dropdown-menu a')).map((link) => link.textContent)
+    expect(workspaceLinks).toEqual(['运营总览', '实时告警', '漏洞闭环', '安全运营报告', '知识库'])
+    expect(screen.queryByRole('link', { name: 'MCP 服务状态' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '历史报告' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '智能体与 ReAct' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '模型测试' })).not.toBeInTheDocument()
+  })
+
+  it('does not render a redundant assistant launcher inside the assistant page', () => {
+    renderRoute('/assistant')
+
+    expect(screen.queryByRole('link', { name: '在新窗口打开智能助手' })).not.toBeInTheDocument()
+  })
+
+  it('supports keyboard navigation through visible links', async () => {
+    getLivenessMock.mockResolvedValue({ status: 'ok' })
+    const user = userEvent.setup()
+    renderRoute()
+
+    await user.tab()
+    expect(screen.getByRole('link', { name: '跳到主要内容' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: '主页' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '工作区' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: '运营总览' })).toHaveFocus()
+  })
+})
+
+describe('dashboard health', () => {
+  it('shows loading before a successful health result', async () => {
+    let resolveHealth: ((value: { status: 'ok' }) => void) | undefined
+    getLivenessMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveHealth = resolve
+      }),
+    )
+    renderRoute('/dashboard')
+
+    expect(screen.getByText('正在检查系统状态')).toBeVisible()
+    resolveHealth?.({ status: 'ok' })
+  })
+
+  it('shows an unavailable state and retries without claiming health', async () => {
+    getLivenessMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ status: 'ok' })
+    const user = userEvent.setup()
+    renderRoute('/dashboard')
+
+    expect(await screen.findByText('系统当前不可用')).toBeVisible()
+    expect(screen.queryByText('系统运行正常')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '重试健康检查' }))
+    expect(getLivenessMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels an in-flight health request when the dashboard unmounts', async () => {
+    getLivenessMock.mockReturnValue(new Promise(() => undefined))
+    const view = renderRoute('/dashboard')
+
+    await waitFor(() => expect(getLivenessMock).toHaveBeenCalledOnce())
+    const signal = getLivenessMock.mock.calls[0]?.[0] as AbortSignal
+    expect(signal.aborted).toBe(false)
+
+    view.unmount()
+    expect(signal.aborted).toBe(true)
+  })
+})
+
+describe('product routes', () => {
+  it('serves security operations reports at the retired response address', async () => {
+    renderRoute('/response')
+
+    expect(await screen.findByRole('heading', { name: '安全运营报告', level: 2 })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '处置中心' })).not.toBeInTheDocument()
+  })
+
+  it('renders the knowledge page at /knowledge', () => {
+    renderRoute('/knowledge')
+
+    expect(screen.getByRole('heading', { name: '知识库', level: 2 })).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
+
+  it('renders the security operations report page at /operations-report', () => {
+    renderRoute('/operations-report')
+    expect(screen.getByRole('heading', { name: '安全运营报告', level: 2 })).toBeVisible()
+    expect(screen.getByText('正在读取安全运营报告')).toBeVisible()
+    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+  })
+})

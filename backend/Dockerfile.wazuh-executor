@@ -1,0 +1,9 @@
+FROM python:3.14.6-slim-bookworm
+
+RUN groupadd --gid 10001 shieldchain \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin shieldchain \
+    && mkdir -p /run/shieldchain-wazuh-executor \
+    && chown 10001:10001 /run/shieldchain-wazuh-executor
+COPY backend/wazuh_executor/server.py /app/server.py
+USER 10001:10001
+CMD ["python", "/app/server.py"]

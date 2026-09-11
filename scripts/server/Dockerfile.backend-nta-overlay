@@ -1,0 +1,7 @@
+# Offline deployment fallback: retain the validated runtime and replace only app code.
+ARG BASE_IMAGE=shieldchain-backend:local
+FROM ${BASE_IMAGE}
+
+USER root
+COPY backend/src/shieldchain /opt/venv/lib/python3.14/site-packages/shieldchain
+USER 10001:10001

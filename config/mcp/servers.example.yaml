@@ -1,0 +1,16 @@
+version: 1
+servers:
+  - id: approved-security-platform
+    enabled: false
+    transport: streamable_http
+    endpoint: https://security-platform.example.invalid/mcp
+    auth:
+      mode: bearer_env
+      token_env: APPROVED_SECURITY_PLATFORM_MCP_TOKEN
+    network_policy: public_https
+    allowed_tools:
+      - remote_name: alerts_list
+        alias: external.approved_security_platform.alerts.list
+        schema_revision: approved-v1
+        classification: read_only
+        allowed_roles: [alert_triage, threat_investigation]

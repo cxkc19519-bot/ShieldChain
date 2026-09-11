@@ -1,0 +1,197 @@
+.investigation-page {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.investigation-page h2,
+.investigation-page h3,
+.investigation-page p {
+  margin-top: 0;
+}
+
+.simulation-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.incident-overview,
+.investigation-section {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-strong);
+}
+
+.incident-overview header,
+.investigation-result__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.incident-overview header span,
+.investigation-result__header span,
+.attack-path div > span {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.attack-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.attack-path div {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: white;
+}
+
+.attack-path strong,
+.attack-path small { overflow-wrap: anywhere; }
+.attack-path small { color: var(--color-text-muted); }
+
+.investigation-result__header code {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.phase-track,
+.audit-timeline {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.phase-track li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.verification-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.verification-grid span {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: white;
+  font-weight: 700;
+}
+
+.audit-timeline li {
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-info-bg);
+}
+
+@media (max-width: 720px) {
+  .attack-path { grid-template-columns: 1fr; }
+  .attack-path > span { transform: rotate(90deg); text-align: center; }
+  .verification-grid { grid-template-columns: 1fr; }
+  .incident-overview header,
+  .investigation-result__header { flex-direction: column; }
+}
+
+.simulation-badge,
+.run-status {
+  width: fit-content;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: 700;
+}
+
+.run-status--closed {
+  color: var(--color-status-healthy);
+  background: var(--color-status-healthy-bg);
+}
+
+.run-status--failed,
+.run-status--interrupted,
+.investigation-error {
+  color: var(--color-danger);
+  background: var(--color-status-unavailable-bg);
+}
+
+.investigation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.investigation-controls button,
+.investigation-controls select {
+  min-height: 2.6rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: white;
+}
+
+.investigation-controls button {
+  color: white;
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  cursor: pointer;
+}
+
+.investigation-controls :disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.investigation-error {
+  padding: 0.8rem;
+  border-radius: 0.55rem;
+}
+
+.investigation-result,
+.investigation-result section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.detail-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-list li {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.65rem;
+}
+
+.investigation-page dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+}
+
+.investigation-page dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

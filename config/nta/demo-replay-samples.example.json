@@ -1,0 +1,11 @@
+{
+  "samples": [
+    {
+      "id": "replace-with-validated-webshell-sample",
+      "path": "replace-with-relative-file.pcap",
+      "title": "已验收 WebShell 演示样本",
+      "sha256": "replace-with-lowercase-sha256",
+      "expected_rule_ids": ["suricata:9000004"]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="ShieldChain Benign Fixture"
+    Manufacturer="ShieldChain"
+    Version="1.0.0"
+    UpgradeCode="{B09E25D2-2E6F-4CFD-BAC4-4395FADE9670}"
+    Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer ShieldChain benign fixture is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ShieldChain Benign Fixture">
+        <Component Id="FixtureComponent" Guid="*">
+          <File
+            Id="FixtureReadme"
+            Source="ShieldChainBenignFixture.txt"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature">
+      <ComponentRef Id="FixtureComponent" />
+    </Feature>
+  </Package>
+</Wix>

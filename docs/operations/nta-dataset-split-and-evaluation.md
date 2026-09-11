@@ -1,0 +1,251 @@
+# NTA 数据集划分与独立验收
+
+本文说明 ShieldChain 如何使用比赛方提供的 NTA PCAP 数据集开发和验收开源探针/XDR 替代链路。
+
+## 1. 数据来源与划分性质
+
+比赛方提供的是一个整体 PCAP 样本集合，并未随材料提供“训练集、验证集、测试集”的官方划分。项目为了避免一边看标签调规则、一边又用同一批样本宣称效果，按固定、可复现的方法自行划分为：
+
+| 子集 | 数量 | 用途 |
+| --- | ---: | --- |
+| development | 701 | 查看标签、编写和调试 Suricata/Zeek 规则 |
+| validation | 701 | 冻结规则后做独立回归，禁止继续针对该次结果调参 |
+| final-blind | 935 | v11 最终盲测已于 2026-08-23 一次性完成，禁止再作为独立盲集调参 |
+| 合计 | 2337 | 比赛方 NTA PCAP 总量 |
+
+这不是模型训练，也不能称作比赛方官方训练/测试集。这里的“development / validation / final-blind”只是规则工程中的职责隔离：开发集用于写规则，验证集用于检查泛化，最终盲测集用于最后一次验收。
+
+## 2. 服务器目录
+
+仅在 `/home/user/jhk` 范围内操作：
+
+- 原始数据：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset`
+- 匿名副本：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind`
+- 匿名 PCAP：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/pcap`
+- 固定清单与评估材料：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation`
+- 检测结果：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/results`
+- 标签映射：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind-ground-truth.csv`
+
+标签映射权限应保持为 `600`，不得提交到 GitHub，也不得作为检测器输入。匿名 PCAP 文件名本身不包含攻击标签。
+
+## 3. 为什么不是训练模型也要划分
+
+Suricata 签名、Zeek 行为阈值和分类逻辑同样会产生“过拟合”。如果规则作者先查看所有文件名或标签，再在同一批数据上统计命中率，结果只表示规则记住了已知样本，无法说明面对新流量是否有效。
+
+因此规则验收遵循以下顺序：
+
+1. 只在 development 中分析样本和调整规则。
+2. 冻结规则文件与流水线，并记录 SHA-256。
+3. 在从未参与调参的 validation 样本上运行。
+4. 先锁定机器输出，再按受控标签映射做人工审计。
+5. final-blind 只在规则方案稳定、指纹冻结和评估口径写定后运行一次；运行后不得回写 v11。
+
+## 4. 当前冻结版本
+
+v3 冻结文件位于运行目录：
+
+- `rules/shieldchain-nta.rules.v3-frozen`
+- `tools/nta_offline_pipeline.py.v3-frozen`
+
+对应 SHA-256：
+
+- 规则：`d71451d06a584d1752a55cc6c74bf8cac5e7954d8e876109d5b08d3ce183e2d5`
+- 流水线：`8195899b92c35d14e3e7e43a848290b7b50939202c25aa7fea4cf83ac361b37c`
+
+v3 开发回归使用 23 个 development 样本；独立验证使用第三批、且未出现在旧验证清单中的 24 个 validation 样本。详细数字见 `docs/reports/xdr-probe-rule-evaluation-v3-20260821.md`。
+
+### v4 更新（2026-08-21）
+
+- 规则：`shieldchain-nta.rules.v4-frozen`
+- 规则 SHA-256：`0db825db024fcc3b749d4efcd223487b1f7e87b0c2b116c53e1bd0e83238439b`
+- 流水线：`nta_offline_pipeline.py.v4-frozen`
+- 流水线 SHA-256：`85a7dbd3b26324b4a870c81e015982c201867d2eeb7d1b6d8b6b125d63062ac7`
+- 独立验证清单：`validation-sample-v4-24.txt`
+- 锁定结果：`validation-v4-locked-result.json`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v4-20260821.md`
+
+v4 验证样本从前三批未使用的 validation 样本中按固定盐值哈希选择，与旧验证清单零重叠；final-blind 仍封存。
+
+### v5 更新（2026-08-21）
+
+- 规则：`shieldchain-nta.rules.v5-frozen`
+- 规则 SHA-256：`35bd96c2a8b5657359a4a9d301e56654081f5d1b8578c2a2a0458d8f82b9eeca`
+- 流水线：`nta_offline_pipeline.py.v5-frozen`
+- 流水线 SHA-256：`af7b9ebe298a4c53c10f3e1c90a4d35e3ab84f0ac50632291eebf920ed7d6269`
+- 独立验证清单：`validation-sample-v5-24.txt`
+- 锁定结果：`validation-v5-locked-result.json`
+- 锁定结果 SHA-256：`f5fdd7cd92cf745d66e006dd4ab808245f1403d16736bade8f04c900bdcf71ca`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v5-20260821.md`
+
+v5 验证清单使用固定盐值 `shieldchain-v5-20260821` 从尚未使用的 605 个 validation 样本中排序抽取，与此前 96 个验证样本零重叠。规则和流水线先冻结，运行结果先锁定，之后才查看标签映射；final-blind 仍未运行。
+
+### v6 更新（2026-08-22）
+
+- 规则：`shieldchain-nta.rules.v6-frozen`
+- 规则 SHA-256：`358e99f076736d60cb833674da4ab917ac290d1702a07e72a44233e1cb1299a3`
+- 流水线：`nta_offline_pipeline.py.v6-frozen`
+- 流水线 SHA-256：`e220047d82c2d8cf326cbf401de98af150d754a4c6e47553a8dd5c7d80ff2192`
+- 独立验证清单：`validation-sample-v6-24.txt`
+- 锁定结果：`validation-v6-locked-result.json`
+- 锁定结果 SHA-256：`011bb9dd3fa0a461fb45fd706b77a2bdb89bcc1fa9edc1e9491c27fc1e53fdbc`
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v6-20260822.md`
+
+v6 验证清单使用固定盐值 `shieldchain-v6-20260821` 从尚未使用的 581 个 validation 样本中排序抽取，与此前 120 个验证样本零重叠。v6 还新增可复现的合成正常 HTTP PCAP，用来阻止规则把普通报表下载和表单参数误判为 WebShell；该合成样本不能代替真实正常流量语料。final-blind 仍未运行。
+
+### v7 更新（2026-08-22）
+
+- 规则 SHA-256：`3d5464fb60b561677cc2d27da5e97f8650617d54df964e001bccb278c03c55d0`
+- 流水线 SHA-256：`26492e175874a782af7a9b5ef74683cab9cdb9efd9d4bd56191d3c11dc3e1471`
+- development 完整回归：`run-20260822-135346`，23/24 分类
+- 合成正常业务回归：`run-20260822-135309`，0 条告警
+- 独立验证清单：`validation-sample-v7-24.txt`
+- validation 运行：`run-20260822-140330`
+- 锁定结果：`validation-v7-locked-result.json`
+- 锁定结果 SHA-256：`5d775afe1b0c9747c86dced6c19c9adc9e64f47e2f02316af8d91224b85edebe`
+- 独立验收：5/24 分类、19/24 待研判、4 个告警样本、12 条告警
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v7-20260822.md`
+
+v7 清单从排除前六轮 144 个样本后的 557 个 validation 样本中，使用固定盐值 `shieldchain-v7-20260822` 排序抽取，与此前样本零重叠。规则与分类器先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v7，final-blind 仍未运行。
+
+### v8 更新（2026-08-22）
+
+- 规则 SHA-256：`862c3b709629041e543669b157415923bbffcb37b777e83562e248b903e416a1`
+- 流水线 SHA-256：`26492e175874a782af7a9b5ef74683cab9cdb9efd9d4bd56191d3c11dc3e1471`
+- development 完整回归：`run-20260822-145025`，24/24 分类
+- 合成正常业务回归：`run-20260822-145002`，0 条告警
+- 独立验证清单：`validation-sample-v8-24.txt`
+- validation 运行：`run-20260822-150020`
+- 锁定结果：`validation-v8-locked-result.json`
+- 锁定结果 SHA-256：`ef32264ebd7e7008bd03ccb8a2f832884357f5566b9e1f208b1f8fb6489200f8`
+- 独立验收：14/24 分类、10/24 待研判、14 个告警样本、31 条告警
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v8-20260822.md`
+
+v8 清单从排除前七轮 168 个样本后的 533 个 validation 样本中，使用固定盐值 `shieldchain-v8-20260822` 排序抽取，与此前样本零重叠。规则先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v8，final-blind 仍未运行。
+
+### v9 更新（2026-08-22）
+
+- 规则 SHA-256：`0c87908e60f5b3d1f082292d55c3a75586c5682b5facceee488716eb4f31ec03`
+- 流水线 SHA-256：`39f894d242c284a1b9e31fe15b39ec139df0f8f7805a3392ae8722adf5c2d3b5`
+- development 完整回归：`run-20260822-152756`，24/24 分类
+- 合成正常 HTTP 回归：`run-20260822-152733`，0 条告警
+- 独立验证清单：`validation-sample-v9-24.txt`
+- validation 运行：`run-20260822-153730`
+- 锁定结果：`validation-v9-locked-result.json`
+- 锁定结果 SHA-256：`e60488b0d7bf632b20ca42565a4dddc8aca46e4b766a79167729eb11eb8c02c3`
+- 独立验收：16/24 分类、8/24 待研判、16 个告警样本、16 条告警
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v9-20260822.md`
+
+v9 清单从排除前八轮 192 个样本后的 509 个 validation 样本中，使用固定盐值 `shieldchain-v9-20260822` 排序抽取，与此前样本零重叠。规则与分类器先冻结、结果先锁定，之后才读取原始文件名。validation 标签未用于回改 v9，final-blind 仍未运行。
+
+### v10 更新（2026-08-23）
+
+- Git 提交：`7974ef1`；
+- 规则 SHA-256：`e4ee9be7800b2a39d3bf227c63d783186c8f7b2be6100d0af709dd1dea181d2b`；
+- 流水线 SHA-256：`fffd10d94d432a967adc685dbdd7e3e91a2de724fda01ab5dc68c7537eff0cb7`；
+- 正常 validation：60/60 双引擎成功，安全告警样本 0；
+- 攻击 validation：使用 v1～v9 从未使用的全部 485 条，387 条得到攻击分类，366 条产生安全告警，98 条待研判，双引擎失败 0；
+- 正常锁定摘要 SHA-256：`ab6f3461730ff389577067c1ab1b0758334c9ad2b1141cdbe3688a89d087b3a6`；
+- 攻击锁定摘要 SHA-256：`7a6e0cff8837467a730e146b0814062564b9ed6e43fd77e405bf5e4919e4c384`；
+- 报告：`docs/reports/xdr-probe-rule-evaluation-v10-20260823.md`。
+
+v10 先冻结规则、流水线与镜像，再运行并锁定机器输出，之后才核对标签映射。映射没有攻击类型字段，因此只能报告分类/告警覆盖率，不能宣称准确率或召回率。validation 结果不用于针对这些样本继续调参，`final-blind` 仍未运行。
+## 5. 同门复现实验
+
+进入项目并配置数据目录：
+
+```bash
+cd /home/user/jhk/project/ShieldChain
+export SHIELDCHAIN_NTA_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind
+export SHIELDCHAIN_NTA_PCAP_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/pcap
+export SHIELDCHAIN_NTA_RESULT_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/results
+export SHIELDCHAIN_SURICATA_RULES="$PWD/config/suricata/shieldchain-nta.rules"
+```
+
+先检查脚本和规则：
+
+```bash
+python3 -m py_compile scripts/nta/nta_offline_pipeline.py scripts/nta/ingest_nta_events.py
+docker run --rm --network none \
+  -v "$PWD/config/suricata:/rules:ro" \
+  jasonish/suricata:7.0.16 \
+  suricata -T -c /etc/suricata/suricata.yaml -S /rules/shieldchain-nta.rules
+```
+
+使用固定清单运行（清单路径按本次实验选择）：
+
+```bash
+python3 scripts/nta/nta_offline_pipeline.py \
+  --sample-list /home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/validation-sample-v3-24.txt
+```
+
+运行结果写入新的 `run-YYYYMMDD-HHMMSS` 目录。先保存 `manifest.json`、`events.jsonl`、规则哈希和运行时间，再进行标签审计；不要边看验证标签边改规则。
+
+## 6. 结果应该怎样解释
+
+当前数据集没有经过确认的正常流量对照集，因此只能报告：
+
+- 命中样本数、告警数和规则覆盖；
+- 待研判样本比例；
+- 标签审计后的攻击家族覆盖；
+- 明显错分或漏检案例。
+
+不能据此宣称“准确率高”“误报率低”或“达到生产级 XDR”。要计算精确率、召回率和误报率，还需要来源可信、代表真实业务分布的正常流量与逐样本真值。
+
+## 7. 安全与数据边界
+
+- PCAP 只在隔离容器中离线解析，容器使用 `--network none`。
+- 不回放到校园网或生产网络。
+- 不提交原始 PCAP、标签映射、访问令牌和含敏感载荷的完整日志。
+- 规则只产生告警，不自动阻断。
+- final-blind 已在 v11 候选规则、流水线、镜像和评估方案冻结后一次性启封；后续不得把它重新包装为未见盲集。
+
+## 8. v11 development 候选（2026-08-23）
+
+v11 严格只用 development 分析和调参，没有运行 validation 或 final-blind。完整 701 条攻击 development 的分类覆盖由 v10 的 585/701（83.45%）提高到 620/701（88.45%），安全告警覆盖由 567/701（80.88%）提高到 602/701（85.88%）；180 条正常 development 的安全告警为 0，引擎失败为 0。
+
+锁定产物：
+
+- 候选规则：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-candidate-rules.rules`；
+- 攻击事件：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-development-candidate-events.jsonl`；
+- 正常事件：`/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
+- 锁定摘要：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-development-locked-result.json`；
+- 详细报告：`docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
+
+本节只记录启封前的 development 阶段，不是独立准确率。v11 final-blind 的后续一次性结果见下一节；final-blind 结果不得用于回改 v11。
+
+## 9. v11 final-blind 一次性验收（2026-08-23）
+
+v11 在源码、规则、流水线、935 条匿名清单和 Suricata/Zeek 镜像全部冻结后运行。运行前确认 final-blind 与 development/validation 零重叠、PCAP 零缺失，历史事件中也没有出现过这 935 个匿名文件名。28 个分片全部完成，935 条事件零缺失、零重复，引擎失败为 0。
+
+- 明确分类：754/935（80.64%，Wilson 95% 区间 77.99%～83.05%）；
+- Suricata 安全告警样本：737/935（78.82%，Wilson 95% 区间 76.09%～81.32%）；
+- 网络行为待研判：181/935（19.36%）；
+- 安全告警总数：2,461；被过滤的信息/解码器事件：98,696。
+
+机器事件和摘要先锁定并计算 SHA-256，之后才读取映射表。935 条映射的 PCAP SHA-256 全部一致，但映射没有官方攻击类别字段，因此这些数字是检测覆盖率，不是准确率或召回率。
+
+锁定产物：
+
+- 冻结目录：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-final-freeze-20260823`；
+- 事件 SHA-256：`f2c124a1b6991b2c7cb8a5bcfa36e2fb5e7d676268da9671e6999b07e2a4a6ad`；
+- 机器摘要 SHA-256：`561c9d536c8f01b0a3c55ffb648290fa1fe14c0a094ffe29d08011f32f4ba316`；
+- 事后审计 SHA-256：`f03f925ca159e9a8da27d52746f4783f0869ec82386c4074dd4fd609b739e5d0`；
+- 详细报告：`docs/reports/xdr-probe-final-blind-v11-20260823.md`。
+
+final-blind 已消耗。后续新增检测规则必须升级为 v12，并使用 development 或新的外部数据开发；不能再次使用这 935 条宣称独立盲测成绩。
+
+## 10. CTU-13 v12 validation（2026-08-25）
+
+v12 候选冻结后只运行 CTU-13 validation 场景 2、4、13。运行前确认三个划分零重叠，PCAP 大小与 SHA-256 匹配；运行中不读取 BinetFlow 标签；3/3 双引擎成功后先锁定机器输出和完整引擎哈希，再生成 validation 标签报告。
+
+首次输出把 Fast-flux-2 归为 WebShell。validation 诊断后形成 v12.1，将通用大脚本 POST 改为 HTTP 命令控制/数据外传候选。由于 v12.1 已使用 validation 调整，其 validation 结果不是独立成绩。详见 [v12 validation 验收报告](../reports/xdr-probe-v12-validation-20260825.md)。
+
+## 11. CTU-13 v12.1.1 final-blind（2026-08-25）
+
+v12.1.1 只把超大 Suricata/Zeek 日志改为流式解析。候选先在 190 个冻结样本上证明与 v12.1 分类、严重度、ATT&CK、告警数和发现说明完全一致，再启用 final-blind 场景 9、10、11。运行前确认三个划分零重叠、输入 PCAP 大小与 SHA-256 匹配、final-blind 标签文件不存在。
+
+第一次执行在场景 10 双引擎原始输出完成后暴露旧分类器一次性载入约 75 GB eve.json 的内存风险，任务在生成机器事件前安全终止。场景 9、10 的原始引擎输出被保留；冻结 v12.1.1 后只补跑场景 11，并复用前两场景原始输出进行流式分类。该中断没有读取标签，也没有改变检测规则。
+
+最终 3/3 双引擎成功并生成三条唯一事件。事件、清单、运行日志、候选哈希和 56 个原始引擎文件哈希先复制到只读锁定目录，确认锁定完成且标签仍不存在后，才生成 final-blind 标签汇总。三场景均确认含 Botnet，机器结果也均为明确安全分类，但公开 PCAP 与混合 BinetFlow 不能逐流对齐，因此 3/3 只能称为场景级覆盖。
+
+final-blind 已消耗，不能再用于 v12.1.1 调参或重新宣称未见盲测。后续应新建 v13 development 语料补充 UDP/ICMP Flood 动作分类，并使用新的外部保留集验收。详见 [v12.1.1 final-blind 验收报告](../reports/xdr-probe-v1211-final-blind-20260825.md)。

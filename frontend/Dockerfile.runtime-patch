@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=shieldchain-frontend:local
+FROM ${BASE_IMAGE}
+
+USER root
+COPY --chown=101:101 frontend/nginx-main.conf /etc/nginx/nginx.conf
+COPY --chown=101:101 frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chown=101:101 frontend/dist /usr/share/nginx/html
+USER 101:101

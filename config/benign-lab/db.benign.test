@@ -1,0 +1,14 @@
+$TTL 60
+@ IN SOA ns.benign.test. hostmaster.benign.test. (
+    2026082201 60 60 3600 60
+)
+@ IN NS ns.benign.test.
+ns IN A 172.28.0.53
+portal IN A 192.0.2.10
+api IN A 192.0.2.11
+cdn IN A 192.0.2.12
+mail IN A 192.0.2.13
+@ IN MX 10 mail.benign.test.
+@ IN TXT "shieldchain authorized benign traffic lab"
+portal IN AAAA 2001:db8::10
+api IN AAAA 2001:db8::11

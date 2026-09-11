@@ -1,0 +1,926 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
+from ipaddress import IPv4Address
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from shieldchain.agents.persistence import (
+    AgentExecutionRow,
+    AgentHandoffRow,
+    AgentPrivateContextRow,
+    AgentRunRow,
+    CaseContextRow,
+    ConfirmedCaseFactRow,
+)
+from shieldchain.incidents.domain import (
+    ACTIVE_INVESTIGATION_STATUSES,
+    Assessment,
+    AuditEvent,
+    BlockOutcome,
+    Evidence,
+    IncidentDetail,
+    InvestigationRun,
+    InvestigationStatus,
+    PhishingScenarioState,
+    RunMode,
+    StepStatus,
+    ToolCallStatus,
+    ToolResult,
+    VerificationResult,
+    is_terminal,
+    transition,
+)
+from shieldchain.incidents.integrity import verify_evidence_integrity
+from shieldchain.incidents.persistence import (
+    ACTIVE_VALUES,
+    AuditEventRow,
+    EvidenceRecordRow,
+    IncidentRow,
+    InvestigationRunRow,
+    InvestigationStepRow,
+    SimulationInstanceRow,
+    SimulationToolCallRow,
+)
+from shieldchain.incidents.ports import (
+    ActiveInvestigationExists,
+    DuplicateEvidence,
+    DuplicateIdempotencyKey,
+    EvidenceIntegrityMismatch,
+    IdempotencyConflict,
+    IncidentNotFound,
+    InvalidInvestigationState,
+    InvestigationNotFound,
+    RunSimulationMismatch,
+    ScenarioFactory,
+    SimulationNotFound,
+)
+
+
+def append_incident_audit(
+    session: Session,
+    *,
+    incident_id: UUID,
+    run_id: UUID | None,
+    event_type: str,
+    request_id: str,
+    occurred_at: datetime,
+    payload: dict[str, Any],
+) -> None:
+    """Append an audit event using the incident's atomic sequence allocator."""
+    next_sequence = session.execute(
+        update(IncidentRow)
+        .where(IncidentRow.id == str(incident_id))
+        .values(next_audit_sequence=IncidentRow.next_audit_sequence + 1)
+        .returning(IncidentRow.next_audit_sequence)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
+    if next_sequence is None:
+        from shieldchain.wazuh.persistence import WazuhCaseAuditRow, WazuhCaseRunRow
+
+        live = session.scalar(
+            select(WazuhCaseRunRow).where(
+                WazuhCaseRunRow.case_id == str(incident_id),
+                WazuhCaseRunRow.run_id == str(run_id),
+            )
+        )
+        if live is None:
+            raise IncidentNotFound(incident_id)
+        session.add(
+            WazuhCaseAuditRow(
+                id=str(uuid4()),
+                run_id=live.run_id,
+                case_id=live.case_id,
+                tenant_id=live.tenant_id,
+                event_type=event_type,
+                request_id=request_id,
+                occurred_at=occurred_at,
+                payload_json=payload,
+            )
+        )
+        return
+    session.add(
+        AuditEventRow(
+            id=str(uuid4()),
+            incident_id=str(incident_id),
+            run_id=str(run_id) if run_id is not None else None,
+            sequence=next_sequence - 1,
+            event_type=event_type,
+            request_id=request_id,
+            occurred_at=occurred_at,
+            payload_json=payload,
+        )
+    )
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+_SYSTEM_PRINCIPAL_ID = "00000000-0000-4000-8000-000000000000"
+_GENERIC_INVESTIGATION_STATUSES = {
+    InvestigationStatus.PENDING: "pending",
+    InvestigationStatus.COLLECTING: "running",
+    InvestigationStatus.ANALYZING: "running",
+    InvestigationStatus.ACTION_PLANNED: "running",
+    InvestigationStatus.EXECUTING: "running",
+    InvestigationStatus.VERIFYING: "verifying",
+    InvestigationStatus.NEEDS_REVIEW: "needs_review",
+    InvestigationStatus.FAILED: "failed",
+    InvestigationStatus.INTERRUPTED: "needs_review",
+    InvestigationStatus.CLOSED: "completed",
+}
+
+
+def _run_from_row(row: InvestigationRunRow) -> InvestigationRun:
+    return InvestigationRun(
+        id=UUID(row.id),
+        incident_id=UUID(row.incident_id),
+        simulation_instance_id=UUID(row.simulation_instance_id),
+        status=InvestigationStatus(row.status),
+        mode=RunMode(row.mode),
+        created_at=_utc(row.created_at),
+        updated_at=_utc(row.updated_at),
+        completed_at=_utc(row.completed_at) if row.completed_at is not None else None,
+    )
+
+
+def _incident_from_row(row: IncidentRow) -> IncidentDetail:
+    return IncidentDetail(
+        id=UUID(row.id),
+        external_id=row.external_id,
+        simulation_instance_id=UUID(row.simulation_instance_id),
+        alert_id=row.alert_id,
+        endpoint=row.endpoint,
+        username=row.username,
+        source_ip=IPv4Address(row.source_ip),
+        remote_ip=IPv4Address(row.remote_ip),
+        remote_port=row.remote_port,
+        process_name=row.process_name,
+        parent_process_name=row.parent_process_name,
+        threat_label=row.threat_label,
+        created_at=_utc(row.created_at),
+    )
+
+
+def _tool_result_from_row(row: SimulationToolCallRow) -> ToolResult:
+    return ToolResult(
+        status=ToolCallStatus(row.status),
+        tool_name=row.tool_name,
+        target=row.target,
+        idempotency_key=row.idempotency_key,
+        before_state=dict(row.before_state_json),
+        after_state=dict(row.after_state_json),
+        error_code=row.error_code,
+    )
+
+
+class SqlAlchemyIncidentRepository:
+    def __init__(self, scenario_factory: ScenarioFactory) -> None:
+        self._scenario_factory = scenario_factory
+
+    def reset_phishing_scenario(
+        self, session: Session, *, now: datetime, request_id: str = "simulation-reset"
+    ) -> PhishingScenarioState:
+        active = session.execute(
+            select(InvestigationRunRow.simulation_instance_id)
+            .join(
+                SimulationInstanceRow,
+                SimulationInstanceRow.id == InvestigationRunRow.simulation_instance_id,
+            )
+            .where(
+                SimulationInstanceRow.scenario_key == "phishing",
+                InvestigationRunRow.status.in_(ACTIVE_VALUES),
+            )
+            .with_for_update()
+            .limit(1)
+        ).scalar_one_or_none()
+        if active is not None:
+            raise ActiveInvestigationExists(UUID(active))
+
+        generation = (
+            session.execute(
+                select(func.max(SimulationInstanceRow.generation)).where(
+                    SimulationInstanceRow.scenario_key == "phishing"
+                )
+            ).scalar_one()
+            or 0
+        ) + 1
+        state = replace(self._scenario_factory(now), generation=generation)
+        simulation = SimulationInstanceRow(
+            id=str(state.simulation_id),
+            scenario_key="phishing",
+            generation=state.generation,
+            environment=state.environment,
+            connection_status=state.connection_status,
+            firewall_status=state.firewall_status,
+            fail_block_consumed=state.fail_block_consumed,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+        )
+        incident = IncidentRow(
+            id=str(state.incident_id),
+            external_id=state.external_incident_id,
+            simulation_instance_id=str(state.simulation_id),
+            alert_id=state.alert_id,
+            alert_status=state.alert_status,
+            endpoint=state.endpoint,
+            username=state.username,
+            source_ip=str(state.source_ip),
+            remote_ip=str(state.remote_ip),
+            remote_port=state.remote_port,
+            process_name=state.process_name,
+            parent_process_name=state.parent_process_name,
+            command_summary=state.command_summary,
+            threat_label=state.threat_label,
+            created_at=state.created_at,
+        )
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            session.add(simulation)
+            session.flush()
+            session.add(incident)
+            session.flush()
+            self._append_audit(
+                session,
+                incident_id=state.incident_id,
+                run_id=None,
+                event_type="simulation_reset",
+                request_id=request_id,
+                occurred_at=now,
+                payload={
+                    "simulation_id": str(state.simulation_id),
+                    "generation": generation,
+                },
+            )
+            session.flush()
+        return state
+
+    def create_run(
+        self,
+        session: Session,
+        *,
+        simulation_id: UUID,
+        mode: RunMode,
+        request_id: str,
+        now: datetime,
+    ) -> InvestigationRun:
+        incident = session.execute(
+            select(IncidentRow.id, IncidentRow.tenant_id)
+            .where(IncidentRow.simulation_instance_id == str(simulation_id))
+            .with_for_update()
+        ).one_or_none()
+        if incident is None:
+            raise SimulationNotFound(simulation_id)
+        incident_id, tenant_id = incident
+        run_id = str(uuid4())
+        parent = AgentRunRow(
+            id=run_id,
+            tenant_id=tenant_id,
+            principal_id=_SYSTEM_PRINCIPAL_ID,
+            run_kind="incident_investigation",
+            status="pending",
+            goal=f"Investigate incident {incident_id}.",
+            catalog_revision="legacy-investigation-v1",
+            revision=0,
+            created_at=now,
+            updated_at=now,
+        )
+        row = InvestigationRunRow(
+            id=run_id,
+            tenant_id=tenant_id,
+            incident_id=incident_id,
+            simulation_instance_id=str(simulation_id),
+            status=InvestigationStatus.PENDING.value,
+            mode=mode.value,
+            created_at=now,
+            updated_at=now,
+        )
+        self._ensure_sqlite_outer_transaction(session)
+        try:
+            with session.begin_nested():
+                session.add(parent)
+                session.add(row)
+                self._append_audit(
+                    session,
+                    incident_id=UUID(incident_id),
+                    run_id=UUID(row.id),
+                    event_type="run_created",
+                    request_id=request_id,
+                    occurred_at=now,
+                    payload={"run_id": row.id, "status": InvestigationStatus.PENDING.value},
+                )
+                session.flush()
+        except IntegrityError as error:
+            if not self._matches_integrity_error(
+                error,
+                constraint_name="uq_active_run_per_simulation",
+                sqlite_signature="investigation_runs.simulation_instance_id",
+            ):
+                raise
+            raise ActiveInvestigationExists(simulation_id) from None
+        return _run_from_row(row)
+
+    def get_run(self, session: Session, run_id: UUID) -> InvestigationRun | None:
+        row = session.get(InvestigationRunRow, str(run_id))
+        return _run_from_row(row) if row is not None else None
+
+    def cancel_pending_run(self, session: Session, run_id: UUID) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        status = InvestigationStatus(row.status)
+        if status is not InvestigationStatus.PENDING:
+            raise InvalidInvestigationState(run_id, status)
+        session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        parent = session.get(AgentRunRow, str(run_id))
+        session.delete(row)
+        session.flush()
+        if parent is not None:
+            session.delete(parent)
+            session.flush()
+
+    def delete_historical_run(self, session: Session, run_id: UUID) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        run_status = InvestigationStatus(row.status)
+        if not is_terminal(run_status):
+            raise InvalidInvestigationState(run_id, run_status)
+
+        incident_id = row.incident_id
+        simulation_id = row.simulation_instance_id
+        session.execute(
+            delete(ConfirmedCaseFactRow).where(
+                ConfirmedCaseFactRow.case_context_id == str(run_id)
+            )
+        )
+        session.execute(delete(AgentExecutionRow).where(AgentExecutionRow.run_id == str(run_id)))
+        session.execute(delete(AgentHandoffRow).where(AgentHandoffRow.run_id == str(run_id)))
+        session.execute(
+            delete(AgentPrivateContextRow).where(AgentPrivateContextRow.run_id == str(run_id))
+        )
+        session.execute(delete(CaseContextRow).where(CaseContextRow.run_id == str(run_id)))
+        session.execute(
+            delete(InvestigationStepRow).where(InvestigationStepRow.run_id == str(run_id))
+        )
+        session.execute(delete(EvidenceRecordRow).where(EvidenceRecordRow.run_id == str(run_id)))
+        session.execute(
+            delete(SimulationToolCallRow).where(SimulationToolCallRow.run_id == str(run_id))
+        )
+        session.execute(delete(AuditEventRow).where(AuditEventRow.run_id == str(run_id)))
+        parent = session.get(AgentRunRow, str(run_id))
+        session.delete(row)
+        session.flush()
+        if parent is not None:
+            session.delete(parent)
+            session.flush()
+
+        remaining_runs = session.scalar(
+            select(func.count()).select_from(InvestigationRunRow).where(
+                InvestigationRunRow.incident_id == incident_id
+            )
+        )
+        if remaining_runs:
+            return
+
+        # The final run owns the event's local audit trail and simulation state.
+        session.execute(delete(AuditEventRow).where(AuditEventRow.incident_id == incident_id))
+        session.execute(delete(IncidentRow).where(IncidentRow.id == incident_id))
+        session.execute(
+            delete(SimulationToolCallRow).where(
+                SimulationToolCallRow.simulation_instance_id == simulation_id
+            )
+        )
+        session.execute(
+            delete(SimulationInstanceRow).where(SimulationInstanceRow.id == simulation_id)
+        )
+        session.flush()
+
+    def get_simulation(
+        self, session: Session, simulation_id: UUID
+    ) -> PhishingScenarioState | None:
+        result = session.execute(
+            select(SimulationInstanceRow, IncidentRow)
+            .join(
+                IncidentRow,
+                IncidentRow.simulation_instance_id == SimulationInstanceRow.id,
+            )
+            .where(SimulationInstanceRow.id == str(simulation_id))
+        ).one_or_none()
+        if result is None:
+            return None
+        simulation, incident = result
+        return PhishingScenarioState(
+            simulation_id=UUID(simulation.id),
+            generation=simulation.generation,
+            environment="simulation",
+            incident_id=UUID(incident.id),
+            external_incident_id=incident.external_id,
+            alert_id=incident.alert_id,
+            endpoint=incident.endpoint,
+            username=incident.username,
+            source_ip=IPv4Address(incident.source_ip),
+            alert_status=incident.alert_status,
+            remote_ip=IPv4Address(incident.remote_ip),
+            remote_port=incident.remote_port,
+            process_name=incident.process_name,
+            parent_process_name=incident.parent_process_name,
+            command_summary=incident.command_summary,
+            threat_label=incident.threat_label,
+            connection_status=simulation.connection_status,
+            firewall_status=simulation.firewall_status,
+            fail_block_consumed=simulation.fail_block_consumed,
+            created_at=_utc(simulation.created_at),
+            updated_at=_utc(simulation.updated_at),
+        )
+
+    def record_step(
+        self,
+        session: Session,
+        run_id: UUID,
+        *,
+        step_key: str,
+        status: StepStatus,
+        detail: Mapping[str, object],
+        error_code: str | None,
+        started_at: datetime,
+        completed_at: datetime | None,
+    ) -> None:
+        self._require_run(session, run_id)
+        row = session.execute(
+            select(InvestigationStepRow).where(
+                InvestigationStepRow.run_id == str(run_id),
+                InvestigationStepRow.step_key == step_key,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = InvestigationStepRow(
+                id=str(uuid4()),
+                run_id=str(run_id),
+                step_key=step_key,
+                status=status.value,
+                detail_json=dict(detail),
+                error_code=error_code,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            session.add(row)
+        else:
+            row.status = status.value
+            row.detail_json = dict(detail)
+            row.error_code = error_code
+            row.started_at = started_at
+            row.completed_at = completed_at
+        session.flush()
+
+    def transition_run(
+        self,
+        session: Session,
+        run_id: UUID,
+        target: InvestigationStatus,
+        *,
+        request_id: str,
+        now: datetime,
+    ) -> InvestigationRun:
+        row = self._require_run(session, run_id, lock=True)
+        current = InvestigationStatus(row.status)
+        transition(current, target)
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            row.status = target.value
+            row.updated_at = now
+            row.completed_at = now if is_terminal(target) else None
+            self._sync_agent_run(session, row, target, now)
+            self._append_audit(
+                session,
+                incident_id=UUID(row.incident_id),
+                run_id=run_id,
+                event_type="status_changed",
+                request_id=request_id,
+                occurred_at=now,
+                payload={"from_status": current.value, "to_status": target.value},
+            )
+            session.flush()
+        return _run_from_row(row)
+
+    def append_evidence(
+        self,
+        session: Session,
+        run_id: UUID,
+        evidence: Sequence[Evidence],
+        *,
+        request_id: str,
+    ) -> None:
+        run = self._require_run(session, run_id)
+        if not evidence:
+            return
+        for item in evidence:
+            if not verify_evidence_integrity(item):
+                raise EvidenceIntegrityMismatch(item.id)
+        duplicate = self._find_duplicate_evidence(session, run_id, evidence)
+        if duplicate is not None:
+            raise DuplicateEvidence(duplicate)
+        rows = [
+            EvidenceRecordRow(
+                id=str(item.id),
+                run_id=str(run_id),
+                evidence_type=item.evidence_type,
+                source=item.source,
+                observed_at=item.observed_at,
+                summary=item.summary,
+                raw_reference=item.raw_reference,
+                integrity_sha256=item.integrity_sha256,
+                confidence=item.confidence,
+                confirmed=item.confirmed,
+                payload_json=dict(item.payload),
+                created_at=item.observed_at,
+            )
+            for item in evidence
+        ]
+        self._ensure_sqlite_outer_transaction(session)
+        try:
+            with session.begin_nested():
+                session.add_all(rows)
+                self._append_audit(
+                    session,
+                    incident_id=UUID(run.incident_id),
+                    run_id=run_id,
+                    event_type="evidence_collected",
+                    request_id=request_id,
+                    occurred_at=max(item.observed_at for item in evidence),
+                    payload={
+                        "evidence_ids": [str(item.id) for item in evidence],
+                        "count": len(evidence),
+                    },
+                )
+                session.flush()
+        except IntegrityError as error:
+            is_id_conflict = self._matches_integrity_error(
+                error,
+                constraint_name="evidence_records_pkey",
+                sqlite_signature="evidence_records.id",
+            )
+            is_digest_conflict = self._matches_integrity_error(
+                error,
+                constraint_name="uq_evidence_run_integrity",
+                sqlite_signature=(
+                    "evidence_records.run_id, evidence_records.integrity_sha256"
+                ),
+            )
+            if not is_id_conflict and not is_digest_conflict:
+                raise
+            duplicate = self._find_duplicate_evidence(session, run_id, evidence)
+            if duplicate is None:
+                raise
+            raise DuplicateEvidence(duplicate) from None
+
+    def save_assessment(
+        self,
+        session: Session,
+        run_id: UUID,
+        assessment: Assessment,
+        *,
+        request_id: str,
+        now: datetime,
+    ) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            row.assessment_json = {
+                "conclusion": assessment.conclusion.value,
+                "risk_level": assessment.risk_level.value,
+                "rule_ids": list(assessment.rule_ids),
+                "evidence_ids": [str(value) for value in assessment.evidence_ids],
+                "recommended_action": assessment.recommended_action,
+                "explanation": assessment.explanation,
+            }
+            row.updated_at = now
+            self._append_audit(
+                session,
+                incident_id=UUID(row.incident_id),
+                run_id=run_id,
+                event_type="assessment_completed",
+                request_id=request_id,
+                occurred_at=now,
+                payload={
+                    "conclusion": assessment.conclusion.value,
+                    "risk_level": assessment.risk_level.value,
+                    "evidence_count": len(assessment.evidence_ids),
+                },
+            )
+            session.flush()
+
+    def get_tool_result(
+        self, session: Session, idempotency_key: str
+    ) -> ToolResult | None:
+        row = self._get_tool_call_row(session, idempotency_key)
+        return _tool_result_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _get_tool_call_row(
+        session: Session, idempotency_key: str
+    ) -> SimulationToolCallRow | None:
+        return session.execute(
+            select(SimulationToolCallRow).where(
+                SimulationToolCallRow.idempotency_key == idempotency_key
+            )
+        ).scalar_one_or_none()
+
+    def apply_tool_outcome(
+        self,
+        session: Session,
+        run_id: UUID,
+        outcome: BlockOutcome,
+        *,
+        request_id: str,
+        now: datetime,
+    ) -> ToolResult:
+        run = self._require_run(session, run_id)
+        if (
+            outcome.state.simulation_id != UUID(run.simulation_instance_id)
+            or outcome.state.incident_id != UUID(run.incident_id)
+        ):
+            raise RunSimulationMismatch(run_id, outcome.state.simulation_id)
+        stored_row = self._get_tool_call_row(
+            session, outcome.result.idempotency_key
+        )
+        if stored_row is not None:
+            operation_matches = (
+                stored_row.run_id == str(run_id)
+                and stored_row.simulation_instance_id
+                == str(outcome.state.simulation_id)
+                and stored_row.tool_name == outcome.result.tool_name
+                and stored_row.target == outcome.result.target
+            )
+            if not operation_matches:
+                raise IdempotencyConflict(outcome.result.idempotency_key)
+            return _tool_result_from_row(stored_row)
+        simulation = session.execute(
+            select(SimulationInstanceRow)
+            .where(SimulationInstanceRow.id == str(outcome.state.simulation_id))
+            .with_for_update()
+        ).scalar_one_or_none()
+        if simulation is None:
+            raise SimulationNotFound(outcome.state.simulation_id)
+        tool_row = SimulationToolCallRow(
+            id=str(uuid4()),
+            run_id=str(run_id),
+            simulation_instance_id=simulation.id,
+            tool_name=outcome.result.tool_name,
+            target=outcome.result.target,
+            idempotency_key=outcome.result.idempotency_key,
+            status=outcome.result.status.value,
+            before_state_json=dict(outcome.result.before_state),
+            after_state_json=dict(outcome.result.after_state),
+            error_code=outcome.result.error_code,
+            requested_at=now,
+            completed_at=now,
+        )
+        self._ensure_sqlite_outer_transaction(session)
+        try:
+            with session.begin_nested():
+                simulation.connection_status = outcome.state.connection_status
+                simulation.firewall_status = outcome.state.firewall_status
+                simulation.fail_block_consumed = outcome.state.fail_block_consumed
+                simulation.updated_at = outcome.state.updated_at
+                session.add(tool_row)
+                self._append_audit(
+                    session,
+                    incident_id=UUID(run.incident_id),
+                    run_id=run_id,
+                    event_type="tool_called",
+                    request_id=request_id,
+                    occurred_at=now,
+                    payload={
+                        "tool_call_id": tool_row.id,
+                        "tool_name": outcome.result.tool_name,
+                        "status": outcome.result.status.value,
+                        "error_code": outcome.result.error_code,
+                    },
+                )
+                session.flush()
+        except IntegrityError as error:
+            if not self._matches_integrity_error(
+                error,
+                constraint_name="uq_tool_call_idempotency_key",
+                sqlite_signature="simulation_tool_calls.idempotency_key",
+            ):
+                raise
+            raise DuplicateIdempotencyKey(outcome.result.idempotency_key) from None
+        return outcome.result
+
+    def save_verification(
+        self,
+        session: Session,
+        run_id: UUID,
+        result: VerificationResult,
+        *,
+        request_id: str,
+    ) -> None:
+        row = self._require_run(session, run_id, lock=True)
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            row.verification_json = {
+                "blocked": result.blocked,
+                "connection_stopped": result.connection_stopped,
+                "observed_at": result.observed_at.isoformat(),
+                "evidence_ids": [str(value) for value in result.evidence_ids],
+            }
+            self._append_audit(
+                session,
+                incident_id=UUID(row.incident_id),
+                run_id=run_id,
+                event_type="verification_completed",
+                request_id=request_id,
+                occurred_at=result.observed_at,
+                payload={
+                    "blocked": result.blocked,
+                    "connection_stopped": result.connection_stopped,
+                    "evidence_count": len(result.evidence_ids),
+                },
+            )
+            session.flush()
+
+    def get_incident(
+        self, session: Session, incident_id: UUID
+    ) -> IncidentDetail | None:
+        row = session.get(IncidentRow, str(incident_id))
+        return _incident_from_row(row) if row is not None else None
+
+    def list_audit(
+        self, session: Session, incident_id: UUID
+    ) -> Sequence[AuditEvent]:
+        exists = session.get(IncidentRow, str(incident_id))
+        if exists is None:
+            raise IncidentNotFound(incident_id)
+        rows = session.execute(
+            select(AuditEventRow)
+            .where(AuditEventRow.incident_id == str(incident_id))
+            .order_by(AuditEventRow.sequence.asc())
+        ).scalars()
+        return tuple(
+            AuditEvent(
+                id=UUID(row.id),
+                incident_id=UUID(row.incident_id),
+                run_id=UUID(row.run_id) if row.run_id is not None else None,
+                event_type=row.event_type,
+                request_id=row.request_id,
+                occurred_at=_utc(row.occurred_at),
+                payload=dict(row.payload_json),
+            )
+            for row in rows
+        )
+
+    def mark_recoverable_runs_interrupted(
+        self, session: Session, *, request_id: str, now: datetime
+    ) -> int:
+        rows = tuple(
+            session.execute(
+                select(InvestigationRunRow)
+                .where(
+                    InvestigationRunRow.status.in_(
+                        [status.value for status in ACTIVE_INVESTIGATION_STATUSES]
+                    )
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        self._ensure_sqlite_outer_transaction(session)
+        with session.begin_nested():
+            for row in rows:
+                current = row.status
+                row.status = InvestigationStatus.INTERRUPTED.value
+                row.updated_at = now
+                row.completed_at = now
+                self._sync_agent_run(
+                    session, row, InvestigationStatus.INTERRUPTED, now
+                )
+                self._append_audit(
+                    session,
+                    incident_id=UUID(row.incident_id),
+                    run_id=UUID(row.id),
+                    event_type="status_changed",
+                    request_id=request_id,
+                    occurred_at=now,
+                    payload={
+                        "from_status": current,
+                        "to_status": InvestigationStatus.INTERRUPTED.value,
+                    },
+                )
+            session.flush()
+        return len(rows)
+
+    @staticmethod
+    def _sync_agent_run(
+        session: Session,
+        investigation: InvestigationRunRow,
+        status: InvestigationStatus,
+        now: datetime,
+    ) -> None:
+        row = session.get(AgentRunRow, investigation.id)
+        if row is None:
+            raise InvestigationNotFound(UUID(investigation.id))
+        row.status = _GENERIC_INVESTIGATION_STATUSES[status]
+        row.revision += 1
+        row.updated_at = now
+        row.completed_at = now if is_terminal(status) else None
+
+    @staticmethod
+    def _require_run(
+        session: Session, run_id: UUID, *, lock: bool = False
+    ) -> InvestigationRunRow:
+        statement = select(InvestigationRunRow).where(
+            InvestigationRunRow.id == str(run_id)
+        )
+        if lock:
+            statement = statement.with_for_update()
+        row = session.execute(statement).scalar_one_or_none()
+        if row is None:
+            raise InvestigationNotFound(run_id)
+        return row
+
+    @staticmethod
+    def _append_audit(
+        session: Session,
+        *,
+        incident_id: UUID,
+        run_id: UUID | None,
+        event_type: str,
+        request_id: str,
+        occurred_at: datetime,
+        payload: dict[str, Any],
+    ) -> None:
+        append_incident_audit(
+            session,
+            incident_id=incident_id,
+            run_id=run_id,
+            event_type=event_type,
+            request_id=request_id,
+            occurred_at=occurred_at,
+            payload=payload,
+        )
+
+    @staticmethod
+    def _ensure_sqlite_outer_transaction(session: Session) -> None:
+        connection = session.connection()
+        if connection.dialect.name != "sqlite":
+            return
+        driver_connection = connection.connection.driver_connection
+        if not driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+
+    @staticmethod
+    def _matches_integrity_error(
+        error: IntegrityError,
+        *,
+        constraint_name: str | None,
+        sqlite_signature: str,
+    ) -> bool:
+        diagnostic = getattr(error.orig, "diag", None)
+        actual_name = getattr(diagnostic, "constraint_name", None)
+        if constraint_name is not None and actual_name == constraint_name:
+            return True
+        return (
+            "UNIQUE constraint failed:" in str(error.orig)
+            and sqlite_signature in str(error.orig)
+        )
+
+    @staticmethod
+    def _find_duplicate_evidence(
+        session: Session, run_id: UUID, evidence: Sequence[Evidence]
+    ) -> UUID | None:
+        seen_ids: set[UUID] = set()
+        seen_digests: set[str] = set()
+        for item in evidence:
+            if item.id in seen_ids or item.integrity_sha256 in seen_digests:
+                return item.id
+            seen_ids.add(item.id)
+            seen_digests.add(item.integrity_sha256)
+
+        stored_ids = {
+            UUID(value)
+            for value in session.execute(
+                select(EvidenceRecordRow.id).where(
+                    EvidenceRecordRow.id.in_([str(item.id) for item in evidence])
+                )
+            ).scalars()
+        }
+        stored_digests = set(
+            session.execute(
+                select(EvidenceRecordRow.integrity_sha256).where(
+                    EvidenceRecordRow.run_id == str(run_id),
+                    EvidenceRecordRow.integrity_sha256.in_(
+                        [item.integrity_sha256 for item in evidence]
+                    ),
+                )
+            ).scalars()
+        )
+        for item in evidence:
+            if item.id in stored_ids or item.integrity_sha256 in stored_digests:
+                return item.id
+        return None

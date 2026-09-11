@@ -1,28 +1,50 @@
-# Local source artifacts; indexed in docs/source-index.md, not committed.
-/SAGA，A Security Architecture for Governing AI Agentic Systems.pdf
-/具体要求.docx
-~$*.docx
+# Local agent and worktree state
+AGENTS.md
+config/mcp/servers.yaml
+.agents/
+.superpowers/
+.worktrees/
 
-# Temporary renders and editor artifacts.
-/tmp/
-*.tmp
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+secrets/
 
-# Python/runtime artifacts reserved for later phases.
+# Server-local backups and runtime state
+backups/
+runtime/
+.local/
+sample_docs/security_vertical/*.pdf
+.deployed-git-sha
+.deployment-commit
+
+# Python
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
-.venv/
 
-# Local credentials and raw benchmark scratch data.
-*.key
-*.pem
-*.crt
-.env
-/results/raw/
-/results/.cache/
+# Node and frontend builds
+node_modules/
+.npm-cache/
+*.tsbuildinfo
+build/
+dist/
+coverage/
 
-/.superpowers/
+# Runtime data and logs
+data/*
+!data/.gitkeep
+*.db
+*.sqlite*
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
