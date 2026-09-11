@@ -13,8 +13,11 @@ secrets/
 
 # Server-local backups and runtime state
 backups/
+backend_stage/
 runtime/
 .local/
+uploads/
+*.tgz
 sample_docs/security_vertical/*.pdf
 .deployed-git-sha
 .deployment-commit
