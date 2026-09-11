@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 VIDEO_ROOT = ROOT / "video" / "shieldchain-demo"
+pytestmark = pytest.mark.skipif(
+    not VIDEO_ROOT.is_dir(),
+    reason="obsolete generated Remotion project was intentionally removed",
+)
 
 
 def test_video_source_has_three_minute_hd_contract() -> None:

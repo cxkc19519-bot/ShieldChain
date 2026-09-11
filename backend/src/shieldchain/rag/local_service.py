@@ -428,15 +428,21 @@ class LocalKnowledgeService:
                 )
                 for chunk_id in ordered
             ]
-            evidence_ids = self._primary_evidence_ids(ordered, chunks)
-            evidence_hits = [hit for hit in hits if hit.chunk_id in evidence_ids]
-            if any(contains_prompt_injection(hit.excerpt) for hit in hits):
+            safe_hits = [
+                hit for hit in hits if not contains_prompt_injection(hit.excerpt)
+            ]
+            if not safe_hits:
                 return self._empty(
                     request.query,
                     degradations,
                     reason="unsafe_content",
                 )
-            conflicting_hits = self._conflicting_hits(hits)
+            safe_ordered = [hit.chunk_id for hit in safe_hits]
+            evidence_ids = self._primary_evidence_ids(safe_ordered, chunks)
+            evidence_hits = [
+                hit for hit in safe_hits if hit.chunk_id in evidence_ids
+            ]
+            conflicting_hits = self._conflicting_hits(safe_hits)
             if conflicting_hits:
                 return RetrievalResponse(
                     query=request.query,
@@ -450,7 +456,7 @@ class LocalKnowledgeService:
                 query=request.query,
                 answer=self._extractive_retrieval_answer(evidence_hits),
                 refusal_reason=None,
-                hits=hits,
+                hits=safe_hits,
                 citations=[self._citation(hit) for hit in evidence_hits],
                 degradations=degradations,
             )

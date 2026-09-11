@@ -1,65 +1,144 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BrainCircuit, CheckCircle2, FileDown, FileText, GitBranch, Play, RefreshCcw, ShieldCheck, Wrench } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Activity, BadgeCheck, BrainCircuit, CheckCircle2, ExternalLink, FileDown, Gavel, MonitorCog, RefreshCcw, Shield, ShieldCheck, Trash2, UserRound, X } from 'lucide-react'
 
 import { PageHeader } from '../../components/ui/PageHeader'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/States'
-import { AgentsPage } from '../agents/AgentsPage'
-import { createOperationsReport, listOperationsReports, type OperationsReport, type ToolCall } from './api'
+import { deleteOperationsReport, listOperationsReports, type OperationsReport } from './api'
 import './operations.css'
-
-function localInput(value: Date): string {
-  const offset = value.getTimezoneOffset() * 60_000
-  return new Date(value.getTime() - offset).toISOString().slice(0, 16)
-}
 
 function dateTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-function toolStatus(tool: ToolCall): string {
-  if (tool.status === 'failed') return '调用失败 · 未取得可信结果'
-  if (tool.status === 'empty') return '返回 0 项 · 无匹配记录'
-  return `返回 ${tool.result_count} 项 · 调用完成`
+function reportStatus(report: OperationsReport): string {
+  if (report.closure.status === 'closed') return '已闭环'
+  if (report.closure.status === 'verification_pending') return '等待验证'
+  if (report.closure.status === 'awaiting_approval') return '异常待接管'
+  return '分析完成'
 }
 
-const STEP_ICONS = [ShieldCheck, Wrench, FileText, ShieldCheck, FileText, Play]
-
-const TRACE_PHASE_LABELS: Record<string, string> = {
-  observe: '观测', correlate: '定位', collaborate: '协同', decide: '定性与决策',
-  act: '动作边界', verify: '验证', close: '闭环',
+function shortened(value: string, maximum = 92): string {
+  const normalized = value.replace(/^概括总结：\s*/, '').replace(/\s+/g, ' ').trim()
+  return normalized.length > maximum ? `${normalized.slice(0, maximum)}…` : normalized
 }
 
-function traceStatus(value: string): string {
-  return value === 'completed' ? '已完成' : value === 'blocked' ? '待人工处理' : '待执行'
+function match(value: string, pattern: RegExp): string | null {
+  return value.match(pattern)?.[1]?.trim() ?? null
 }
 
-function closureStatus(value: string): string {
-  return { analysis_complete: '分析完成', awaiting_approval: '等待人工审批', verification_pending: '等待验证', closed: '已闭环' }[value] ?? value
+function attackChain(report: OperationsReport) {
+  const narrative = [report.closure.decision, ...report.reasoning_trace.map((step) => step.detail)].join(' ')
+  const alertEvidence = report.tool_calls
+    .find((item) => item.name === 'security.alerts.list')
+    ?.items.join(' ') ?? ''
+  const structuredEvidence = `${alertEvidence} ${narrative}`
+  const observedDomain = (...tokens: string[]) => report.cross_domain.find((item) => {
+    const identity = `${item.key} ${item.label}`.toLowerCase()
+    return item.status === 'observed' && item.result_count > 0 && tokens.some((token) => identity.includes(token))
+  })
+  const networkDomain = observedDomain('network', '网络', '流量', '告警')
+  const endpointDomain = observedDomain('endpoint', '终端', '端点')
+  const identityDomain = observedDomain('identity', '身份', '账号', '认证')
+  const vulnerabilityDomain = observedDomain('vulnerability', '漏洞', '攻击面')
+  const source = match(structuredEvidence, /(?:网络\s*|源(?:地址|IP)?\s*)([0-9a-f:.]+)\s*(?:→|向)/i)
+  const target = match(structuredEvidence, /(?:→|向目标|攻击目标)\s*([0-9a-f:.]+(?::\d+)?)/i)
+  const rule = match(structuredEvidence, /(?:关联)?规则\s*([a-z][a-z0-9_-]*:\d+)/i)
+  const alertSignature = match(alertEvidence, /｜\s*(?:NTA\s*隔离回放[：:]\s*)?([^｜]+?)\s*｜\s*网络/i)
+  const attackFeature = alertSignature
+    ?? match(narrative, /表现为\s*([^，。]{4,100})/)
+    ?? match(narrative, /检测到(?:一次)?\s*([^，。]{4,100})/)
+  const process = match(narrative, /(?:名为\s*)?([a-z0-9_.-]+)\s*(?:的)?端点进程/i)
+    ?? match(narrative, /端点(?:映射|进程上下文)?[^，。]{0,20}?([a-z0-9_.-]+)(?:执行|与)/i)
+  const account = match(narrative, /(?:服务账号|身份线索(?:为)?|账号)\s*([a-z0-9_.-]+)/i)
+  const endpoint = report.response_audit?.actions.find((item) => item.target_type === 'endpoint')?.target
+  const actionNames: Record<string, string> = { block_ip: '封禁 IP', isolate_endpoint: '隔离端点', quarantine_file: '隔离文件', disable_account: '停用账号' }
+  const behavior = /内鬼/.test(narrative)
+    ? `${attackFeature ? `${shortened(attackFeature, 62)}；` : ''}身份与行为证据指向疑似内鬼活动`
+    : /隔离回放|演示环境/.test(narrative)
+      ? `${attackFeature ? `${shortened(attackFeature, 62)}；` : ''}判定为隔离回放攻击行为`
+      : shortened(report.closure.decision)
+  const traffic = source && target
+    ? `${source} → ${target}${rule ? ` · ${rule}` : ''}${alertSignature ? ` · ${shortened(alertSignature, 42)}` : ''}`
+    : `${shortened(networkDomain?.summary ?? report.closure.observed)}${rule ? ` · ${rule}` : ''}`
+  const demoMappedContext = /演示映射|demo_scenario_mapping|不是生产身份|非生产身份/.test(structuredEvidence)
+  const nodes: Array<{ key: string; label: string; detail: string; icon: typeof Activity; state: 'complete' | 'pending' | 'failed' }> = []
+
+  if (networkDomain || alertEvidence || (source && target)) {
+    nodes.push({ key: 'network', label: '网络告警', detail: traffic, icon: Activity, state: 'complete' })
+  }
+  if (endpointDomain && !demoMappedContext) {
+    nodes.push({ key: 'endpoint', label: '终端关联', detail: process ? `${process}${endpoint ? ` · 端点 ${endpoint}` : ''}` : shortened(endpointDomain.summary), icon: MonitorCog, state: 'complete' })
+  }
+  if (identityDomain && !demoMappedContext) {
+    nodes.push({ key: 'identity', label: '身份关联', detail: account ? `${account} · 已取得身份域证据` : shortened(identityDomain.summary), icon: UserRound, state: 'complete' })
+  }
+  if (vulnerabilityDomain) {
+    nodes.push({ key: 'vulnerability', label: '攻击面线索', detail: shortened(vulnerabilityDomain.summary), icon: ShieldCheck, state: 'complete' })
+  }
+  nodes.push({ key: 'decision', label: '研判结论', detail: behavior, icon: Gavel, state: report.closure.status === 'analysis_complete' ? 'pending' : 'complete' })
+
+  const auditedActions = report.response_audit?.actions ?? []
+  for (const action of auditedActions) {
+    const failed = action.execution_status === 'failed' || action.attempt_outcomes.some((outcome) => /failed|失败/i.test(outcome))
+    const completed = action.execution_status === 'succeeded' || action.verification_outcome === 'verified'
+    nodes.push({
+      key: `action-${action.action_id}`,
+      label: actionNames[action.tool_name] ?? action.tool_name,
+      detail: `${action.target_type} ${action.target} · ${failed ? '执行失败' : completed ? '已取得执行回执' : action.execution_status}`,
+      icon: Shield,
+      state: failed ? 'failed' : completed ? 'complete' : 'pending',
+    })
+  }
+  if (auditedActions.length === 0 && report.response_plan && report.response_plan.action_count > 0) {
+    nodes.push({ key: 'proposal', label: '响应建议', detail: shortened(report.response_plan.public_summary), icon: Shield, state: 'pending' })
+  }
+
+  const replans = report.response_audit?.replans.filter((item) => item.revision > 0 || /replan|重新规划|失败反馈/i.test(`${item.event_type} ${item.summary}`)) ?? []
+  if (replans.length > 0) {
+    nodes.push({ key: 'replan', label: '反馈重规划', detail: shortened(replans.at(-1)?.summary ?? `已生成 ${replans.length} 次修订。`), icon: RefreshCcw, state: 'complete' })
+  }
+  if (auditedActions.length > 0 || report.closure.status === 'verification_pending') {
+    const verified = auditedActions.filter((action) => action.verification_outcome === 'verified').length
+    const verificationFailed = auditedActions.some((action) => /failed|失败/i.test(action.verification_outcome ?? ''))
+    nodes.push({
+      key: 'verification',
+      label: verificationFailed ? '验证失败' : report.closure.status === 'verification_pending' ? '等待验证' : '结果验证',
+      detail: auditedActions.length ? `${verified}/${auditedActions.length} 项动作验证通过；${shortened(report.closure.verification, 72)}` : shortened(report.closure.verification),
+      icon: BadgeCheck,
+      state: verificationFailed ? 'failed' : report.closure.status === 'verification_pending' ? 'pending' : 'complete',
+    })
+  } else if (report.closure.status === 'awaiting_approval') {
+    nodes.push({ key: 'takeover', label: '等待人工接管', detail: shortened(report.closure.feedback), icon: UserRound, state: 'pending' })
+  }
+  return nodes
+}
+
+function AttackChainView({ report }: { report: OperationsReport }) {
+  const nodes = attackChain(report)
+  return <ol className="operations-attack-chain" aria-label="动态攻击调查链" style={{ gridTemplateColumns: `repeat(${nodes.length}, minmax(165px, 1fr))`, minWidth: `${Math.max(760, nodes.length * 190)}px` }}>
+    {nodes.map((node, index) => <li key={node.key} className={`is-${node.state}`}><span className="operations-attack-chain__index">{String(index + 1).padStart(2, '0')}</span><node.icon size={20} /><strong>{node.label}</strong><p>{node.detail}</p></li>)}
+  </ol>
 }
 
 export function OperationsReportPage() {
-  const [startAt, setStartAt] = useState(() => localInput(new Date(Date.now() - 86_400_000)))
-  const [endAt, setEndAt] = useState(() => localInput(new Date()))
   const [reports, setReports] = useState<OperationsReport[]>([])
-  const [selected, setSelected] = useState<OperationsReport | null>(null)
   const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<'html' | 'markdown'>('html')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [reasoningReport, setReasoningReport] = useState<OperationsReport | null>(null)
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
+    setError(null)
     try {
       const next = await listOperationsReports(signal)
-      if (!signal?.aborted) {
-        setReports(next)
-        setSelected((current) => current ? (next.find((item) => item.id === current.id) ?? current) : (next[0] ?? null))
-      }
+      if (!signal?.aborted) setReports(next)
     } catch (reason) {
       if (!signal?.aborted) setError(reason instanceof Error ? reason.message : '加载运营报告失败')
-    } finally { if (!signal?.aborted) setLoading(false) }
+    } finally {
+      if (!signal?.aborted) setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -68,81 +147,79 @@ export function OperationsReportPage() {
     return () => controller.abort()
   }, [refresh])
 
-  const generate = async () => {
-    if (!startAt || !endAt) { setError('请完整填写开始与结束时间。'); return }
-    setGenerating(true)
+  useEffect(() => {
+    if (!reasoningReport) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setReasoningReport(null) }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [reasoningReport])
+
+  const remove = async (report: OperationsReport) => {
+    if (!window.confirm(`确定删除“${report.id}”吗？服务器上的 HTML、Markdown 和元数据文件也会被删除，此操作无法撤销。`)) return
+    setDeletingId(report.id)
     setError(null)
     try {
-      const next = await createOperationsReport({ start_at: new Date(startAt).toISOString(), end_at: new Date(endAt).toISOString() })
-      setReports((items) => [next, ...items.filter((item) => item.id !== next.id)])
-      setSelected(next)
-      setPreview('html')
+      await deleteOperationsReport(report.id)
+      setReports((items) => items.filter((item) => item.id !== report.id))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '生成安全运营报告失败')
-    } finally { setGenerating(false) }
+      setError(reason instanceof Error ? reason.message : '删除安全运营报告失败')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
-  return <section aria-labelledby="operations-title" className="page-card operations-page">
+  return <section aria-labelledby="operations-title" className="page-card operations-page operations-index-page">
     <PageHeader
       id="operations-title"
-      eyebrow="真实数据 · 多智能体安全运营"
       title="安全运营报告"
-      description="安全运营报告智能体根据任务自主选择受授权的只读 MCP 工具，观察返回结果后继续分析、交接或结束；不会自动执行处置。"
+      centered
+      actions={<button type="button" onClick={() => void refresh()} disabled={loading}><RefreshCcw size={16} />刷新报告</button>}
     />
 
-    <section className="operations-runner" aria-label="生成安全运营报告">
-      <div className="operations-runner__inputs">
-        <label>开始时间<input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} disabled={generating} /></label>
-        <label>结束时间<input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} disabled={generating} /></label>
-      </div>
-      <button type="button" className="operations-runner__button" disabled={generating} onClick={() => void generate()}>
-        <Play size={17} aria-hidden="true" />{generating ? '报告智能体分析中…' : '生成运营报告'}
-      </button>
-    </section>
-    <p className="operations-boundary">受控边界：时间范围最多 31 天；MCP 工具只读；CVE 和弱口令结果均为线索，必须人工复核。</p>
-    {error && <ErrorState title="报告操作未完成" detail={error} action={<button type="button" onClick={() => setError(null)}>关闭提示</button>} />}
+    {loading && reports.length === 0 && <LoadingState title="正在读取安全运营报告" />}
+    {error && <ErrorState title="无法加载安全运营报告" detail={error} action={<button type="button" onClick={() => void refresh()}>重试</button>} />}
+    {!loading && !error && reports.length === 0 && <EmptyState title="尚无安全运营报告" detail="智能体完成安全事件调查后，报告会自动出现在这里。" />}
 
-    {loading && !selected && <LoadingState title="正在读取已生成的运营报告" />}
-    {!loading && !selected && !error && <EmptyState title="尚无安全运营报告" detail="选择时间范围后，报告智能体会分析已接入的真实告警与离线 NTA 数据。" />}
+    {reports.length > 0 && <div className="operations-report-grid" role="list">
+      {reports.map((report) => {
+        const observedDomains = report.cross_domain.filter((item) => item.status === 'observed').length
+        const zeroTouch = report.response_audit?.human_interventions === 0 || (report.closure.status === 'closed' && !report.closure.human_approval_required)
+        return <article className="operations-report-card" key={report.id} role="listitem">
+          <header>
+            <div className="operations-report-card__icon">{zeroTouch ? <ShieldCheck size={23} /> : <CheckCircle2 size={23} />}</div>
+            <div><h3>{report.id}</h3><time dateTime={report.generated_at}>{dateTime(report.generated_at)}</time></div>
+            <span className={report.closure.status === 'closed' ? 'is-closed' : ''}>{reportStatus(report)}</span>
+          </header>
+          <div className="operations-report-card__metrics">
+            <div><span>处置模式</span><strong>{zeroTouch ? '零人工闭环' : '受控调查'}</strong></div>
+            <div><span>处置动作</span><strong>{report.response_plan?.action_count ?? 0} 项</strong></div>
+            <div><span>证据覆盖</span><strong>{observedDomains}/{report.cross_domain.length} 域</strong></div>
+            <div><span>人工干预</span><strong>{report.response_audit ? `${report.response_audit.human_interventions} 次` : report.closure.human_approval_required ? '需要' : '0 次'}</strong></div>
+          </div>
+          <p>{report.closure.observed}</p>
+          <footer>
+            <a className="button" href={`/api/v1/operations/reports/${encodeURIComponent(report.id)}/view`} target="_blank" rel="noreferrer"><ExternalLink size={16} />打开 HTML 报告</a>
+            <a href={`/api/v1/operations/reports/${encodeURIComponent(report.id)}/view?download=true`}><FileDown size={16} />下载 HTML</a>
+            <a href={`/api/v1/operations/reports/${encodeURIComponent(report.id)}/download?format=markdown`}><FileDown size={16} />下载 Markdown</a>
+            <button className="reasoning-button" type="button" onClick={() => setReasoningReport(report)}><BrainCircuit size={16} />查看思维链</button>
+            <button className="danger-button" disabled={deletingId === report.id} type="button" onClick={() => void remove(report)}><Trash2 size={16} />{deletingId === report.id ? '正在删除…' : '删除报告'}</button>
+          </footer>
+        </article>
+      })}
+    </div>}
 
-    {selected && <div className="operations-workspace">
-      <aside className="operations-history" aria-label="运营报告历史">
-        <header><span>报告历史</span><button type="button" onClick={() => void refresh()} disabled={loading}>刷新</button></header>
-        {reports.map((item) => <button key={item.id} type="button" className={item.id === selected.id ? 'is-selected' : ''} onClick={() => setSelected(item)}>
-          <strong>{item.id}</strong><span>{dateTime(item.generated_at)}</span>
-        </button>)}
-      </aside>
-      <div className="operations-detail">
-        <header className="operations-detail__header"><div><p className="eyebrow">{selected.agent_name}</p><h2>{selected.id}</h2><p>{dateTime(selected.start_at)} 至 {dateTime(selected.end_at)}</p><p>{selected.run_status === 'legacy_without_run' ? '历史报告：无通用运行记录（legacy_without_run）' : `运行 ID：${selected.run_id}`}</p></div><div className="operations-downloads"><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=markdown`}><FileDown size={16} />下载 Markdown</a><a href={`/api/v1/operations/reports/${encodeURIComponent(selected.id)}/download?format=html`}><FileDown size={16} />下载 HTML</a></div></header>
-        <section aria-label="智能体执行阶段" className="operations-stages">
-          {selected.stages.map((stage, index) => { const Icon = STEP_ICONS[index] ?? ShieldCheck; return <article key={stage.key}><Icon size={18} aria-hidden="true" /><div><strong>{index + 1}. {stage.label}</strong><p>{stage.detail}</p></div><span className={stage.status === 'fallback' ? 'is-fallback' : ''}>{stage.status === 'fallback' ? '保守降级' : '已完成'}</span></article> })}
-        </section>
-        <section className="operations-reasoning" aria-labelledby="reasoning-title">
-          <header><div><p className="eyebrow">可审计推理过程</p><h3 id="reasoning-title">结构化调查推理链</h3></div><span><BrainCircuit size={15} aria-hidden="true" /> 不展示隐藏 CoT</span></header>
-          <p className="operations-reasoning__hint">按“观测 → 定位 → 协同 → 定性 → 动作 → 验证 → 闭环”回放公开证据、角色交接和决策依据；未选择的数据域保持未知。</p>
-          <ol className="operations-reasoning__timeline">
-            {selected.reasoning_trace.map((step) => <li key={`${step.sequence}-${step.phase}`} className={`is-${step.status}`}>
-              <div className="operations-reasoning__marker"><span>{step.sequence}</span></div>
-              <div className="operations-reasoning__content"><div className="operations-reasoning__title"><strong>{step.title}</strong><span>{TRACE_PHASE_LABELS[step.phase] ?? step.phase} · {traceStatus(step.status)}</span></div><p>{step.detail}</p>{step.domains.length > 0 && <small>证据域：{step.domains.join('、')}</small>}{step.evidence.length > 0 && <details><summary>查看公开证据摘要（{step.evidence.length}）</summary><ul>{step.evidence.map((item, index) => <li key={`${step.sequence}-${index}`}>{item}</li>)}</ul></details>}</div>
-            </li>)}
-            {selected.reasoning_trace.length === 0 && <li className="operations-reasoning__empty">该历史报告未保存结构化推理链，请重新生成报告。</li>}
-          </ol>
-        </section>
-
-        <section className="operations-collaboration" aria-labelledby="collaboration-title"><header><div><p className="eyebrow">跨域多智能体协同</p><h3 id="collaboration-title">角色交接与证据责任</h3></div><span><GitBranch size={15} aria-hidden="true" /> {selected.collaboration.length} 轮</span></header><div>{selected.collaboration.map((role) => <article key={`${role.role}-${role.iteration}`}><strong>第 {role.iteration} 轮 · {role.label}</strong><span className={role.status === 'fallback' ? 'is-fallback' : ''}>{role.status === 'fallback' ? '保守降级' : '已完成'}</span><p>{role.summary}</p>{role.evidence_domains.length > 0 && <small>负责域：{role.evidence_domains.join('、')}</small>}<small>决策依据：{role.decision_reason || '依据前序公开观察继续'}</small>{role.handoff_to && <small> → 交接给：{role.handoff_to}</small>}</article>)}</div></section>
-
-        <section className="operations-cross-domain" aria-labelledby="cross-domain-title"><header><div><p className="eyebrow">统一证据面</p><h3 id="cross-domain-title">跨域证据覆盖</h3></div><span>不把缺失当成零</span></header><div>{selected.cross_domain.map((item) => <article key={item.key} className={item.status === 'not_observed' ? 'is-missing' : ''}><div><strong>{item.label}</strong><span>{item.source}</span></div><b>{item.status === 'observed' ? `${item.result_count} 项已观测` : '本轮未观测'}</b><p>{item.summary}</p></article>)}</div></section>
-
-        <section className="operations-closure" aria-labelledby="closure-title"><header><div><p className="eyebrow">Observe · Decide · Act · Verify</p><h3 id="closure-title">安全运营闭环</h3></div><span className="operations-closure__status"><RefreshCcw size={14} aria-hidden="true" /> {closureStatus(selected.closure.status)}</span></header><div className="operations-closure__grid"><article><CheckCircle2 size={17} /><strong>观测</strong><p>{selected.closure.observed}</p></article><article><BrainCircuit size={17} /><strong>决策</strong><p>{selected.closure.decision}</p></article><article><ShieldCheck size={17} /><strong>动作</strong><p>{selected.closure.action}</p></article><article><RefreshCcw size={17} /><strong>验证与反馈</strong><p>{selected.closure.verification}</p><small>{selected.closure.feedback}</small></article></div><p className="operations-closure__boundary">{selected.closure.human_approval_required ? '高风险动作必须人工审批；本页为报告生成时快照，实时执行与重规划状态请在处置中心核验。' : '当前动作不需要人工审批。'}</p></section>
-        {selected.response_plan && <section className="operations-plan" aria-labelledby="operations-plan-title"><header><div><p className="eyebrow">严格结构化建议</p><h3 id="operations-plan-title">响应计划</h3></div><span>{selected.response_plan.generation_status === 'deterministic_fallback' ? '安全降级' : '编译通过'}</span></header><dl><dt>计划 ID</dt><dd><code>{selected.response_plan.plan_id}</code></dd><dt>生成时版本</dt><dd>第 {selected.response_plan.revision} 版</dd><dt>生成时状态</dt><dd>{selected.response_plan.status}</dd><dt>动作数</dt><dd>{selected.response_plan.action_count}</dd><dt>实时执行事实</dt><dd>请进入处置中心核验</dd></dl><p>{selected.response_plan.public_summary}</p>{selected.response_plan.fallback_reason_code && <code>{selected.response_plan.fallback_reason_code}</code>}<small>计划生成不代表接受、审批、执行或验证成功；报告保存的是生成时快照。</small>{selected.run_id && <div className="operations-plan__links"><Link to={`/response?run_id=${encodeURIComponent(selected.run_id)}`}>进入处置中心</Link></div>}</section>}
-        <section className="operations-agent-trace" aria-labelledby="operations-agent-trace-title">
-          <header><div><p className="eyebrow">报告生成过程</p><h3 id="operations-agent-trace-title">智能体协作与 ReAct 轨迹</h3></div></header>
-          <p className="operations-agent-trace__hint">展示本报告对应运行的角色交接、工具公开回执和受控循环，不展示隐藏思维链、原始提示或凭据。</p>
-          {selected.run_id ? <AgentsPage key={selected.run_id} initialRunId={selected.run_id} embedded /> : <p className="operations-agent-trace__empty">该历史报告没有关联通用运行，因此没有可加载的智能体与 ReAct 轨迹。</p>}
-        </section>
-        <section className="operations-tools"><header><div><p className="eyebrow">受控数据获取</p><h3>ReAct 自主工具调用记录</h3></div><span>只读</span></header><div>{selected.tool_calls.length === 0 && <p>本次运行未选择运营数据工具。</p>}{selected.tool_calls.map((tool, index) => <article key={`${tool.name}-${index}`}><div><strong>{tool.label}</strong><span>{tool.name}</span></div><p>{tool.summary}</p><small>{toolStatus(tool)}</small>{tool.reason_code && <code>{tool.reason_code}</code>}{tool.items.length > 0 && <details><summary>查看规范化返回项</summary><ul>{tool.items.map((item) => <li key={item}>{item}</li>)}</ul></details>}</article>)}</div></section>
-        <section className="operations-preview"><header><div><p className="eyebrow">格式转换与结果回显</p><h3>报告预览</h3></div><div><button type="button" className={preview === 'html' ? '' : 'secondary-button'} onClick={() => setPreview('html')}>HTML 预览</button><button type="button" className={preview === 'markdown' ? '' : 'secondary-button'} onClick={() => setPreview('markdown')}>Markdown</button></div></header>{preview === 'html' ? <iframe title={`${selected.id} HTML 报告预览`} sandbox="" srcDoc={selected.html} /> : <pre>{selected.markdown}</pre>}</section>
-      </div>
+    {reasoningReport && <div className="operations-reasoning-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReasoningReport(null) }}>
+      <section className="operations-reasoning-dialog" role="dialog" aria-modal="true" aria-labelledby="reasoning-dialog-title">
+        <header><div><span>攻击调查时间线</span><h2 id="reasoning-dialog-title">结构化调查思维链</h2><p>{reasoningReport.id}</p></div><button type="button" aria-label="关闭思维链" onClick={() => setReasoningReport(null)}><X size={20} /></button></header>
+        <p className="operations-reasoning-dialog__notice">展示智能体可公开审计的事实、证据关联、协作结论、决策、动作和验证，不包含模型隐藏思维文本。</p>
+        <div className="operations-attack-chain-wrap"><AttackChainView report={reasoningReport} /></div>
+        {reasoningReport.reasoning_trace.length === 0 ? <EmptyState title="该报告没有结构化调查链" detail="早期报告可能只保存了最终结论，请打开 HTML 报告查看已有证据。" /> : <ol className="operations-reasoning__timeline">
+          {reasoningReport.reasoning_trace.map((step) => <li key={`${step.sequence}-${step.phase}`} className={`is-${step.status}`}>
+            <span className="operations-reasoning__marker">{step.sequence}</span>
+            <div className="operations-reasoning__content"><div className="operations-reasoning__title"><strong>{step.title}</strong><span>{Math.round(step.confidence * 100)}% · {step.status === 'completed' ? '已完成' : step.status === 'pending' ? '待确认' : '已阻断'}</span></div><p>{step.detail}</p><small>证据域：{step.domains.length ? step.domains.join('、') : '未标注'}</small>{step.evidence.length > 0 && <details><summary>查看证据引用（{step.evidence.length}）</summary><ul>{step.evidence.map((item) => <li key={item}><code>{item}</code></li>)}</ul></details>}</div>
+          </li>)}
+        </ol>}
+      </section>
     </div>}
   </section>
 }

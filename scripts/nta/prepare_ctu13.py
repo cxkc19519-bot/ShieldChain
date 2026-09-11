@@ -121,7 +121,7 @@ def extract_selected(archive: Path, output: Path, selected, report) -> dict[str,
                 digest = hashlib.sha256()
                 written = 0
                 with source, target.open("xb") as destination:
-                    for block in iter(lambda: source.read(1024 * 1024), b""):
+                    for block in iter(lambda source=source: source.read(1024 * 1024), b""):
                         destination.write(block)
                         digest.update(block)
                         written += len(block)

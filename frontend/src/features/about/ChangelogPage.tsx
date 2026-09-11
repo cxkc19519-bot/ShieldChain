@@ -16,53 +16,58 @@ export function ChangelogPage() {
           <div style={{ position: 'absolute', left: '-1rem', top: '2rem', background: 'var(--color-accent)', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '1rem', fontSize: '0.8rem', fontWeight: 'bold' }}>最新</div>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
             <Rocket className="nav-icon" size={20} color="var(--color-accent)" />
-            v1.3.0 - NTA 隔离回放与 XDR 联动
+            v1.3.0 - 自动化安全运营闭环
           </h3>
           <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-09-07</span>
           <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            <li>实时告警页新增随机演示回放：仅从服务器白名单随机选择已验收的经典 PCAP，不接受浏览器指定文件、网卡或速率。</li>
-            <li>回放器与 NTA 探针仅在一次性内部 Docker 网络中通信；回放结束后自动清理临时容器和网络。</li>
-            <li>已配置 10 条经过实际规则命中验证的演示样本；命中预期规则后自动导入 ShieldChain 告警中心并保留隔离回放证据。</li>
-            <li>智能助手页面移除了固定评测入口，使对话界面聚焦于日常研判和知识问答。</li>
+            <li>打通流量回放、NTA 探针检测、Wazuh 告警接入与多智能体自动调查链路。</li>
+            <li>新增随机演示回放能力，可自动触发告警分析、响应规划、可信工具调用和处置结果验证。</li>
+            <li>安全运营报告升级为独立 HTML 归档，集中呈现跨域证据、攻击调查时间线、处置动作与执行回执。</li>
+            <li>完善零人工演示闭环，在隔离环境中自动完成风险研判、策略授权、响应执行和状态复核。</li>
+            <li>扩展网络流量、端点进程、资产上下文和威胁指标只读工具，增强多证据域自主调查能力。</li>
+            <li>优化运营总览、实时告警、知识库和智能助手的交互与信息展示。</li>
           </ul>
         </section>
 
         <section className="page-card" style={{ padding: '2rem', minHeight: 'auto', position: 'relative' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
             <Rocket className="nav-icon" size={20} color="var(--color-accent)" /> 
-            v1.2.0 - 智能体 ReAct 升级
+            v1.2.0 - 多智能体协同与可信执行
           </h3>
-          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-07-25</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-08-18</span>
           <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            <li>重构了前端的导航布局，加入了更加现代化的悬浮下拉菜单。</li>
-            <li>新增了精美的系统主页和操作指引。</li>
-            <li>升级了底层多智能体的状态机，在模拟模式下支持失败重试推理闭环。</li>
-            <li>运营报告新增结构化调查推理链，按观测、定位、协同、定性、动作、验证和闭环回放公开证据依据。</li>
-            <li>新增事件、终端检测、漏洞和身份认证四域证据覆盖，并明确标记未观测数据域。</li>
+            <li>建立总控、告警分诊、威胁调查、知识检索、响应规划和验证等专业智能体协作机制。</li>
+            <li>引入受预算和停止条件约束的 ReAct 循环，支持观察、反馈和失败后的重新规划。</li>
+            <li>接入可信工具网关，对策略授权、工具执行和结果验证进行统一审计。</li>
+            <li>运营报告新增结构化攻击调查时间线，公开展示事实依据、智能体协作结论和闭环状态。</li>
+            <li>完善网络流量、终端行为、身份账号、漏洞与日志等跨域证据关联能力。</li>
           </ul>
         </section>
 
         <section className="page-card" style={{ padding: '2rem', minHeight: 'auto' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
             <GitCommit className="nav-icon" size={20} /> 
-            v1.1.0 - RAG 知识库融合
+            v1.1.0 - 多源数据与知识增强
           </h3>
-          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-06-15</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-07-22</span>
           <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            <li>引入本地离线 RAG 系统，支持上传安全知识库文档。</li>
-            <li>智能体可以自动提取企业内网资产信息辅助研判。</li>
+            <li>接入 Wazuh 告警、事件记录和资产安全数据，为智能体提供统一的调查上下文。</li>
+            <li>引入本地知识库与语义检索能力，支持安全文档上传、分块、索引和版本管理。</li>
+            <li>实现事件、告警、漏洞和弱口令四类只读工具，支撑智能体按任务自主获取证据。</li>
+            <li>增加历史调查记录和审计信息，为后续分析提供可追溯依据。</li>
           </ul>
         </section>
 
         <section className="page-card" style={{ padding: '2rem', minHeight: 'auto' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
             <FileCode className="nav-icon" size={20} /> 
-            v1.0.0 - 核心系统上线
+            v1.0.0 - 项目基础版本
           </h3>
-          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-05-01</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '1.5rem' }}>发布日期：2026-07-08</span>
           <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            <li>ShieldChain 核心框架正式发布，支持离线沙箱环境。</li>
-            <li>实现钓鱼邮件攻击的自动化研判和人工干预。</li>
+            <li>完成 ShieldChain 安全运营平台的基础架构和前后端工作区。</li>
+            <li>建立告警接入、调查任务、状态流转和安全运营报告的基础数据模型。</li>
+            <li>实现本地部署、健康检查和容器化运行，为后续智能体能力迭代提供运行基础。</li>
           </ul>
         </section>
 

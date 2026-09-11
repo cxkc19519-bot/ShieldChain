@@ -4,7 +4,6 @@ set -Eeuo pipefail
 # ShieldChain school-server helper. It is intentionally scoped to jhk's home.
 EXPECTED_USER="${SHIELDCHAIN_SERVER_USER:-jhk}"
 PROJECT_ROOT="${SHIELDCHAIN_SERVER_ROOT:-/home/user/jhk/project/ShieldChain}"
-MODEL_CACHE="${LOCAL_LLM_CACHE_DIR:-/home/user/jhk/huggingface}"
 ACTION="${1:-start}"
 
 die() {
@@ -24,22 +23,19 @@ fi
 [[ -d "$PROJECT_ROOT" ]] || die "项目目录不存在：$PROJECT_ROOT"
 [[ -f "$PROJECT_ROOT/compose.yaml" ]] || die "缺少 compose.yaml。"
 [[ -f "$PROJECT_ROOT/compose.server.yaml" ]] || die "缺少 compose.server.yaml。"
-[[ -f "$PROJECT_ROOT/compose.local-llm.yaml" ]] || die "缺少 compose.local-llm.yaml。"
 [[ -f "$PROJECT_ROOT/.env" ]] || die "缺少服务器私有配置：$PROJECT_ROOT/.env"
+grep -q '^DEEPSEEK_API_KEY=.' "$PROJECT_ROOT/.env" || die ".env 中未配置 DEEPSEEK_API_KEY。"
 
 command -v docker >/dev/null 2>&1 || die "未安装 Docker。"
 docker info >/dev/null 2>&1 || die "Docker 未运行，或当前账号没有 Docker 权限。"
 docker compose version >/dev/null 2>&1 || die "缺少 Docker Compose 插件。"
 
-export LOCAL_LLM_CACHE_DIR="$MODEL_CACHE"
 cd "$PROJECT_ROOT"
 
 COMPOSE=(
   docker compose
   -f compose.yaml
   -f compose.server.yaml
-  -f compose.local-llm.yaml
-  -f compose.model-control.yaml
 )
 
 show_status() {
@@ -48,8 +44,6 @@ show_status() {
   curl -fsS --max-time 5 http://127.0.0.1:8080/healthz 2>/dev/null || printf '不可用'
   printf '\n后端就绪：'
   curl -fsS --max-time 5 http://127.0.0.1:8080/api/v1/health/ready 2>/dev/null || printf '不可用'
-  printf '\n本地模型：'
-  curl -fsS --max-time 5 http://127.0.0.1:8080/api/v1/qwen/status 2>/dev/null || printf '不可用'
   printf '\n'
 }
 
@@ -73,12 +67,9 @@ wait_for_url() {
 
 case "$ACTION" in
   start)
-    [[ -d "$MODEL_CACHE" ]] || die "本地模型缓存不存在：$MODEL_CACHE"
-    info "启动 Qwen、数据库迁移、ShieldChain 后端和前端"
+    info "使用 DeepSeek API 启动数据库迁移、ShieldChain 后端和前端"
     "${COMPOSE[@]}" up -d --no-build
-    info "等待服务健康；首次加载 Qwen 可能需要数分钟"
-    wait_for_url "Qwen" "http://127.0.0.1:8001/health" 80 15 \
-      || die "Qwen 未在预期时间内就绪，请运行：$0 logs"
+    info "等待服务健康"
     wait_for_url "ShieldChain 前端" "http://127.0.0.1:8080/healthz" 40 5 \
       || die "前端未就绪，请运行：$0 logs"
     wait_for_url "ShieldChain 后端" "http://127.0.0.1:8080/api/v1/health/ready" 40 5 \
@@ -102,7 +93,7 @@ case "$ACTION" in
     show_status
     ;;
   logs)
-    "${COMPOSE[@]}" logs --tail 160 local-llm backend frontend migrate
+    "${COMPOSE[@]}" logs --tail 160 backend frontend migrate
     ;;
   *)
     cat >&2 <<'USAGE'

@@ -259,23 +259,11 @@ docker compose run --rm backend alembic downgrade 20260823_06
 
 存在上述新类别记录时迁移会拒绝降级。应保留数据库版本，或先完整导出 React observation、assessment、decision、plan revision 和关联工具回执；不得删除分类记录来制造表面可回退状态。
 
-## 本地模型覆盖
+## DeepSeek API
 
-```bash
-LOCAL_LLM_CACHE_DIR=/home/user/jhk/huggingface \
-docker compose -f compose.yaml -f compose.local-llm.yaml up -d
-```
-
-覆盖配置启动 vLLM `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8`，模型服务绑定服务器回环地址 `127.0.0.1:8001`，后端容器通过 `http://local-llm:8000/v1` 访问。
-
-当前参数面向两张 RTX 4090：流水线并行 2、最大上下文 16384、最大并发序列 4。启动前必须确认：
-
-- 权重下载完整；
-- NVIDIA Container Toolkit 可用；
-- 两张 GPU 有足够空闲显存；
-- 已与共享服务器其他用户协调资源。
-
-不得终止或修改其他用户 GPU 进程。如果流水线并行不受模型实现支持，再在独立验证后评估张量并行和禁用自定义 all-reduce 的备用方案。
+服务器通过 `.env` 中的 `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 和
+`DEEPSEEK_API_KEY` 调用 DeepSeek。部署命令只叠加 `compose.server.yaml`，不启动本地生成模型，
+因此 ShieldChain 不占用服务器 GPU 显存。
 
 ## Wazuh
 

@@ -23,11 +23,10 @@
 - `frontend/src/features/operations/`：安全运营报告、结构化推理链、跨域证据覆盖和闭环回放；
 - `frontend/src/features/alerts/`：实时告警；
 - `frontend/src/features/knowledge/`：知识库和分块；
-- `frontend/src/features/reports/`：历史报告与操作入口；
 - `frontend/src/features/assistant/`：持久化智能助手；
-- `frontend/src/features/agents/`、`tools/`：公开协作/推理轨迹和可信控制。
+- `frontend/src/features/operations/`：统一展示运营报告、公开协作证据、响应计划与闭环状态。
 
-当前主要页面包括 `/dashboard`、`/operations-report`、`/alerts`、`/knowledge`、`/reports`、`/assistant`，以及受控轨迹和工具页面。已删除的 `/events` 固定仿真入口不再属于当前路由合同。
+当前主要页面包括 `/dashboard`、`/operations-report`、`/alerts`、`/vulnerabilities`、`/knowledge` 和 `/assistant`。模型直连测试、独立历史报告、独立 ReAct 工作台和 MCP 状态页面均不属于提交版路由合同。
 
 ## 部署文件
 
@@ -35,7 +34,7 @@
 - `compose.yaml`：基础容器；
 - `tests/scripts/`：脚本级部署与验收合同测试；
 - `compose.server.yaml`：服务器持久化覆盖；
-- `compose.local-llm.yaml`：双 GPU Qwen/vLLM；
+- `.env.example`：DeepSeek API 配置模板；
 - `scripts/wazuh/custom-shieldchain`：Manager 侧告警转发。
 
 ## 数据目录

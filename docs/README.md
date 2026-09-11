@@ -20,7 +20,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 - 当前没有真实管理员 RBAC，生产环境只允许上述只读投影，计划、工具、急停和 ReAct REST 写控制保持关闭；
 - RAG 支持持久化知识库、语义分块、中文短语 BM25、混合召回、向量检索、重排、来源引用以及过期/冲突/无依据拒答；内置安全垂直知识包具备来源、哈希、复核期限和使用政策校验，可从知识库页面幂等导入；
 - 智能助手基于知识库与历史报告回答问题并持久化对话记忆；8 条中英文固定集可从 API、页面或隔离脚本复跑，2026-09-04 离线抽取式门禁 8/8 通过；
-- 可通过外部 DeepSeek API 或本地 vLLM `Qwen3-30B-A3B-Instruct-2507-FP8` 提供模型能力；
+- 统一通过 DeepSeek API 提供生成模型能力；
 - 模型只负责分析、规划和建议，真实处置仍受策略、审批、可信工具网关与执行后验证约束。
 - Task 0～15 统一实施与安全加固已完成：官方 SDK MCP conformance、migration head `20260824_08`/往返、后端 `1226 passed, 26 skipped`、前端 `120 passed`、静态容器安全合同和前端依赖审计均已记录；Docker runtime、真实身份/peer/设备及当前版本完整模型链路仍未验收。
 
@@ -40,7 +40,6 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 12. [MCP 与安全闭环加固合并交接说明](delivery/mcp-safety-hardening-merge-handoff-20260828.md)
 13. [安全知识库、RAG 与智能助手实施方案](plans/security-knowledge-rag-assistant-implementation.md)
 14. [助手固定基线](reports/assistant-security-vertical-baseline-2026-09-04.md)
-15. [完整模型预检](reports/full-model-preflight-2026-09-04.md)
 16. [漏洞排查与闭环操作说明](operations/vulnerability-remediation.md)
 
 ## 文档状态约定
@@ -53,7 +52,7 @@ ShieldChain 已从早期固定钓鱼仿真演进为真实安全数据驱动的�
 ## 当前部署边界
 
 - Docker、Wazuh/OpenSearch 与 ShieldChain 服务已在学校服务器路径 `/home/user/jhk` 下进行实际部署和运行检查。
-- 本地 30B-A3B vLLM 配置与镜像已就绪；模型权重下载和服务启动取决于代理链路与两张 RTX 4090 的可用显存。
+- DeepSeek API 配置由私有 `.env` 注入；提交物不包含 API Key 或本地模型权重。
 - 服务器为共享 GPU 环境，不得终止、修改或抢占其他用户进程；长期服务应先完成资源协调。
 - `.env`、数据库、真实告警、模型权重、API Key 和令牌不得提交到版本库。
 

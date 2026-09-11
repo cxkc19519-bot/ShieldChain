@@ -39,8 +39,7 @@ DEFAULT_SPLITS = {
 
 def coarse_label(value: str) -> str:
     normalized = value.strip().lower()
-    if normalized.startswith("flow="):
-        normalized = normalized[5:]
+    normalized = normalized.removeprefix("flow=")
     if "botnet" in normalized:
         return "botnet"
     if "normal" in normalized or "legitimate" in normalized:

@@ -14,10 +14,12 @@ const context = vi.hoisted((): { incidentId: string | null; runId: string | null
 }))
 const health = vi.hoisted(() => ({ getLiveness: vi.fn() }))
 const investigation = vi.hoisted(() => ({ getInvestigation: vi.fn() }))
+const operations = vi.hoisted(() => ({ listOperationsReports: vi.fn() }))
 
 vi.mock('../../app/RunContext', () => ({ useRunContext: () => context }))
 vi.mock('../../api/client', () => health)
 vi.mock('../investigation/api', () => investigation)
+vi.mock('../operations/api', () => operations)
 
 function run() {
   return {
@@ -38,6 +40,7 @@ beforeEach(() => {
   context.runId = RUN_ID
   health.getLiveness.mockReset().mockResolvedValue({ status: 'ok' })
   investigation.getInvestigation.mockReset().mockResolvedValue(run())
+  operations.listOperationsReports.mockReset().mockResolvedValue([])
   context.clearSelection.mockReset()
 })
 
@@ -59,8 +62,33 @@ describe('DashboardPage', () => {
     context.runId = null
     render(<MemoryRouter><DashboardPage /></MemoryRouter>)
 
-    expect(await screen.findByText('尚未选择调查运行')).toBeVisible()
+    expect(await screen.findByText('聚焦某次调查')).toBeVisible()
+    expect(screen.getByRole('link', { name: '选择实时告警' })).toHaveAttribute('href', '/alerts')
     expect(investigation.getInvestigation).not.toHaveBeenCalled()
+  })
+
+  it('summarizes recent reports and cross-domain closure without inventing metrics', async () => {
+    context.incidentId = null
+    context.runId = null
+    operations.listOperationsReports.mockResolvedValue([{
+      id: 'OPS-20260908-DEMO', run_id: RUN_ID, run_status: 'completed', generated_at: '2026-09-08T05:00:00Z',
+      start_at: '2026-09-08T04:55:00Z', end_at: '2026-09-08T05:05:00Z', agent_name: '安全运营报告智能体', model: 'test',
+      stages: [], collaboration: [], tool_calls: [], reasoning_trace: [], markdown: '', html: '',
+      response_plan: { plan_id: RUN_ID, revision_id: INCIDENT_ID, revision: 0, status: 'completed', public_summary: '已完成。', action_count: 3, generation_status: 'model_compiled', fallback_reason_code: null, execution_status: 'verified_completed' },
+      cross_domain: [
+        { key: 'network', label: '网络流量', source: 'Suricata', result_count: 1, status: 'observed', summary: '已观测。' },
+        { key: 'identity', label: '身份认证', source: '身份认证 MCP', result_count: 0, status: 'not_observed', summary: '未观测。' },
+      ],
+      closure: { status: 'closed', observed: '检测到一条高风险告警。', decision: '确认隔离回放威胁。', action: '执行三项动作。', verification: '验证通过。', feedback: '闭环完成。', human_approval_required: false },
+    }])
+
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>)
+
+    expect(await screen.findByText('威胁处置已闭环')).toBeVisible()
+    expect(screen.getAllByText('1 次')).toHaveLength(2)
+    expect(screen.getByText('3 项')).toBeVisible()
+    expect(screen.getByText(/个证据域已观测/)).toHaveTextContent('1 / 2 个证据域已观测')
+    expect(screen.getAllByText('OPS-20260908-DEMO')).toHaveLength(2)
   })
 
   it('fails closed and retries the selected run', async () => {

@@ -19,12 +19,12 @@
 
 仅在 `/home/user/jhk` 范围内操作：
 
-- 原始数据：`/home/user/jhk/nta-dataset`
-- 匿名副本：`/home/user/jhk/nta-dataset-blind`
-- 匿名 PCAP：`/home/user/jhk/nta-dataset-blind/pcap`
-- 固定清单与评估材料：`/home/user/jhk/nta-dataset-blind/evaluation`
-- 检测结果：`/home/user/jhk/nta-dataset-blind/results`
-- 标签映射：`/home/user/jhk/nta-dataset-blind-ground-truth.csv`
+- 原始数据：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset`
+- 匿名副本：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind`
+- 匿名 PCAP：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/pcap`
+- 固定清单与评估材料：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation`
+- 检测结果：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/results`
+- 标签映射：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind-ground-truth.csv`
 
 标签映射权限应保持为 `600`，不得提交到 GitHub，也不得作为检测器输入。匿名 PCAP 文件名本身不包含攻击标签。
 
@@ -155,9 +155,9 @@ v10 先冻结规则、流水线与镜像，再运行并锁定机器输出，之�
 
 ```bash
 cd /home/user/jhk/project/ShieldChain
-export SHIELDCHAIN_NTA_ROOT=/home/user/jhk/nta-dataset-blind
-export SHIELDCHAIN_NTA_PCAP_ROOT=/home/user/jhk/nta-dataset-blind/pcap
-export SHIELDCHAIN_NTA_RESULT_ROOT=/home/user/jhk/nta-dataset-blind/results
+export SHIELDCHAIN_NTA_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind
+export SHIELDCHAIN_NTA_PCAP_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/pcap
+export SHIELDCHAIN_NTA_RESULT_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/results
 export SHIELDCHAIN_SURICATA_RULES="$PWD/config/suricata/shieldchain-nta.rules"
 ```
 
@@ -175,7 +175,7 @@ docker run --rm --network none \
 
 ```bash
 python3 scripts/nta/nta_offline_pipeline.py \
-  --sample-list /home/user/jhk/nta-dataset-blind/evaluation/validation-sample-v3-24.txt
+  --sample-list /home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/validation-sample-v3-24.txt
 ```
 
 运行结果写入新的 `run-YYYYMMDD-HHMMSS` 目录。先保存 `manifest.json`、`events.jsonl`、规则哈希和运行时间，再进行标签审计；不要边看验证标签边改规则。
@@ -205,10 +205,10 @@ v11 严格只用 development 分析和调参，没有运行 validation 或 final
 
 锁定产物：
 
-- 候选规则：`/home/user/jhk/nta-dataset-blind/evaluation/v11-candidate-rules.rules`；
-- 攻击事件：`/home/user/jhk/nta-dataset-blind/evaluation/v11-development-candidate-events.jsonl`；
-- 正常事件：`/home/user/jhk/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
-- 锁定摘要：`/home/user/jhk/nta-dataset-blind/evaluation/v11-development-locked-result.json`；
+- 候选规则：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-candidate-rules.rules`；
+- 攻击事件：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-development-candidate-events.jsonl`；
+- 正常事件：`/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
+- 锁定摘要：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-development-locked-result.json`；
 - 详细报告：`docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。
 
 本节只记录启封前的 development 阶段，不是独立准确率。v11 final-blind 的后续一次性结果见下一节；final-blind 结果不得用于回改 v11。
@@ -226,7 +226,7 @@ v11 在源码、规则、流水线、935 条匿名清单和 Suricata/Zeek 镜像
 
 锁定产物：
 
-- 冻结目录：`/home/user/jhk/nta-dataset-blind/evaluation/v11-final-freeze-20260823`；
+- 冻结目录：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/v11-final-freeze-20260823`；
 - 事件 SHA-256：`f2c124a1b6991b2c7cb8a5bcfa36e2fb5e7d676268da9671e6999b07e2a4a6ad`；
 - 机器摘要 SHA-256：`561c9d536c8f01b0a3c55ffb648290fa1fe14c0a094ffe29d08011f32f4ba316`；
 - 事后审计 SHA-256：`f03f925ca159e9a8da27d52746f4783f0869ec82386c4074dd4fd609b739e5d0`；

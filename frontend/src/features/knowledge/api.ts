@@ -1,5 +1,4 @@
 import type {
-  CuratedPackImportSummary,
   EvaluationSummary,
   KnowledgeBase,
   KnowledgeChunk,
@@ -172,20 +171,6 @@ function evaluation(value: unknown): EvaluationSummary {
   }
 }
 
-function curatedPackImport(value: unknown): CuratedPackImportSummary {
-  const item = record(value)
-  return {
-    pack_id: text(item.pack_id),
-    pack_version: text(item.pack_version),
-    usage_policy: text(item.usage_policy),
-    knowledge_base_id: text(item.knowledge_base_id),
-    verified_at: text(item.verified_at),
-    review_due_at: text(item.review_due_at),
-    imported: array(item.imported, text),
-    skipped: array(item.skipped, text),
-  }
-}
-
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('Request aborted', 'AbortError')
 }
@@ -240,12 +225,6 @@ export function createKnowledgeBase(name: string, signal?: AbortSignal): Promise
   return request('/knowledge-bases', knowledgeBase, {
     method: 'POST', headers: JSON_HEADERS,
     body: JSON.stringify({ name, default_sensitivity: 'internal', version_policy: 'immutable' }),
-  }, signal)
-}
-
-export function importSecurityVerticalPack(signal?: AbortSignal): Promise<CuratedPackImportSummary> {
-  return request('/knowledge-bases/imports/security-vertical', curatedPackImport, {
-    method: 'POST', headers: JSON_HEADERS, body: '{}',
   }, signal)
 }
 

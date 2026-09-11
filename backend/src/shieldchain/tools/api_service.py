@@ -9,7 +9,11 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from shieldchain.agents.persistence import AgentRunRow
-from shieldchain.react.safety_loop import ResponseSafetyLoopService, SafetyLoopConflict
+from shieldchain.react.safety_loop import (
+    ResponseSafetyLoopService,
+    SafetyLoopConflict,
+    SafetyLoopResult,
+)
 from shieldchain.response_planning.persistence import (
     ResponsePlanActionRow,
     ResponsePlanEventRow,
@@ -40,6 +44,7 @@ from shieldchain.tools.persistence import (
     TrustedToolCallRow,
 )
 from shieldchain.tools.plan_service import ResponsePlanToolService
+from shieldchain.tools.policy import ToolExecutionMode
 from shieldchain.tools.repositories import SqlAlchemyTrustedToolRepository, _call
 from shieldchain.tools.schemas import (
     ResponsePlanActionView,
@@ -101,6 +106,71 @@ class TrustedToolApiService:
                 now=now,
             )
         return result
+
+    def execute_zero_touch_plan(
+        self,
+        *,
+        tenant_id: UUID,
+        plan_id: UUID,
+        now: datetime,
+    ) -> SafetyLoopResult:
+        """Accept and execute one server-identified isolated replay plan."""
+
+        with self._sessions() as session:
+            plan = session.execute(
+                select(ResponsePlanRow).where(
+                    ResponsePlanRow.id == str(plan_id),
+                    ResponsePlanRow.tenant_id == str(tenant_id),
+                )
+            ).scalar_one_or_none()
+            if plan is None or not self._is_isolated_replay_run(
+                session, tenant_id=tenant_id, run_id=UUID(plan.run_id)
+            ):
+                raise SafetyLoopConflict(
+                    "zero-touch execution is restricted to isolated replay runs"
+                )
+            expected_revision = plan.current_revision
+        self._plans.decide(
+            tenant_id=tenant_id,
+            actor_id=REQUESTER_SERVICE_SUBJECT,
+            plan_id=plan_id,
+            outcome="accepted",
+            reason="服务端确认案件来自隔离 PCAP 回放且目标通过白名单校验",
+            now=now,
+            expected_revision=expected_revision,
+            execution_mode=ToolExecutionMode.SIMULATION,
+            simulation_auto_approve_critical=True,
+            decision_source="zero_touch_demo",
+        )
+        return self._safety.advance_plan(
+            tenant_id=tenant_id,
+            plan_id=plan_id,
+            now=now,
+        )
+
+    @staticmethod
+    def _is_isolated_replay_run(
+        session: Session, *, tenant_id: UUID, run_id: UUID
+    ) -> bool:
+        from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhCaseRunRow
+
+        alert = session.execute(
+            select(WazuhAlertRow)
+            .join(
+                WazuhCaseRunRow,
+                WazuhCaseRunRow.alert_id == WazuhAlertRow.id,
+            )
+            .where(
+                WazuhCaseRunRow.run_id == str(run_id),
+                WazuhCaseRunRow.tenant_id == str(tenant_id),
+                WazuhAlertRow.tenant_id == str(tenant_id),
+            )
+        ).scalar_one_or_none()
+        return bool(
+            alert is not None
+            and alert.evidence_json.get("source_kind") == "nta_pcap_isolated_replay"
+            and alert.evidence_json.get("isolated_docker_network") is True
+        )
 
     def plan_by_id(self, *, tenant_id: UUID, plan_id: UUID) -> ResponsePlanView:
         with self._sessions() as session:
@@ -345,14 +415,14 @@ class TrustedToolApiService:
             .order_by(ToolApprovalRow.decided_at.desc())
             .limit(1)
         ).scalar_one_or_none()
-        attempts = session.execute(
+        attempts = list(session.execute(
             select(ToolExecutionAttemptRow)
             .where(
                 ToolExecutionAttemptRow.tenant_id == row.tenant_id,
                 ToolExecutionAttemptRow.tool_call_id == row.id,
             )
             .order_by(ToolExecutionAttemptRow.attempt_number)
-        ).scalars()
+        ).scalars())
         verification = session.execute(
             select(ToolVerificationRow)
             .where(
@@ -367,6 +437,44 @@ class TrustedToolApiService:
             for key in ("target_ip", "endpoint_id", "account_id")
             if key in call.request.arguments
         )
+        approval_finished_at = (
+            _utc(approval.decided_at)
+            if approval is not None
+            else _utc(policy.created_at)
+            if policy is not None
+            else None
+        )
+        approval_duration_ms = (
+            max(
+                round(
+                    (approval_finished_at - call.request.created_at).total_seconds() * 1000
+                ),
+                0,
+            )
+            if approval_finished_at is not None
+            else None
+        )
+        execution_duration_ms = (
+            sum(
+                max(
+                    round(
+                        (_utc(item.completed_at) - _utc(item.started_at)).total_seconds()
+                        * 1000
+                    ),
+                    0,
+                )
+                for item in attempts
+            )
+            if attempts
+            else None
+        )
+        verification_duration_ms = None
+        if verification is not None and attempts:
+            last_completed_at = max(_utc(item.completed_at) for item in attempts)
+            verification_duration_ms = max(
+                round((_utc(verification.verified_at) - last_completed_at).total_seconds() * 1000),
+                0,
+            )
         return ToolTraceItem(
             id=call.request.id,
             plan_id=call.request.plan_id,
@@ -385,6 +493,9 @@ class TrustedToolApiService:
             evidence_ids=[item.id for item in call.request.evidence],
             created_at=call.request.created_at,
             updated_at=call.updated_at,
+            approval_duration_ms=approval_duration_ms,
+            execution_duration_ms=execution_duration_ms,
+            verification_duration_ms=verification_duration_ms,
         )
 
     @staticmethod

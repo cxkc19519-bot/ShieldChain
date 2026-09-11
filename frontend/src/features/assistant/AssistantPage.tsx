@@ -1,6 +1,5 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, History, MessageSquarePlus, PanelLeft, PanelLeftClose, PanelLeftOpen, MoreVertical, Pencil, Pin, PinOff, Search, Trash2, X } from 'lucide-react'
+import { FormEvent, Fragment, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, Check, Copy, History, MessageSquarePlus, PanelLeft, PanelLeftClose, PanelLeftOpen, MoreVertical, Pencil, Pin, PinOff, Search, Trash2, X } from 'lucide-react'
 
 import logoUrl from '../../assets/logo.png'
 import './assistant.css'
@@ -30,7 +29,7 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   citations: Citation[]
-  grounding_status?: 'not_applicable' | 'conversational' | 'grounded' | 'extractive_degraded' | 'refused' | 'legacy'
+  grounding_status?: 'not_applicable' | 'conversational' | 'model_knowledge' | 'grounded' | 'extractive_degraded' | 'refused' | 'legacy'
   refusal_reason?: string | null
   degradations?: Degradation[]
   model: string | null
@@ -39,7 +38,7 @@ type Message = {
 type Conversation = { id: string; title: string; created_at: string; updated_at: string; memory_summary: string; summary: string; pinned: boolean; message_count: number }
 type Detail = Conversation & { messages: Message[] }
 const API_ROOT = '/api/v1'
-const starters = ['最近一次调查报告的研判结论是什么？', '总结历史报告中尚未完成的验证。', '钓鱼邮件事件应该如何处置？']
+const starters = ['总结这一周的安全运营报告', '最近有哪些高风险安全事件？', '钓鱼邮件事件应该如何处置？']
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_ROOT}${path}`, init)
@@ -64,17 +63,83 @@ function dateLabel(value: string) {
   return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
 }
 
-function displayAssistantText(content: string) {
-  return content
-    .replace(/\*\*/g, '')
-    .replace(/__/g, '')
-    .replace(/\[(?:\d+\s*(?:,\s*\d+\s*)*)\]/g, '')
-    .trim()
+function renderInlineMarkdown(value: string): ReactNode[] {
+  return value.split(/(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`)/g).filter(Boolean).map((part, index) => {
+    if ((part.startsWith('**') && part.endsWith('**')) || (part.startsWith('__') && part.endsWith('__'))) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>
+    return <Fragment key={index}>{part}</Fragment>
+  })
+}
+
+function renderListItemMarkdown(value: string): ReactNode {
+  if (/^(\*\*|__)/.test(value)) return renderInlineMarkdown(value)
+  const labeled = /^([^：:]{2,18})([：:])\s*(.+)$/.exec(value)
+  if (!labeled) return renderInlineMarkdown(value)
+  return <><strong>{labeled[1]}</strong>{labeled[2]} {renderInlineMarkdown(labeled[3])}</>
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  const lines = content.trim().split(/\r?\n/)
+  const blocks: ReactNode[] = []
+  const isBlockStart = (line: string) => /^(#{1,3}\s+|[-*]\s+|\d+\.\s+|>\s*)/.test(line)
+  let cursor = 0
+
+  while (cursor < lines.length) {
+    const line = lines[cursor].trim()
+    if (!line) { cursor += 1; continue }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line)
+    if (heading) {
+      const text = renderInlineMarkdown(heading[2])
+      blocks.push(heading[1].length === 1 ? <h2 key={cursor}>{text}</h2> : heading[1].length === 2 ? <h3 key={cursor}>{text}</h3> : <h4 key={cursor}>{text}</h4>)
+      cursor += 1
+      continue
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items: ReactNode[] = []
+      while (cursor < lines.length && /^[-*]\s+/.test(lines[cursor].trim())) {
+        items.push(<li key={cursor}>{renderListItemMarkdown(lines[cursor].trim().replace(/^[-*]\s+/, ''))}</li>)
+        cursor += 1
+      }
+      blocks.push(<ul key={`ul-${cursor}`}>{items}</ul>)
+      continue
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items: ReactNode[] = []
+      while (cursor < lines.length && /^\d+\.\s+/.test(lines[cursor].trim())) {
+        items.push(<li key={cursor}>{renderListItemMarkdown(lines[cursor].trim().replace(/^\d+\.\s+/, ''))}</li>)
+        cursor += 1
+      }
+      blocks.push(<ol key={`ol-${cursor}`}>{items}</ol>)
+      continue
+    }
+    if (/^>\s*/.test(line)) {
+      blocks.push(<blockquote key={cursor}>{renderInlineMarkdown(line.replace(/^>\s*/, ''))}</blockquote>)
+      cursor += 1
+      continue
+    }
+    const paragraph: string[] = []
+    while (cursor < lines.length && lines[cursor].trim() && !isBlockStart(lines[cursor].trim())) {
+      paragraph.push(lines[cursor].trim())
+      cursor += 1
+    }
+    blocks.push(<p key={`p-${cursor}`}>{paragraph.map((text, index) => <Fragment key={index}>{index > 0 && <br />}{renderInlineMarkdown(text)}</Fragment>)}</p>)
+  }
+  return <div className="gemini-message-content">{blocks}</div>
+}
+
+function prepareConversationTitleScroll(event: ReactMouseEvent<HTMLSpanElement>) {
+  const viewport = event.currentTarget
+  const title = viewport.firstElementChild as HTMLElement | null
+  if (!title) return
+  const distance = Math.max(0, title.scrollWidth - viewport.clientWidth)
+  viewport.dataset.overflow = distance > 0 ? 'true' : 'false'
+  viewport.style.setProperty('--conversation-title-scroll', `${distance}px`)
 }
 
 export function AssistantPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
-  const navigate = useNavigate()
   const [active, setActive] = useState<Detail | null>(null)
   const [draft, setDraft] = useState('')
   const [search, setSearch] = useState('')
@@ -84,9 +149,11 @@ export function AssistantPage() {
   const [sidebarToggleHovered, setSidebarToggleHovered] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const threadRef = useRef<HTMLDivElement>(null)
 
   const filtered = useMemo(() => conversations.filter((item) => item.title.includes(search.trim())), [conversations, search])
   const refreshList = () => api<{ items: Conversation[] }>('/assistant/conversations').then((result) => setConversations(result.items))
@@ -108,6 +175,11 @@ export function AssistantPage() {
     if (!searchOpen) return
     window.setTimeout(() => searchInputRef.current?.focus(), 50)
   }, [searchOpen])
+
+  useEffect(() => {
+    const thread = threadRef.current
+    if (thread) thread.scrollTop = thread.scrollHeight
+  }, [active?.id, active?.messages.length, pending])
 
   async function openConversation(id: string) {
     setSearchOpen(false)
@@ -190,6 +262,15 @@ export function AssistantPage() {
   function handleSearchItemClick(id: string) {
     setSearchOpen(false); setSearch(''); void openConversation(id)
   }
+  async function copyMessage(item: Message) {
+    try {
+      await navigator.clipboard.writeText(item.content)
+      setCopiedMessageId(item.id)
+      window.setTimeout(() => setCopiedMessageId((current) => current === item.id ? null : current), 1600)
+    } catch {
+      setError('复制失败，请手动选择文字。')
+    }
+  }
   return <section className={`gemini-page ${sidebarCollapsed ? 'gemini-page--sidebar-collapsed' : ''}`} aria-label="ShieldChain 智能助手">
     <aside className={`gemini-sidebar ${searchOpen ? 'gemini-sidebar--searching' : empty ? 'gemini-sidebar--new' : ''}`}>
       <div className="gemini-brand"><button type="button" className="gemini-brand-btn" onClick={handleLogoClick} aria-label={sidebarCollapsed ? '展开侧边栏' : '发起新对话'} title={sidebarCollapsed ? '展开侧边栏' : '发起新对话'}><span className="gemini-star"><img src={logoUrl} alt="ShieldChain" /></span><strong>ShieldChain</strong></button><button type="button" className="gemini-sidebar-toggle" onClick={() => setSidebarCollapsed((value) => !value)} onMouseEnter={() => setSidebarToggleHovered(true)} onMouseLeave={() => setSidebarToggleHovered(false)} onFocus={() => setSidebarToggleHovered(true)} onBlur={() => setSidebarToggleHovered(false)} aria-label="收起侧边栏" title="收起侧边栏" data-tooltip="关闭边栏">{sidebarCollapsed ? <PanelLeftOpen size={18} /> : sidebarToggleHovered ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}</button></div>
@@ -200,7 +281,7 @@ export function AssistantPage() {
         {filtered.length ? filtered.map((item) => (
           <div className={!searchOpen && active?.id === item.id ? 'gemini-conversation-item active' : 'gemini-conversation-item'} key={item.id}>
             <button className="gemini-conversation-open" type="button" onClick={() => void openConversation(item.id)}>
-              <span>{item.pinned && <Pin className="gemini-pin-mark" size={13} />}<b>{item.summary || item.title}</b></span>
+              <span className="gemini-conversation-label">{item.pinned && <Pin className="gemini-pin-mark" size={13} />}<span className="gemini-conversation-title-viewport" onMouseEnter={prepareConversationTitleScroll}><b>{item.summary || item.title}</b></span></span>
             </button>
             <div className="gemini-conversation-actions" ref={openMenuId === item.id ? menuRef : undefined}>
               <button className="gemini-conversation-more" type="button" onClick={() => setOpenMenuId((current) => current === item.id ? null : item.id)} aria-label={`对话操作 ${item.title}`} title="对话操作"><MoreVertical size={17} /></button>
@@ -216,7 +297,6 @@ export function AssistantPage() {
       <button type="button" className="gemini-sidebar-toggle gemini-sidebar-toggle--expand" onClick={() => setSidebarCollapsed(false)} aria-label="展开侧边栏" title="展开侧边栏"><PanelLeftOpen size={18} /></button>
     </aside>
     <main className={`gemini-main ${empty && !searchOpen ? 'gemini-main--empty' : ''}`}>
-      <button type="button" className="gemini-home-link" onClick={() => navigate(-1)} aria-label="返回上一页" title="返回上一页"><ArrowLeft size={20} /></button>
       {searchOpen ? <div className="gemini-search-view">
         <div className="gemini-search-bar">
           <Search size={18} />
@@ -236,9 +316,12 @@ export function AssistantPage() {
           )) : <p className="gemini-search-empty">没有找到匹配的对话</p>}
         </div>
       </div> : <>
-      {empty ? <div className="gemini-welcome"><div className="gemini-orb"><img src={logoUrl} alt="ShieldChain" /></div><h1><span>你好，</span>有什么安全问题想聊聊？</h1><div className="gemini-suggestions">{starters.map((item) => <button type="button" onClick={() => void send(undefined, item)} disabled={pending} key={item}>{item}</button>)}</div></div> : <div className="gemini-thread">{active.messages.map((item) => <article className={`gemini-message gemini-message--${item.role}`} key={item.id}><div>
-        <p>{displayAssistantText(item.content)}</p>
-        {item.role === 'assistant' && Boolean(item.degradations?.length) && <div className="gemini-degradations" role="status">{item.degradations?.map((entry) => <p key={`${entry.kind}-${entry.error_category}-${entry.message}`}>{entry.kind}/{entry.error_category}：{entry.message}</p>)}</div>}
+      {empty ? <div className="gemini-welcome"><div className="gemini-orb"><img src={logoUrl} alt="ShieldChain" /></div><h1><span>你好，</span>有什么安全问题想聊聊？</h1><div className="gemini-suggestions">{starters.map((item) => <button type="button" onClick={() => void send(undefined, item)} disabled={pending} key={item}>{item}</button>)}</div></div> : <div className="gemini-thread" ref={threadRef}>{active.messages.map((item) => <article className={`gemini-message gemini-message--${item.role}`} key={item.id}><div className="gemini-message-stack">
+        <div className="gemini-message-bubble">
+          {item.role === 'assistant' ? <AssistantMarkdown content={item.content} /> : <p>{item.content}</p>}
+          {item.role === 'assistant' && Boolean(item.degradations?.length) && <div className="gemini-degradations" role="status">{item.degradations?.map((entry) => <p key={`${entry.kind}-${entry.error_category}-${entry.message}`}>{entry.kind}/{entry.error_category}：{entry.message}</p>)}</div>}
+        </div>
+        <button className="gemini-copy-message" type="button" onClick={() => void copyMessage(item)} aria-label={item.role === 'assistant' ? '复制助手回复' : '复制用户消息'} title={copiedMessageId === item.id ? '已复制' : '复制'}>{copiedMessageId === item.id ? <Check size={16} /> : <Copy size={16} />}</button>
       </div></article>)}{pending && <article className="gemini-message gemini-message--assistant"><p className="gemini-loading"><i /><i /><i />思考中…</p></article>}</div>}
       {error && <p className="gemini-error" role="alert">{error}</p>}
       <form className="gemini-composer" onSubmit={(event) => void send(event)}><textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="询问 ShieldChain" rows={1} maxLength={4096} /><button type="submit" disabled={!draft.trim() || pending} aria-label="发送"><ArrowUp size={19} strokeWidth={2.8} /></button></form>

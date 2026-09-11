@@ -123,6 +123,7 @@ services:
       SHIELDCHAIN_LOCAL_MILVUS_URI: http://shieldchain-milvus:19530
       ASSISTANT_DATA_ROOT: /var/lib/shieldchain/assistant
       RESPONSE_WAZUH_CONNECTOR_ENABLED: "true"
+      WAZUH_AUTO_INVESTIGATION_ENABLED: "true"
     depends_on:
       response-executor:
         condition: service_healthy

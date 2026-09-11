@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 CAPTURE_IMAGE = "jasonish/suricata:7.0.16"
 

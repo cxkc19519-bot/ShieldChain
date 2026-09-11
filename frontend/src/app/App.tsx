@@ -1,4 +1,4 @@
-import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, Sparkles, ShieldCheck, Bug } from 'lucide-react'
+import { Activity, Search, AlertTriangle, Database, Home, Briefcase, HelpCircle, MessageCircle, Bug } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import logoUrl from '../assets/logo.png'
@@ -7,13 +7,10 @@ import { useRouteFocus } from './useRouteFocus'
 
 const navigation = [
   { label: '运营总览', icon: Activity, to: '/dashboard' },
-  { label: '安全运营报告', icon: Search, to: '/operations-report' },
-  { label: '处置中心', icon: ShieldCheck, to: '/response' },
   { label: '实时告警', icon: AlertTriangle, to: '/alerts' },
   { label: '漏洞闭环', icon: Bug, to: '/vulnerabilities' },
+  { label: '安全运营报告', icon: Search, to: '/operations-report' },
   { label: '知识库', icon: Database, to: '/knowledge' },
-  { label: '智能助手', icon: MessageCircle, to: '/assistant' },
-  { label: '模型测试', icon: Sparkles, to: '/qwen-chat' },
 ]
 
 export function App() {
@@ -22,7 +19,7 @@ export function App() {
   const contextKey = `${context.incidentId ?? ''}:${context.runId ?? ''}`
 
   const main = useRouteFocus(location.pathname)
-  const isAssistant = location.pathname === '/assistant' || location.pathname === '/qwen-chat'
+  const isAssistant = location.pathname === '/assistant'
 
   return (
     <div className="app-frame">
@@ -68,7 +65,7 @@ export function App() {
         </div>
       </header>}
       <main id="main-content" tabIndex={-1} key={contextKey} ref={main}>
-        {isAssistant ? <Outlet /> : ['/', '/help', '/about', '/status', '/changelog'].includes(location.pathname) ? (
+        {isAssistant ? <Outlet /> : ['/', '/help', '/about', '/changelog'].includes(location.pathname) ? (
           <Outlet />
         ) : (
           <div className="app-shell app-shell--single">
@@ -78,6 +75,10 @@ export function App() {
           </div>
         )}
       </main>
+      {!isAssistant && <a className="assistant-launcher" href="/assistant" target="_blank" rel="noreferrer" aria-label="在新窗口打开智能助手">
+        <MessageCircle aria-hidden="true" size={21} strokeWidth={2.4} />
+        <span>智能助手</span>
+      </a>}
     </div>
   )
 }

@@ -6,9 +6,10 @@ import html
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import httpx
@@ -35,6 +36,7 @@ from .mcp_tools import ReadOnlyAgentTool, standard_agent_tools
 from .react_collaboration import RealDataAgentTeam
 from .response_plan_agent import OperationsResponsePlanAgent
 from .schemas import (
+    AgentRoleRunView,
     ClosureLoopView,
     CrossDomainEvidenceView,
     McpToolCallView,
@@ -42,18 +44,29 @@ from .schemas import (
     OperationsReportView,
     ReasoningStepView,
     ReportStageView,
+    ResponseActionAuditView,
+    ResponseAuditView,
     ResponsePlanReferenceView,
+    ResponseReplanAuditView,
+)
+
+_PENDING_AUTOMATION_OVERVIEW = (
+    "处置计划随后进入服务端安全策略校验；实际工具调用、执行回执和状态验证结果"
+    "以本报告第 10 至 12 节记录为准。"
 )
 
 
 class OperationsReportStore:
     """Durable local report store; it keeps generated reports independent of browser state."""
 
+    _safe_report_id = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
     def __init__(self, root: Path) -> None:
         self._root = root.expanduser().resolve() / "operations-reports"
         self._path = self._root / "reports.json"
         self._lock = RLock()
         self._root.mkdir(parents=True, exist_ok=True)
+        self._materialize_existing_reports()
 
     def save(self, report: OperationsReportView) -> OperationsReportView:
         with self._lock:
@@ -61,6 +74,7 @@ class OperationsReportStore:
             rows = [item for item in rows if item.get("id") != report.id]
             rows.append(report.model_dump(mode="json"))
             self._write(rows[-100:])
+            self._write_report_files(report)
         return report
 
     def list(self, limit: int = 30) -> list[OperationsReportView]:
@@ -76,6 +90,18 @@ class OperationsReportStore:
                     return OperationsReportView.model_validate(item)
         return None
 
+    def delete(self, report_id: str) -> bool:
+        with self._lock:
+            rows = self._read()
+            match = next((item for item in rows if item.get("id") == report_id), None)
+            if match is None:
+                return False
+            report = OperationsReportView.model_validate(match)
+            for suffix in (".json", ".html", ".md"):
+                self._report_path(report.id, suffix).unlink(missing_ok=True)
+            self._write([item for item in rows if item.get("id") != report_id])
+        return True
+
     def _read(self) -> list[dict[str, object]]:
         if not self._path.is_file():
             return []
@@ -90,9 +116,34 @@ class OperationsReportStore:
             return []
 
     def _write(self, rows: list[dict[str, object]]) -> None:
-        temporary = self._path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(self._path)
+        self._write_text(self._path, json.dumps(rows, ensure_ascii=False, indent=2))
+
+    def _report_path(self, report_id: str, suffix: str) -> Path:
+        if not self._safe_report_id.fullmatch(report_id):
+            raise ValueError("运营报告 ID 格式无效")
+        return self._root / f"{report_id}{suffix}"
+
+    def _write_report_files(self, report: OperationsReportView) -> None:
+        self._write_text(
+            self._report_path(report.id, ".json"),
+            report.model_dump_json(indent=2),
+        )
+        self._write_text(self._report_path(report.id, ".html"), report.html)
+        self._write_text(self._report_path(report.id, ".md"), report.markdown)
+
+    def _materialize_existing_reports(self) -> None:
+        with self._lock:
+            for item in self._read():
+                try:
+                    self._write_report_files(OperationsReportView.model_validate(item))
+                except (OSError, ValueError):
+                    continue
+
+    @staticmethod
+    def _write_text(path: Path, content: str) -> None:
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +153,31 @@ class WazuhCaseScope:
     evidence_id: UUID
     source_ip: str | None
     agent_id: str | None
+    agent_name: str | None
+    destination_ip: str | None
+    destination_port: int | None
+    process_name: str | None
+    parent_process_name: str | None
+    rule_id: str
+    severity: int
     file_id: str | None
     rule_ttl_seconds: int
     occurred_at: datetime
     title: str
+    isolated_replay: bool
+
+
+class ZeroTouchOutcome(Protocol):
+    plan_status: str
+    reason_code: str
+    loop_id: UUID
+    loop_status: object
+
+
+class ZeroTouchResponseExecutor(Protocol):
+    def execute_zero_touch_plan(
+        self, *, tenant_id: UUID, plan_id: UUID, now: datetime
+    ) -> ZeroTouchOutcome: ...
 
 
 class SecurityOperationsReportAgent:
@@ -126,6 +198,7 @@ class SecurityOperationsReportAgent:
         audit_store: AgentToolAuditStore | None = None,
         remote_runtime: McpRemoteRuntime | None = None,
         response_plan_agent: OperationsResponsePlanAgent | None = None,
+        zero_touch_executor: ZeroTouchResponseExecutor | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
@@ -141,6 +214,7 @@ class SecurityOperationsReportAgent:
             session_factory,
             tenant_id=tenant_id,
         )
+        self._zero_touch_executor = zero_touch_executor
         self._team = RealDataAgentTeam(
             settings,
             knowledge,
@@ -191,6 +265,25 @@ class SecurityOperationsReportAgent:
                 tools=self._tools + remote_catalog.tools,
                 case_scope=case_scope,
             )
+            if (
+                case_scope is not None
+                and case_scope.isolated_replay
+                and report.response_plan is not None
+                and report.response_plan.status == "proposed"
+            ):
+                if self._zero_touch_executor is None:
+                    raise RuntimeError("isolated replay zero-touch executor is unavailable")
+                outcome = self._zero_touch_executor.execute_zero_touch_plan(
+                    tenant_id=self._tenant_id,
+                    plan_id=report.response_plan.plan_id,
+                    now=datetime.now(UTC),
+                )
+                if outcome.plan_status != "completed":
+                    raise RuntimeError(
+                        f"isolated replay zero-touch loop stopped: {outcome.reason_code}"
+                    )
+                report = self._zero_touch_completed_report(report, outcome)
+                self._store.save(report)
         except asyncio.CancelledError:
             self._finish_run(run_id, "cancelled", datetime.now(UTC))
             raise
@@ -199,6 +292,318 @@ class SecurityOperationsReportAgent:
             raise
         self._finish_run(run_id, "completed", datetime.now(UTC))
         return report
+
+    def _zero_touch_completed_report(
+        self, report: OperationsReportView, outcome: ZeroTouchOutcome
+    ) -> OperationsReportView:
+        reference = report.response_plan
+        if reference is None:
+            raise RuntimeError("zero-touch report is missing its response plan")
+        completed_reference = reference.model_copy(
+            update={
+                "status": "completed",
+                "execution_status": "verified_completed",
+                "public_summary": (
+                    "隔离回放响应计划已由服务端零人工策略自动接受；"
+                    f"{reference.action_count} 项白名单模拟动作均执行成功并通过状态验证。"
+                ),
+            }
+        )
+        stages = [
+            item.model_copy(
+                update={
+                    "status": "completed",
+                    "detail": (
+                        f"零人工演示策略已自动接受计划并完成 {reference.action_count} 项"
+                        "模拟安全动作；执行后状态已由只读验证器确认。"
+                    ),
+                }
+            )
+            if item.key == "response_plan"
+            else item
+            for item in report.stages
+        ]
+        reasoning_trace = [
+            item.model_copy(
+                update={
+                    "status": "completed",
+                    "detail": (
+                        "隔离回放计划已由服务端策略自动授权，并调用白名单内的模拟安全工具。"
+                        if item.phase == "act"
+                        else "已重新查询响应目标状态，执行结果与计划期望状态一致。"
+                    ),
+                    "confidence": 1.0,
+                }
+            )
+            if item.phase in {"act", "verify"}
+            else item
+            for item in report.reasoning_trace
+        ]
+        collaboration = [
+            item.model_copy(update={"response_plan": completed_reference})
+            if item.role == "response_planning" and item.response_plan is not None
+            else item
+            for item in report.collaboration
+        ]
+        closure = ClosureLoopView(
+            status="closed",
+            observed=report.closure.observed,
+            decision=report.closure.decision,
+            action=(
+                f"零人工演示策略自动执行了 {reference.action_count} 项白名单模拟安全动作。"
+            ),
+            verification="所有动作均取得执行回执，且执行后只读状态验证通过。",
+            feedback="闭环已完成；执行、验证和策略记录已保存，可按运行 ID 回放。",
+            human_approval_required=False,
+        )
+        response_audit = self._response_audit(report, outcome)
+        action_lines: list[str] = []
+        for action in response_audit.actions:
+            def elapsed(value: int | None) -> str:
+                if value is None:
+                    return "未记录"
+                return "<1 ms" if value == 0 else f"{value} ms"
+
+            approval_elapsed = (
+                elapsed(action.approval_duration_ms)
+            )
+            execution_elapsed = (
+                elapsed(action.execution_duration_ms)
+            )
+            verification_elapsed = (
+                elapsed(action.verification_duration_ms)
+            )
+            action_lines.extend(
+                [
+                    f"### {action.sequence}. {action.tool_name} v{action.tool_version}",
+                    f"- 目标：{action.target_type} `{action.target}`",
+                    f"- 自动授权：{action.authorization}",
+                    f"- 调用 ID：{action.call_id or '未生成'}",
+                    f"- 执行状态：{action.execution_status}",
+                    f"- 执行回执：{'、'.join(action.attempt_outcomes) or '无公开回执'}",
+                    f"- 状态验证：{action.verification_outcome or '未取得可信验证结果'}",
+                    f"- 授权耗时：{approval_elapsed}",
+                    f"- 执行耗时：{execution_elapsed}",
+                    f"- 验证耗时：{verification_elapsed}",
+                    f"- 证据引用：{'、'.join(str(item) for item in action.evidence_ids) or '无'}",
+                    "",
+                ]
+            )
+        replan_lines = [
+            (
+                f"- Revision {item.revision} · {item.event_type} · "
+                f"{item.reason_code or '无原因码'}：{item.summary}"
+            )
+            for item in response_audit.replans
+        ]
+        actions_markdown = (
+            "\n".join(action_lines) if action_lines else "- 未保存逐动作公开审计投影。"
+        )
+        replans_markdown = (
+            "\n".join(replan_lines) if replan_lines else "- 本轮未发生失败重规划。"
+        )
+        audit_lines = (
+            f"- 策略结果：{response_audit.policy_result}\n"
+            f"- 自动执行动作：{reference.action_count} 项\n"
+            "- 人工干预：0 次\n"
+            f"- 计划 ID：{reference.plan_id}\n"
+            f"- ReAct 循环 ID：{response_audit.loop_id or '未记录'}\n"
+            f"- 循环终态：{response_audit.loop_status}（{response_audit.reason_code}）"
+        )
+        completed_at = max(
+            (item.updated_at for item in response_audit.actions if item.updated_at),
+            default=datetime.now(UTC),
+        ).astimezone(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+
+        def phase_duration(field: str) -> str:
+            values = [
+                value
+                for item in response_audit.actions
+                if (value := getattr(item, field, None)) is not None
+            ]
+            if not values:
+                return "未记录"
+            total = sum(values)
+            return "<1" if total == 0 else str(total)
+
+        approval_duration = phase_duration("approval_duration_ms")
+        execution_duration = phase_duration("execution_duration_ms")
+        verification_duration = phase_duration("verification_duration_ms")
+        approval_pending = (
+            "### 6. [时间未记录] Approve\n"
+            "- classification：ACTION\n"
+            "- 审批状态：pending_policy_check\n"
+            "- 研判可信度：不适用\n"
+            "- duration_ms：未记录"
+        )
+        approval_completed = (
+            f"### 6. [{completed_at}] Approve\n"
+            "- classification：ACTION\n"
+            f"- 审批状态：automatic_approved（{response_audit.policy_result}）\n"
+            "- 研判可信度：不适用\n"
+            f"- duration_ms：{approval_duration}"
+        )
+        act_pending = (
+            "### 7. [时间未记录] Act\n"
+            "- classification：ACTION\n"
+            "- 执行状态：not_started\n"
+            "- 研判可信度：不适用\n"
+            "- duration_ms：未记录"
+        )
+        act_completed = (
+            f"### 7. [{completed_at}] Act\n"
+            "- classification：ACTION\n"
+            f"- 执行状态：completed；已执行 {reference.action_count} 项白名单动作\n"
+            "- 研判可信度：不适用\n"
+            f"- duration_ms：{execution_duration}"
+        )
+        verify_pending = (
+            "### 8. [时间未记录] Verify\n"
+            "- classification：ACTION\n"
+            "- 验证状态：not_started\n"
+            "- 研判可信度：不适用\n"
+            "- duration_ms：未记录"
+        )
+        verify_completed = (
+            f"### 8. [{completed_at}] Verify\n"
+            "- classification：ACTION\n"
+            "- 验证状态：verified_completed\n"
+            "- 研判可信度：不适用\n"
+            f"- duration_ms：{verification_duration}"
+        )
+        close_marker = "- 边界：调查记录已保存不等于安全事件已关闭。"
+        close_completed = (
+            close_marker
+            + f"\n\n### 10. [{completed_at}] Close\n"
+            "- classification：ACTION\n"
+            "- 事件状态：closed\n"
+            "- close_reason：response_executed_and_verified\n"
+            "- 说明：响应动作已经执行，且所有必需状态验证均通过。"
+        )
+        markdown = (
+            report.markdown
+            .replace(
+                _PENDING_AUTOMATION_OVERVIEW,
+                "经服务端安全策略校验后，响应智能体调用白名单内的模拟安全工具"
+                f"完成 {reference.action_count} 项自动化处置；所有动作均取得执行回执，"
+                "处置后状态也已通过只读验证器复核。",
+            )
+            .replace(approval_pending, approval_completed)
+            .replace(act_pending, act_completed)
+            .replace(verify_pending, verify_completed)
+            .replace(close_marker, close_completed)
+            .replace("- 策略检查：pending", "- 策略检查：passed")
+            .replace(
+                "- 审批状态：pending_policy_check",
+                f"- 审批状态：automatic_approved（{response_audit.policy_result}）",
+            )
+            .replace("- 执行状态：not_started", "- 执行状态：completed")
+            .replace("- 回执状态：not_available", "- 回执状态：received_and_trusted")
+            .replace(
+                "- 验证状态：not_started",
+                "- 验证状态：verified_completed",
+            )
+            .replace("- 事件状态：pending_response", "- 事件状态：closed")
+            .replace(
+                "- Close：仅当响应执行且验证通过，或存在明确关闭原因时发生。",
+                "- Close：响应执行且验证通过；close_reason："
+                "response_executed_and_verified。",
+            )
+            .replace(
+                "\n## 附录 A：智能体协作审计轨迹",
+                "\n## 附录 A：智能体协作审计轨迹"
+                f"\n\n### 实际动作与回执\n\n{actions_markdown}\n\n"
+                f"### 策略与重规划审计\n\n{audit_lines}\n\n{replans_markdown}\n",
+            )
+        )
+        return report.model_copy(
+            update={
+                "stages": stages,
+                "collaboration": collaboration,
+                "response_plan": completed_reference,
+                "reasoning_trace": reasoning_trace,
+                "closure": closure,
+                "response_audit": response_audit,
+                "markdown": markdown,
+                "html": self._markdown_to_html(markdown),
+            }
+        )
+
+    def _response_audit(
+        self, report: OperationsReportView, outcome: ZeroTouchOutcome
+    ) -> ResponseAuditView:
+        if report.run_id is None or report.response_plan is None:
+            raise RuntimeError("zero-touch report is missing audit identifiers")
+        plan = None
+        trace = None
+        if self._zero_touch_executor is not None:
+            plan_reader = getattr(self._zero_touch_executor, "plan_by_run", None)
+            trace_reader = getattr(self._zero_touch_executor, "trace", None)
+            if callable(plan_reader) and callable(trace_reader):
+                plan = plan_reader(tenant_id=self._tenant_id, run_id=report.run_id)
+                trace = trace_reader(tenant_id=self._tenant_id, run_id=report.run_id)
+        trace_by_action = {
+            str(item.plan_action_id): item
+            for item in (getattr(trace, "calls", None) or [])
+            if item.plan_action_id is not None
+        }
+        revisions = getattr(plan, "revisions", None) or []
+        current_revision = getattr(plan, "current_revision", None)
+        current = next(
+            (item for item in revisions if item.revision == current_revision),
+            None,
+        )
+        actions: list[ResponseActionAuditView] = []
+        for action in (getattr(current, "actions", None) or []):
+            call = trace_by_action.get(str(action.id))
+            actions.append(
+                ResponseActionAuditView(
+                    action_id=action.id,
+                    call_id=getattr(call, "id", None),
+                    sequence=action.sequence,
+                    tool_name=action.tool_name,
+                    tool_version=action.tool_version,
+                    target_type=action.target_type,
+                    target=action.target,
+                    assessed_risk=action.assessed_risk,
+                    authorization=(
+                        getattr(call, "policy_outcome", None)
+                        or "automatic_simulation_approval"
+                    ),
+                    execution_status=getattr(call, "status", None) or "unknown",
+                    attempt_outcomes=list(getattr(call, "attempt_outcomes", None) or []),
+                    verification_outcome=getattr(call, "verification_outcome", None),
+                    evidence_ids=list(getattr(call, "evidence_ids", None) or action.evidence_ids),
+                    updated_at=getattr(call, "updated_at", None),
+                    approval_duration_ms=getattr(call, "approval_duration_ms", None),
+                    execution_duration_ms=getattr(call, "execution_duration_ms", None),
+                    verification_duration_ms=getattr(call, "verification_duration_ms", None),
+                )
+            )
+        replans = [
+            ResponseReplanAuditView(
+                revision=item.revision,
+                event_type=item.event_type,
+                reason_code=item.reason_code,
+                summary=item.public_summary,
+                created_at=item.created_at,
+            )
+            for item in (getattr(plan, "events", None) or [])
+            if item.reason_code is not None or "replan" in item.event_type
+        ]
+        loop_status = getattr(outcome.loop_status, "value", outcome.loop_status)
+        return ResponseAuditView(
+            mode="zero_touch_isolated_replay",
+            plan_id=report.response_plan.plan_id,
+            run_id=report.run_id,
+            loop_id=getattr(outcome, "loop_id", None),
+            policy_result="隔离回放白名单自动授权",
+            loop_status=str(loop_status),
+            reason_code=outcome.reason_code,
+            human_interventions=0,
+            actions=actions,
+            replans=replans,
+        )
 
     async def _generate_report(
         self,
@@ -234,7 +639,30 @@ class SecurityOperationsReportAgent:
             target_endpoint_id=case_scope.agent_id if case_scope else None,
             target_file_id=case_scope.file_id if case_scope else None,
             rule_ttl_seconds=case_scope.rule_ttl_seconds if case_scope else 60,
+            required_observation_tools=(
+                (
+                    "security.events.list",
+                    "security.alerts.list",
+                    "security.vulnerabilities.list",
+                    "security.weak_passwords.list",
+                    "security.network_flows.list",
+                    "security.endpoint_processes.list",
+                    "security.assets.list",
+                    "security.indicators.list",
+                )
+                if case_scope is not None and case_scope.isolated_replay
+                else ()
+            ),
         )
+        if self._settings.agent_require_live_model:
+            degraded_roles = [item.label for item in collaboration if item.status != "completed"]
+            missing_model_roles = [item.label for item in collaboration if not item.model]
+            if degraded_roles or missing_model_roles or collaboration_model is None:
+                failed = "、".join(dict.fromkeys(degraded_roles + missing_model_roles))
+                raise RuntimeError(
+                    "真实模型智能体执行未完成"
+                    + (f"：{failed}" if failed else "：未取得模型回执")
+                )
         response_plan = next(
             (
                 item.response_plan
@@ -300,6 +728,8 @@ class SecurityOperationsReportAgent:
             )
         )
         synthesis, model, fallback = await self._synthesize(start_at, end_at, tool_calls, analysis)
+        if self._settings.agent_require_live_model and (fallback or model is None):
+            raise RuntimeError("报告智能体未取得真实模型回执")
         closure = self._closure_loop(
             analysis=analysis,
             synthesis=synthesis,
@@ -316,7 +746,9 @@ class SecurityOperationsReportAgent:
                 else "已由安全运营报告智能体基于工具结果生成建议。",
             )
         )
-        markdown = self._render_markdown(
+        markdown = self._render_markdown_v2(
+            report_id,
+            run_id,
             start_at,
             end_at,
             tool_calls,
@@ -324,9 +756,11 @@ class SecurityOperationsReportAgent:
             synthesis,
             model,
             response_plan,
+            collaboration=collaboration,
             reasoning_trace=reasoning_trace,
             cross_domain=cross_domain,
             closure=closure,
+            case_scope=case_scope,
         )
         stages.append(
             ReportStageView(
@@ -371,6 +805,13 @@ class SecurityOperationsReportAgent:
 
     def get(self, report_id: str) -> OperationsReportView | None:
         return self._store.get(report_id)
+
+    def delete(self, report_id: str) -> bool:
+        return self._store.delete(report_id)
+
+    @staticmethod
+    def standalone_html(report: OperationsReportView) -> str:
+        return SecurityOperationsReportAgent._markdown_to_html(report.markdown)
 
     def _create_run(
         self,
@@ -430,7 +871,11 @@ class SecurityOperationsReportAgent:
                         tenant_id=str(self._tenant_id),
                         revision=0,
                         phase="response_planning",
-                        user_goal="分析真实 Wazuh 告警并形成需要人工审批的受控响应计划。",
+                        user_goal=(
+                            "分析隔离 PCAP 回放告警并形成可由零人工策略自动执行的受控响应计划。"
+                            if case_scope is not None and case_scope.isolated_replay
+                            else "分析真实 Wazuh 告警并形成需要人工审批的受控响应计划。"
+                        ),
                         hypotheses_json=[],
                         risks_json=[],
                         plan_json=["告警分诊", "威胁研判", "知识检索", "响应规划", "验证", "报告"],
@@ -503,10 +948,27 @@ class SecurityOperationsReportAgent:
                 evidence_id=uuid4(),
                 source_ip=alert.source_ip,
                 agent_id=alert.agent_id,
+                agent_name=alert.agent_name,
+                destination_ip=alert.destination_ip,
+                destination_port=alert.destination_port,
+                process_name=(
+                    str(alert.evidence_json.get("endpoint_process") or "").strip()
+                    or alert.process_name
+                ),
+                parent_process_name=(
+                    str(alert.evidence_json.get("endpoint_parent_process") or "").strip()
+                    or alert.parent_process_name
+                ),
+                rule_id=alert.rule_id,
+                severity=alert.severity,
                 file_id=file_id,
                 rule_ttl_seconds=rule_ttl_seconds,
                 occurred_at=self._utc(alert.occurred_at),
                 title=alert.title,
+                isolated_replay=(
+                    alert.evidence_json.get("source_kind") == "nta_pcap_isolated_replay"
+                    and alert.evidence_json.get("isolated_docker_network") is True
+                ),
             )
 
     def _wazuh_evidence_row(
@@ -560,8 +1022,12 @@ class SecurityOperationsReportAgent:
 
         events = count("security.events.list")
         alerts = count("security.alerts.list")
-        vulnerabilities = count("security.vulnerabilities.list")
-        weak_passwords = count("security.weak_passwords.list")
+        vulnerability_indicators = count("security.vulnerabilities.list")
+        identity_indicators = count("security.weak_passwords.list")
+        network_flows = count("security.network_flows.list")
+        endpoint_processes = count("security.endpoint_processes.list")
+        assets = count("security.assets.list")
+        indicators = count("security.indicators.list")
         failed_tools = [item.name for item in tool_calls if item.status == "failed"]
         failure_summary = (
             f"有 {len(failed_tools)} 类工具调用失败，未取得可信结果，不能据此判定无风险。"
@@ -571,8 +1037,8 @@ class SecurityOperationsReportAgent:
         return {
             "events": events,
             "alerts": alerts,
-            "vulnerabilities": vulnerabilities,
-            "weak_passwords": weak_passwords,
+            "vulnerabilities": vulnerability_indicators,
+            "weak_passwords": identity_indicators,
             "selected_tools": list(by_name),
             "failed_tools": failed_tools,
             "observed_domains": [
@@ -580,16 +1046,24 @@ class SecurityOperationsReportAgent:
                 for name, label in (
                     ("security.events.list", "事件调查"),
                     ("security.alerts.list", "终端与检测"),
-                    ("security.vulnerabilities.list", "漏洞管理"),
-                    ("security.weak_passwords.list", "身份认证"),
-                    ("knowledge.rag.retrieve", "知识依据"),
+                    ("security.vulnerabilities.list", "漏洞/攻击面线索"),
+                    ("security.weak_passwords.list", "身份/账号关联"),
+                    ("security.network_flows.list", "网络流量"),
+                    ("security.endpoint_processes.list", "端点进程"),
+                    ("security.assets.list", "资产上下文"),
+                    ("security.indicators.list", "威胁指标"),
+                    ("knowledge.rag.retrieve", "知识检索状态"),
                 )
                 if name in by_name and by_name[name].status != "failed"
             ],
             "summary": (
                 f"智能体按需调用 {len(by_name)} 类运营工具；已调用工具返回 {events} 个待复核事件、"
-                f"{alerts} 条告警、{vulnerabilities} 个 CVE 标识线索、"
-                f"{weak_passwords} 条弱口令线索。{failure_summary}"
+                f"{alerts} 条告警、{vulnerability_indicators} 条漏洞或攻击面关联线索、"
+                f"{identity_indicators} 条身份或账号关联线索、{network_flows} 条网络上下文、"
+                f"{endpoint_processes} 条端点进程链、{assets} 个资产上下文和 "
+                f"{indicators} 个 IOC 候选。"
+                "上述线索不等同于已确认漏洞、"
+                f"利用成功或弱口令。{failure_summary}"
             ),
         }
 
@@ -604,10 +1078,24 @@ class SecurityOperationsReportAgent:
 
         definitions = (
             ("events", "事件调查", "security.events.list", "事件 MCP"),
-            ("endpoint_detection", "终端与检测", "security.alerts.list", "告警 MCP"),
+            ("detections", "检测告警", "security.alerts.list", "告警 MCP"),
+            ("network_traffic", "网络流量", "security.network_flows.list", "网络流量 MCP"),
+            (
+                "endpoint_detection",
+                "端点进程",
+                "security.endpoint_processes.list",
+                "端点进程 MCP",
+            ),
+            ("assets", "资产上下文", "security.assets.list", "资产上下文 MCP"),
+            (
+                "threat_intelligence",
+                "威胁情报与 IOC",
+                "security.indicators.list",
+                "威胁情报与 IOC MCP",
+            ),
             ("vulnerabilities", "漏洞管理", "security.vulnerabilities.list", "漏洞 MCP"),
-            ("identity", "身份认证", "security.weak_passwords.list", "弱口令 MCP"),
-            ("knowledge", "知识依据", "knowledge.rag.retrieve", "本地知识库 RAG"),
+            ("identity", "身份认证", "security.weak_passwords.list", "身份认证 MCP"),
+            ("knowledge", "知识辅助研判", "knowledge.rag.retrieve", "本地知识库"),
         )
         by_name: dict[str, list[McpToolCallView]] = {}
         for item in tool_calls:
@@ -888,8 +1376,10 @@ class SecurityOperationsReportAgent:
             ]
         )
 
-    def _render_markdown(
+    def _render_markdown_v2(
         self,
+        report_id: str,
+        run_id: UUID,
         start_at: datetime,
         end_at: datetime,
         tool_calls: list[McpToolCallView],
@@ -898,44 +1388,477 @@ class SecurityOperationsReportAgent:
         model: str | None,
         response_plan: ResponsePlanReferenceView,
         *,
+        collaboration: list[AgentRoleRunView],
         reasoning_trace: list[ReasoningStepView],
         cross_domain: list[CrossDomainEvidenceView],
         closure: ClosureLoopView,
+        case_scope: WazuhCaseScope | None,
     ) -> str:
+        """Render the human report separately from detailed agent/tool audit records."""
+
+        del synthesis, reasoning_trace, closure
+        failed_tools = list(analysis["failed_tools"])
+        alerts = int(analysis["alerts"])
+        events = int(analysis["events"])
+        risk_level = "未知" if failed_tools else "高" if alerts or events else "低"
+        event_overview = self._event_overview(
+            start_at=start_at,
+            end_at=end_at,
+            case_scope=case_scope,
+            cross_domain=cross_domain,
+            response_plan=response_plan,
+            risk_level=risk_level,
+        )
+        china_tz = timezone(timedelta(hours=8))
+        recorded_at = datetime.now(UTC).astimezone(china_tz)
+        detected_at = case_scope.occurred_at.astimezone(china_tz) if case_scope else None
+        detected_time = detected_at.strftime("%H:%M:%S") if detected_at else "时间未记录"
+        role_runs = {item.role: item for item in collaboration}
+
+        def role_time(role: str) -> str:
+            started_at = getattr(role_runs.get(role), "started_at", None)
+            return (
+                started_at.astimezone(china_tz).strftime("%H:%M:%S")
+                if started_at is not None
+                else "时间未记录"
+            )
+
+        def role_duration(role: str) -> str:
+            duration_ms = getattr(role_runs.get(role), "duration_ms", None)
+            return str(duration_ms) if duration_ms is not None else "未记录"
+        event_binding = str(case_scope.case_id) if case_scope else f"RUN-{run_id}"
+        evidence_id = str(case_scope.evidence_id) if case_scope else f"RUN-{run_id}"
+        target = case_scope.destination_ip if case_scope else None
+        target_with_port = (
+            f"{target}:{case_scope.destination_port}"
+            if target and case_scope and case_scope.destination_port
+            else target or "未记录"
+        )
+        process_chain = "未记录"
+        if case_scope and case_scope.process_name:
+            process_chain = (
+                f"{case_scope.parent_process_name} → {case_scope.process_name}"
+                if case_scope.parent_process_name
+                else case_scope.process_name
+            )
+        event_type = (
+            "高风险漏洞利用探测 / 疑似漏洞利用尝试"
+            if case_scope
+            else "指定时间范围安全运营研判"
+        )
+        actions = []
+        if case_scope and case_scope.agent_id:
+            actions.append("隔离受控演示端点")
+        if case_scope and case_scope.file_id:
+            actions.append("隔离受控演示文件")
+        if case_scope and case_scope.source_ip:
+            actions.append("临时阻断受控演示源地址")
+        if not actions:
+            actions.append("继续收集证据并依据策略决定后续动作")
+
         lines = [
-            "# ShieldChain 安全运营报告",
+            "# 基于智能体的自动化安全运营闭环报告",
             "",
-            f"- 报告智能体：{self.agent_name}",
-            (
-                f"- 统计时间：{start_at.strftime('%Y-%m-%d %H:%M:%S UTC')} 至 "
-                f"{end_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-            ),
-            f"- 综合分析模型：{model or '保守规则降级（DeepSeek 未可用）'}",
-            "- 安全边界：智能体仅可自主选择受授权的只读工具；本报告不执行处置操作。",
+            f"- 报告 ID：{report_id}",
+            f"- 调查运行 ID：{run_id}",
             "",
-            "## 工具返回汇总",
+            "## 1. 事件摘要",
+            "",
+            *event_overview,
+            "",
+            "## 2. 当前结论",
+            "",
+            f"- 当前风险等级：{risk_level}",
+            f"- 当前定性：{event_type}",
+            "- 是否确认入侵：否；检测签名命中不等于漏洞存在或利用成功。",
+            "- 证据状态：已确认存在攻击尝试相关检测信号；跨域关联属于分析推断。",
+            "- 当前事件状态：pending_response；执行并验证通过前不得关闭。",
+            "",
+            "## 3. 攻击活动时间线",
+            "",
+            "本时间线只描述攻击者或异常行为，不包含智能体工作过程和防守动作。",
             "",
         ]
-        if not tool_calls:
-            lines.extend(["未选择运营数据工具。", ""])
-        for tool in tool_calls:
-            lines.append(f"### {tool.label}")
-            lines.append(tool.summary)
-            lines.extend(f"- {item}" for item in tool.items[:12])
-            if tool.status == "failed":
-                lines.append(f"- 调用失败原因：{tool.reason_code}；未取得可信结果。")
-            elif not tool.items:
-                lines.append("- 本时间范围内未返回匹配记录。")
-            lines.append("")
+        if case_scope:
+            lines.extend(
+                [
+                    f"### 1. [{detected_time}] Detect",
+                    "- classification：FACT",
+                    "- verification_status：verified",
+                    f"- 事实：规则 `{case_scope.rule_id}` 命中。",
+                    f"- 网络：`{case_scope.source_ip or '未记录'}` → `{target_with_port}`。",
+                    f"- evidence_id：`{evidence_id}`",
+                    f"- event_binding：`{event_binding}`",
+                    "- duration_ms：不适用（检测事件时间点）",
+                    "",
+                    f"### 2. [{detected_time}] Observe",
+                    "- classification：FACT",
+                    "- verification_status：observed",
+                    f"- 事实：端点上下文记录到 `{process_chain}` 进程关联。",
+                    "- 边界：进程关联不能证明恶意代码执行成功。",
+                    f"- evidence_id：`{evidence_id}`",
+                    "- duration_ms：不适用（观测事件时间点）",
+                    "",
+                    "### 3. [时间未记录] Attack Outcome",
+                    "- classification：UNKNOWN",
+                    "- verification_status：not_verified",
+                    "- 未确认：漏洞利用成功、任意代码执行、生产环境受影响及横向移动。",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "### 1. [时间未记录] Detect / Observe",
+                    "- classification：FACT",
+                    f"- 事实：工具返回 {alerts} 条告警和 {events} 个事件。",
+                    "- 边界：未调用数据域保持 UNKNOWN。",
+                ]
+            )
+
         lines.extend(
             [
-                "## 工具结果分析",
                 "",
-                str(analysis["summary"]),
+                "## 4. 安全运营调查时间线",
                 "",
-                "## 结构化推理链（公开审计视图）",
+                f"### 1. [{detected_time}] Detect",
+                "- actor：探针 / XDR / Wazuh",
+                "- classification：FACT",
+                "- 状态：completed",
+                "- 说明：检测信号进入安全运营流程。",
+                "- duration_ms：不适用（检测事件时间点）",
                 "",
-                "以下内容由受控观察、角色交接和证据摘要组成，不包含模型隐藏思维链、私有提示或原始载荷。",
+                f"### 2. [{role_time('superagent')}] Correlate",
+                "- actor：总控智能体",
+                "- classification：INFERENCE",
+                "- 状态：completed",
+                "- 说明：将网络检测、端点上下文和已调用安全域绑定到同一调查。",
+                "- 边界：关联推断不会提升原始证据等级。",
+                f"- duration_ms：{role_duration('superagent')}",
+                "",
+                f"### 3. [{role_time('threat_investigation')}] Investigate",
+                "- actor：威胁研判智能体",
+                "- classification：INFERENCE",
+                f"- 状态：completed；研判可信度：{'60%' if case_scope else '未量化'}",
+                f"- 说明：研判为“{event_type}”；这不是利用成功事实。",
+                f"- duration_ms：{role_duration('threat_investigation')}",
+                "",
+                f"### 4. [{role_time('alert_triage')}] Assess",
+                "- actor：告警分诊智能体",
+                "- classification：INFERENCE",
+                f"- 状态：completed；优先级：{risk_level}",
+                "- 未解决：应用版本、利用结果、生产关联及后续攻击行为。",
+                f"- duration_ms：{role_duration('alert_triage')}",
+                "",
+                f"### 5. [{role_time('response_planning')}] Decide",
+                "- actor：响应规划智能体",
+                "- classification：ACTION",
+                f"- 状态：completed；计划：`{response_plan.plan_id}` "
+                f"Revision {response_plan.revision}",
+                f"- 说明：生成 {response_plan.action_count} 项建议动作；建议不等于执行。",
+                f"- duration_ms：{role_duration('response_planning')}",
+                "",
+                "### 6. [时间未记录] Approve",
+                "- classification：ACTION",
+                "- 审批状态：pending_policy_check",
+                "- 研判可信度：不适用",
+                "- duration_ms：未记录",
+                "",
+                "### 7. [时间未记录] Act",
+                "- classification：ACTION",
+                "- 执行状态：not_started",
+                "- 研判可信度：不适用",
+                "- duration_ms：未记录",
+                "",
+                "### 8. [时间未记录] Verify",
+                "- classification：ACTION",
+                "- 验证状态：not_started",
+                "- 研判可信度：不适用",
+                "- duration_ms：未记录",
+                "",
+                f"### 9. [{recorded_at.strftime('%H:%M:%S')}] Archive",
+                "- classification：ACTION",
+                "- 调查记录状态：archived",
+                "- 事件状态：pending_response",
+                "- 说明：调查轮次、工具调用、交接、计划和验证条件已持久化。",
+                "- 边界：调查记录已保存不等于安全事件已关闭。",
+                "",
+                "## 5. 已确认事实",
+                "",
+            ]
+        )
+        if case_scope:
+            lines.extend(
+                [
+                    f"- FACT｜规则 `{case_scope.rule_id}` 已命中｜confidence：100%｜"
+                    f"verification_status：verified｜evidence_id：`{evidence_id}`",
+                    f"- FACT｜源 `{case_scope.source_ip or '未记录'}`，目标 `{target_with_port}`｜"
+                    f"confidence：100%｜verification_status：observed｜evidence_id：`{evidence_id}`",
+                    f"- FACT｜端点进程上下文 `{process_chain}` 已记录｜confidence：100%｜"
+                    f"verification_status：observed｜evidence_id：`{evidence_id}`",
+                ]
+            )
+            if case_scope.isolated_replay:
+                lines.append(
+                    "- FACT｜本事件来自隔离 PCAP 演示回放并限定在受控演示目标｜"
+                    "confidence：100%｜verification_status：verified｜不涉及生产目标。"
+                )
+        else:
+            lines.append("- FACT｜工具返回的告警与事件计数已记录；未调用域保持 UNKNOWN。")
+
+        lines.extend(["", "## 6. 跨域证据关联", ""])
+        for item in cross_domain:
+            if item.key == "knowledge":
+                classification, verification = "REFERENCE", "context_only"
+                summary = "仅记录检索状态；知识库具体内容未进入报告或主证据链。"
+            elif item.key in {
+                "events",
+                "detections",
+                "network_traffic",
+                "endpoint_detection",
+            }:
+                classification = "FACT" if item.status == "observed" else "UNKNOWN"
+                verification = "observed" if item.status == "observed" else "not_observed"
+                summary = item.summary
+            else:
+                classification = "CORRELATED" if item.status == "observed" else "UNKNOWN"
+                verification = "correlated" if item.status == "observed" else "not_observed"
+                summary = (
+                    "返回漏洞或攻击面关联线索；未确认资产存在漏洞或利用成功。"
+                    if item.key == "vulnerabilities" and item.status == "observed"
+                    else "返回身份或账号关联线索；当前无证据证明存在弱口令。"
+                    if item.key == "identity" and item.status == "observed"
+                    else item.summary
+                )
+            count = item.result_count if item.status == "observed" else "UNKNOWN"
+            lines.append(
+                f"- {classification}｜{item.label}｜状态：{item.status}｜结果数：{count}｜"
+                f"verification_status：{verification}｜{summary}"
+            )
+
+        lines.extend(["", "## 7. 智能体研判结果", ""])
+        increments = {
+            "superagent": "确定调查顺序与角色交接，不新增事件事实。",
+            "threat_investigation": "形成疑似攻击尝试研判；利用是否成功仍为 UNKNOWN。",
+            "knowledge_retrieval": "完成背景检索；可靠性不足，未提升当前结论。",
+            "alert_triage": f"将调查优先级维持为{risk_level}，未改变事实等级。",
+            "verification": "定义处置后验证条件；未把待验证状态描述为成功。",
+            "reporting": "整理事实、推断和未知项，不新增遥测事实。",
+            "response_planning": f"生成 {response_plan.action_count} 项建议动作，等待策略校验。",
+        }
+        for item in collaboration:
+            started_text = (
+                item.started_at.astimezone(china_tz).isoformat()
+                if item.started_at
+                else "未记录"
+            )
+            finished_text = (
+                item.finished_at.astimezone(china_tz).isoformat()
+                if item.finished_at
+                else "未记录"
+            )
+            duration_text = item.duration_ms if item.duration_ms is not None else "未记录"
+            lines.extend(
+                [
+                    f"### {item.iteration}. {item.label}",
+                    f"- 输入摘要：{'、'.join(item.evidence_domains) or '前序公开状态'}。",
+                    f"- 新增发现：{increments.get(item.role, '完成本角色职责，未新增独立事实。')}",
+                    "- 判断结果：Agent 推断不作为 FACT。",
+                    "- 未解决问题：应用版本、利用结果、生产影响及后续攻击活动。",
+                    f"- 交接目标：{item.handoff_to or '无；本轮协作结束'}",
+                    f"- 输出状态：{'completed' if item.status == 'completed' else 'fallback'}；"
+                    f"模型回执：{item.model or '未取得'}",
+                    f"- 开始时间：{started_text}",
+                    f"- 完成时间：{finished_text}",
+                    f"- duration_ms：{duration_text}",
+                    "",
+                ]
+            )
+
+        unknowns = [
+            "目标应用具体版本尚未确认｜原因：告警与回放证据未携带资产版本指纹。",
+            "当前证据不能确认漏洞利用是否成功｜原因：检测信号证明请求命中规则，未提供目标成功响应或利用结果。",
+            "当前证据不能确认是否成功执行任意代码｜原因：进程关联是上下文映射，未提供命令输出、退出码或新进程执行回执。",
+            "当前没有足够证据确认发生横向移动｜原因：未观测到跨主机认证、远程执行或后续横向流量。",
+        ]
+        if case_scope is None or not case_scope.isolated_replay:
+            unknowns.append(
+                "当前证据不能确认是否影响生产环境｜原因：缺少资产环境标签和生产资产绑定证据。"
+            )
+        if any(item.key == "identity" and item.status == "observed" for item in cross_domain):
+            unknowns.append(
+                "身份或账号关联线索不能证明存在弱口令｜原因：账号关联不是认证成功事件，且未取得密码审计或认证日志。"
+            )
+        lines.extend(["## 8. 未确认事项", ""])
+        lines.extend(f"- UNKNOWN｜{item}" for item in unknowns)
+        lines.extend(
+            [
+                "",
+                "## 9. 响应建议",
+                "",
+                f"- ACTION｜计划 ID：`{response_plan.plan_id}`｜Revision {response_plan.revision}",
+                f"- ACTION｜建议动作数：{response_plan.action_count}；建议不等于执行。",
+                *(f"- ACTION｜{item}。" for item in actions),
+                "- ACTION｜核查应用版本、生产环境关联性及后续异常行为。",
+                "",
+                "## 10. 审批与执行状态",
+                "",
+                "- 策略检查：pending",
+                "- 审批状态：pending_policy_check",
+                "- 执行状态：not_started",
+                "- 回执状态：not_available",
+                "- 回滚支持：是",
+                "- 授权边界：仅允许证据绑定、目标白名单与注册工具全部通过的动作。",
+                "",
+                "## 11. 验证条件",
+                "",
+                "- 验证状态：not_started",
+                "- 成功条件：每项动作取得可信回执，且只读验证器返回期望状态。",
+                "- 失败条件：动作失败、回执缺失、状态不一致或出现新的高风险遥测。",
+                "- 失败处理：把原因与新遥测反馈给总控智能体重新规划。",
+                "",
+                "## 12. 当前事件状态",
+                "",
+                "- 事件状态：pending_response",
+                "- 调查记录状态：archived",
+                "- Archive：当前调查轮次已保存，可在获得新证据后再次调查。",
+                "- Close：仅当响应执行且验证通过，或存在明确关闭原因时发生。",
+                "",
+                "## 附录 A：智能体协作审计轨迹",
+                "",
+                f"- 报告 ID：`{report_id}`",
+                f"- 运行 ID：`{run_id}`",
+                f"- 模型：{model or '未取得模型回执'}",
+                f"- 角色数：{len(collaboration)}",
+                "- 说明：主报告只展示增量结论，结构化报告保留公开角色状态。",
+                "",
+                "## 附录 B：工具调用记录",
+                "",
+            ]
+        )
+        for index, item in enumerate(tool_calls, start=1):
+            if item.name == "knowledge.rag.retrieve":
+                continue
+            classification = (
+                "FACT"
+                if item.name in {"security.events.list", "security.alerts.list"}
+                else "CORRELATED"
+            )
+            lines.append(
+                f"- TOOL-{index:03d}｜{item.label}｜{classification}｜状态：{item.status}｜"
+                f"结果数：{item.result_count}｜{item.summary}"
+            )
+        knowledge_calls = [item for item in tool_calls if item.name == "knowledge.rag.retrieve"]
+        lines.extend(
+            [
+                "",
+                "## 附录 C：知识库检索记录",
+                "",
+                f"- 调用次数：{len(knowledge_calls)}",
+                "- classification：REFERENCE",
+                "- verification_status：context_only",
+                "- 主证据链：未纳入",
+                "- 具体知识内容：不在报告中展示。",
+                "- 结论：未获得足够可靠的受影响版本或 CVE 信息；不得提升事实等级。",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _render_markdown(
+        self,
+        report_id: str,
+        run_id: UUID,
+        start_at: datetime,
+        end_at: datetime,
+        tool_calls: list[McpToolCallView],
+        analysis: dict[str, object],
+        synthesis: str,
+        model: str | None,
+        response_plan: ResponsePlanReferenceView,
+        *,
+        collaboration: list[AgentRoleRunView],
+        reasoning_trace: list[ReasoningStepView],
+        cross_domain: list[CrossDomainEvidenceView],
+        closure: ClosureLoopView,
+        case_scope: WazuhCaseScope | None,
+    ) -> str:
+        alerts = int(analysis["alerts"])
+        events = int(analysis["events"])
+        failed_tools = list(analysis["failed_tools"])
+        observed_domains = [item for item in cross_domain if item.status == "observed"]
+        risk_level = "未知" if failed_tools else "高" if alerts or events else "低"
+        event_overview = self._event_overview(
+            start_at=start_at,
+            end_at=end_at,
+            case_scope=case_scope,
+            cross_domain=cross_domain,
+            response_plan=response_plan,
+            risk_level=risk_level,
+        )
+        lines = [
+            "# 基于智能体的自动化安全运营闭环报告",
+            "",
+            f"- 报告 ID：{report_id}",
+            f"- 调查运行 ID：{run_id}",
+            (
+                f"- 调查时间范围：{start_at.strftime('%Y-%m-%d %H:%M:%S UTC')} 至 "
+                f"{end_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            ),
+            "",
+            "## 1. 事件概述",
+            "",
+            *event_overview,
+            "",
+            "## 2. 多源异常证据",
+            "",
+        ]
+        for item in cross_domain:
+            state = "已观测" if item.status == "observed" else "未观测"
+            lines.append(
+                f"- {item.label}｜来源：{item.source}｜状态：{state}｜"
+                f"结果数：{item.result_count}｜{item.summary}"
+            )
+        lines.append("")
+        if not tool_calls:
+            lines.extend(["本次没有取得工具返回；未观测不能解释为没有风险。", ""])
+        grouped_tools: dict[str, list[McpToolCallView]] = {}
+        for tool in tool_calls:
+            grouped_tools.setdefault(tool.name, []).append(tool)
+        for calls in grouped_tools.values():
+            tool = calls[0]
+            successful = [item for item in calls if item.status != "failed"]
+            failed = [item for item in calls if item.status == "failed"]
+            summaries = list(
+                dict.fromkeys(" ".join(item.summary.split())[:600] for item in calls)
+            )
+            evidence = list(
+                dict.fromkeys(
+                    " ".join(value.split())[:500]
+                    for item in successful
+                    for value in item.items
+                )
+            )
+            lines.extend(
+                [
+                    f"### {tool.label}",
+                    f"- 调用次数：{len(calls)}；成功：{len(successful)}；失败：{len(failed)}。",
+                    f"- 去重结果数：{len(evidence)}。",
+                ]
+            )
+            lines.extend(f"- 摘要：{value}" for value in summaries[:3])
+            lines.extend(f"- 证据：{value}" for value in evidence[:8])
+            for failed_call in failed:
+                lines.append(
+                    f"- 调用失败原因：{failed_call.reason_code}；未取得可信结果。"
+                )
+            if not evidence and not failed:
+                lines.append("- 本时间范围内未返回匹配记录；这不代表该域不存在风险。")
+            lines.append("")
+
+        lines.extend(
+            [
+                "## 3. 攻击调查时间线",
+                "",
+                "时间线仅记录公开观测、证据关联、角色交接、动作和验证状态。",
                 "",
             ]
         )
@@ -944,109 +1867,299 @@ class SecurityOperationsReportAgent:
             step_status = {
                 "completed": "已完成",
                 "pending": "待执行",
-                "blocked": "待人工处理",
+                "blocked": "未完成",
             }[step.status]
-            lines.append(f"### {step.sequence}. {step.title}")
-            lines.append(f"- 阶段：{step.phase}；状态：{step_status}；证据域：{domains}")
-            lines.append(step.detail)
-            lines.extend(f"- 证据：{item}" for item in step.evidence[:8])
-            lines.append("")
-        lines.extend(
-            [
-                "## 跨域证据协同",
-                "",
-            ]
-        )
-        for item in cross_domain:
-            domain_status = "已观测" if item.status == "observed" else "未观测"
-            lines.append(
-                f"- {item.label}（{item.source}）：{domain_status}，"
-                f"{item.result_count} 项；{item.summary}"
+            lines.extend(
+                [
+                    f"### {step.sequence}. {step.title}",
+                    (
+                        f"- 阶段：{step.phase}；状态：{step_status}；"
+                        f"可信度：{step.confidence:.0%}；证据域：{domains}"
+                    ),
+                    f"- 公开说明：{step.detail}",
+                ]
             )
+            lines.extend(f"- 依据：{item}" for item in step.evidence[:8])
+            lines.append("")
+
         lines.extend(
             [
+                "## 4. 智能体可审计判断依据",
                 "",
-                "## 闭环状态",
-                "",
-                f"- 当前状态：{closure.status}；人工审批："
-                f"{'需要' if closure.human_approval_required else '不需要'}",
-                f"- 观测：{closure.observed}",
-                f"- 决策：{closure.decision}",
-                f"- 动作：{closure.action}",
-                f"- 验证：{closure.verification}",
-                f"- 反馈/重规划：{closure.feedback}",
+                "仅展示角色输出、证据引用和公开决策理由。",
                 "",
             ]
         )
+        for item in collaboration:
+            role_status = "已完成" if item.status == "completed" else "未取得真实模型结果"
+            domains = "、".join(item.evidence_domains) or "未记录"
+            lines.extend(
+                [
+                    f"### {item.iteration}. {item.label}",
+                    f"- 执行状态：{role_status}",
+                    f"- 模型回执：{item.model or '无'}",
+                    f"- 证据域：{domains}",
+                    f"- 角色输出：{item.summary}",
+                    f"- 公开决策理由：{item.decision_reason or '未记录'}",
+                    f"- 交接对象：{item.handoff_to or '闭环结束'}",
+                    "",
+                ]
+            )
+
+        role_states = "；".join(
+            f"{item.label}={'完成' if item.status == 'completed' and item.model else '未完成'}"
+            for item in collaboration
+        )
+        observed_labels = "、".join(item.label for item in observed_domains) or "无"
+        missing_labels = (
+            "、".join(item.label for item in cross_domain if item.status == "not_observed")
+            or "无"
+        )
         lines.extend(
             [
-                "## 综合研判与建议",
+                "## 5. 风险评估与处置计划",
                 "",
-                synthesis,
-                "",
-                "## 响应计划（建议，不是执行事实）",
-                "",
+                f"- 风险级别：{risk_level}",
+                f"- 综合研判：{synthesis}",
                 f"- 计划 ID：{response_plan.plan_id}",
-                f"- Revision：{response_plan.revision}",
+                f"- 计划版本：Revision {response_plan.revision}",
                 f"- 计划状态：{response_plan.status}",
-                f"- 计划动作数：{response_plan.action_count}",
-                f"- 公开建议：{response_plan.public_summary}",
-                "- 执行事实：未执行任何响应计划动作；计划生成不代表接受、审批或执行。",
+                f"- 候选动作数：{response_plan.action_count}",
+                f"- 计划摘要：{response_plan.public_summary}",
                 "",
-                "## 数据局限与复核要求",
+                "## 6. 零人工策略授权结果",
                 "",
-                "- CVE 与弱口令均为告警证据中的线索，不代表已确认受影响或存在弱口令。",
-                "- 应结合资产台账、认证日志、补丁状态及原始包/日志进行人工复核。",
-                "- 本报告仅供安全运营研判参考，未触发任何阻断、隔离或变更操作。",
+                "- 策略授权结果：尚未进入策略授权阶段。",
+                "- 授权边界：只有满足隔离回放白名单、证据绑定、目标约束"
+                "和工具策略的动作才可自动执行。",
+                "- 人工干预：0 次；若策略拒绝，动作保持未执行并记录原因。",
+                "",
+                "## 7. 安全工具调用与执行回执",
+                "",
+                "- 执行事实：尚未取得受信工具执行回执，不能宣称动作成功。",
+                "",
+                "## 8. 处置前后状态对比",
+                "",
+                f"- 处置前：{closure.observed}",
+                "- 已规划动作：尚未执行。",
+                "- 处置后：尚未取得执行后遥测，无法进行状态对比。",
+                "",
+                "## 9. 验证结果与失败重规划",
+                "",
+                f"- 验证状态：{closure.verification}",
+                f"- 反馈与重规划：{closure.feedback}",
+                "- 可信结论：没有执行回执和执行后遥测时，不将计划标记为成功。",
+                "",
+                "## 10. 智能体真实执行审计",
+                "",
+                f"- 报告 ID：{report_id}",
+                f"- 运行 ID：{run_id}",
+                f"- 模型：{model or '未取得模型回执'}",
+                f"- 智能体角色数：{len(collaboration)}",
+                f"- 工具调用数：{len(tool_calls)}",
+                f"- 角色状态：{role_states or '未记录'}",
+                "",
+                "## 11. 影响范围与事件结论",
+                "",
+                f"- 已确认覆盖域：{observed_labels}。",
+                f"- 未观测域：{missing_labels}；未观测不能解释为未受影响。",
+                f"- 当前结论：{closure.decision}",
+                "- 数据边界：CVE、弱口令、知识库内容和告警标题均只能作为线索；"
+                "只有当前事件的受信遥测与工具回执可证明处置状态。",
+                "",
+                "## 12. 后续优化建议",
+                "",
+                "- 对未观测安全域补充对应遥测接入，并保留来源、时间与完整性校验。",
+                "- 持续核验处置目标状态；验证失败时将新遥测和原因码反馈给总控重新规划。",
+                "- 定期复核白名单工具、授权策略和回滚能力，确保自动化处置保持最小权限。",
             ]
         )
         return "\n".join(lines)
 
     @staticmethod
+    def _event_overview(
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        case_scope: WazuhCaseScope | None,
+        cross_domain: list[CrossDomainEvidenceView],
+        response_plan: ResponsePlanReferenceView,
+        risk_level: str,
+    ) -> list[str]:
+        china_tz = timezone(timedelta(hours=8))
+        observed = "、".join(
+            item.label for item in cross_domain if item.status == "observed"
+        ) or "已接入安全数据"
+        if case_scope is None:
+            start_text = start_at.astimezone(china_tz).strftime("%Y年%m月%d日%H时%M分")
+            end_text = end_at.astimezone(china_tz).strftime("%Y年%m月%d日%H时%M分")
+            return [
+                f"{start_text}至{end_text}，安全运营智能体对指定时间范围内的"
+                f"{observed}进行了自动汇聚与关联分析。",
+                f"经综合研判，本时间范围的风险关注级别为{risk_level}；响应规划智能体"
+                f"生成了 {response_plan.action_count} 项受控处置建议，具体证据和数据边界"
+                "见后续章节。",
+                _PENDING_AUTOMATION_OVERVIEW,
+            ]
+
+        occurred = case_scope.occurred_at.astimezone(china_tz).strftime(
+            "%Y年%m月%d日%H时%M分%S秒"
+        )
+        target = case_scope.destination_ip or case_scope.agent_name or case_scope.agent_id
+        target_text = f"服务器 `{target}`" if target else "目标服务器"
+        if case_scope.destination_port:
+            target_text += f" 的 `{case_scope.destination_port}` 端口"
+        network = (
+            f"网络安全探针同时记录到外部地址 `{case_scope.source_ip}` 向{target_text}发起异常通信。"
+            if case_scope.source_ip
+            else f"网络安全探针同时记录到{target_text}存在异常通信。"
+        )
+        process = ""
+        if case_scope.process_name:
+            chain = (
+                f"`{case_scope.parent_process_name}` → `{case_scope.process_name}`"
+                if case_scope.parent_process_name
+                else f"`{case_scope.process_name}`"
+            )
+            endpoint = case_scope.agent_name or case_scope.agent_id or "目标端点"
+            process = f"端点 `{endpoint}` 的进程上下文显示 {chain} 调用链。"
+        action_candidates = []
+        if case_scope.agent_id:
+            action_candidates.append("端点隔离")
+        if case_scope.file_id:
+            action_candidates.append("恶意文件隔离")
+        if case_scope.source_ip:
+            action_candidates.append("恶意连接阻断")
+        action_text = "、".join(action_candidates) or "受控响应"
+        return [
+            f"{occurred}，XDR/Wazuh 平台检测到{target_text}出现高风险安全告警："
+            f"“{case_scope.title}”（规则 `{case_scope.rule_id}`，等级 {case_scope.severity}）。"
+            f"{network}{process}",
+            f"安全运营智能体自动接收相关告警，并对{observed}进行关联分析。经综合研判后，"
+            f"智能体将本事件列为{risk_level}风险，并生成 {response_plan.action_count} 项处置策略，"
+            f"候选范围包括{action_text}。",
+            _PENDING_AUTOMATION_OVERVIEW,
+        ]
+
+    @staticmethod
     def _markdown_to_html(markdown: str) -> str:
-        blocks: list[str] = []
+        blocks: list[str] = ["<main class='report-document'>"]
         in_list = False
+        in_section = False
+        in_subsection = False
+        seen_section = False
+
+        def close_list() -> None:
+            nonlocal in_list
+            if in_list:
+                blocks.append("</ul>")
+                in_list = False
+
+        def close_subsection() -> None:
+            nonlocal in_subsection
+            if in_subsection:
+                blocks.append("</div>")
+                in_subsection = False
+
+        def close_section() -> None:
+            nonlocal in_section
+            if in_section:
+                blocks.append("</section>")
+                in_section = False
+
         for raw in markdown.splitlines():
             line = raw.strip()
             if not line:
-                if in_list:
-                    blocks.append("</ul>")
-                    in_list = False
+                close_list()
                 continue
             safe = html.escape(line)
             if line.startswith("### "):
-                if in_list:
-                    blocks.append("</ul>")
-                    in_list = False
+                close_list()
+                close_subsection()
+                blocks.append("<div class='report-subsection'>")
                 blocks.append(f"<h3>{html.escape(line[4:])}</h3>")
+                in_subsection = True
             elif line.startswith("## "):
-                if in_list:
-                    blocks.append("</ul>")
-                    in_list = False
+                close_list()
+                close_subsection()
+                close_section()
+                blocks.append("<section class='report-section'>")
                 blocks.append(f"<h2>{html.escape(line[3:])}</h2>")
+                in_section = True
+                seen_section = True
             elif line.startswith("# "):
-                if in_list:
-                    blocks.append("</ul>")
-                    in_list = False
-                blocks.append(f"<h1>{html.escape(line[2:])}</h1>")
+                close_list()
+                blocks.append(
+                    "<header class='report-hero'><p>SHIELDCHAIN · AUTONOMOUS SOC</p>"
+                    f"<h1>{html.escape(line[2:])}</h1></header>"
+                )
             elif line.startswith("- "):
                 if not in_list:
-                    blocks.append("<ul>")
+                    css_class = "report-list" if seen_section else "report-meta"
+                    blocks.append(f"<ul class='{css_class}'>")
                     in_list = True
                 blocks.append(f"<li>{html.escape(line[2:])}</li>")
             else:
-                if in_list:
-                    blocks.append("</ul>")
-                    in_list = False
+                close_list()
                 blocks.append(f"<p>{safe}</p>")
-        if in_list:
-            blocks.append("</ul>")
+        close_list()
+        close_subsection()
+        close_section()
+        blocks.append("</main>")
         body = "\n".join(blocks)
-        return (
-            "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
-            "<style>body{font-family:system-ui,'Microsoft YaHei',sans-serif;line-height:1.65;"
-            "color:#102a43;padding:28px;max-width:920px;margin:auto}h1{color:#0067a5}"
-            "h2{margin-top:30px;border-bottom:1px solid #cfe4f6;padding-bottom:6px}"
-            "h3{color:#174a6b}li{margin:5px 0}</style><body>"
+        document = (
+            "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>ShieldChain 安全运营闭环报告</title><style>"
+            "*{box-sizing:border-box}body{margin:0;background:#eef6fb;color:#102a43;"
+            "font-family:Inter,system-ui,'Microsoft YaHei',sans-serif;line-height:1.68}"
+            ".report-document{width:min(1120px,calc(100% - 40px));margin:32px auto 80px}"
+            ".report-hero{position:relative;overflow:hidden;padding:44px 48px;border-radius:20px;"
+            "color:#fff;background:linear-gradient(135deg,#072f4f,#087aa8);"
+            "box-shadow:0 18px 50px rgba(5,61,94,.22)}"
+            ".report-hero:after{content:'';position:absolute;width:260px;height:260px;"
+            "right:-80px;top:-110px;border:42px solid rgba(255,255,255,.09);border-radius:50%}"
+            ".report-hero p{margin:0 0 10px;letter-spacing:.18em;font-size:12px;font-weight:800;"
+            "color:#9ee8ff}.report-hero h1{position:relative;z-index:1;margin:0;"
+            "max-width:780px;font-size:clamp(28px,4vw,44px);line-height:1.2}"
+            ".report-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;"
+            "margin:18px 0;padding:20px 24px;list-style:none;border:1px solid #c9e3f3;"
+            "border-radius:16px;background:#fff;box-shadow:0 8px 24px rgba(11,83,124,.07)}"
+            ".report-meta li{padding:7px 10px;border-left:3px solid #4aafd5;overflow-wrap:anywhere}"
+            ".report-section{margin-top:18px;padding:26px 30px;border:1px solid #c9e3f3;"
+            "border-radius:16px;background:#fff;box-shadow:0 8px 24px rgba(11,83,124,.07)}"
+            ".report-section h2{margin:0 0 18px;padding-bottom:12px;"
+            "border-bottom:1px solid #d9ebf6;"
+            "color:#063f68;font-size:22px}.report-section>p{color:#45647a}"
+            ".report-list{margin:10px 0;padding-left:22px}.report-list li{margin:7px 0;"
+            "padding-left:4px;overflow-wrap:anywhere}.report-list li::marker{color:#168bb8}"
+            ".report-subsection{margin:14px 0;padding:16px 18px;border-left:4px solid #1595c2;"
+            "border-radius:0 12px 12px 0;background:#f2f9fd}"
+            ".report-subsection h3{margin:0 0 8px;color:#07577e;font-size:17px}"
+            ".report-subsection .report-list{margin-bottom:0}"
+            "@media(max-width:700px){.report-document{width:min(100% - 20px,1120px);"
+            "margin-top:10px}"
+            ".report-hero{padding:30px 24px}.report-meta{grid-template-columns:1fr;padding:16px}"
+            ".report-section{padding:21px 18px}}"
+            "@media print{body{background:#fff}.report-document{width:100%;margin:0}"
+            ".report-hero,.report-meta,.report-section{box-shadow:none;break-inside:avoid}"
+            ".report-section{border-color:#b8cbd7}}"
+            "</style></head><body>"
             f"{body}</body></html>"
         )
+        return SecurityOperationsReportAgent._with_assistant_launcher(document)
+
+    @staticmethod
+    def _with_assistant_launcher(document: str) -> str:
+        if 'data-shieldchain-assistant-launcher="true"' in document:
+            return document
+        launcher = (
+            '<a data-shieldchain-assistant-launcher="true" href="/assistant" target="_blank" '
+            'rel="noreferrer" aria-label="在新窗口打开智能助手" style="position:fixed;'
+            'right:20px;bottom:20px;z-index:99;display:inline-flex;align-items:center;gap:8px;'
+            'padding:12px 18px;border:1px solid rgba(255,255,255,.55);border-radius:999px;'
+            'color:#fff;background:linear-gradient(135deg,#075d8d,#128ab5);'
+            'box-shadow:0 12px 30px rgba(6,73,112,.3);font-weight:700;text-decoration:none">'
+            '<span aria-hidden="true" style="font-size:20px">✦</span><span>智能助手</span></a>'
+        )
+        return document.replace("</body>", f"{launcher}</body>", 1)

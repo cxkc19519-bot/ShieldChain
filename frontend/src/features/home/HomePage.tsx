@@ -18,7 +18,7 @@ export function HomePage() {
             进入工作区
           </Link>
           <Link to="/operations-report" className="button button-secondary button-large">
-            生成运营报告
+            查看运营报告
           </Link>
         </div>
       </div>
@@ -50,7 +50,6 @@ export function HomePage() {
         <div className="footer-content">
           <div className="footer-links">
             <Link to="/about">关于我们</Link>
-            <Link to="/status">服务状态</Link>
             <Link to="/changelog">更新日志</Link>
           </div>
           <div className="footer-copyright">

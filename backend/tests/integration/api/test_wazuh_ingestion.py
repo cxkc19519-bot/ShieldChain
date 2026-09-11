@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -99,6 +100,32 @@ def test_lower_severity_alert_stays_in_inbox_without_review_case(wazuh_client: T
     assert response.json()["created"] is True
     assert response.json()["review_case"] is None
     assert wazuh_client.get("/api/v1/integrations/wazuh/cases").json()["items"] == []
+
+
+def test_high_risk_alert_automatically_queues_agent_investigation(
+    wazuh_client: TestClient,
+) -> None:
+    calls: list[object] = []
+
+    class RecordingAgent:
+        async def generate(self, request, *, request_id=None):
+            calls.append((request, request_id))
+
+    wazuh_client.app.state.settings.wazuh_auto_investigation_enabled = True
+    wazuh_client.app.state.security_operations_report_agent = RecordingAgent()
+
+    response = wazuh_client.post(
+        "/api/v1/integrations/wazuh/alerts",
+        json=payload(external_id="wazuh-auto-investigate"),
+        headers={"X-ShieldChain-Wazuh-Token": "test-wazuh-token"},
+    )
+
+    assert response.status_code == 202
+    assert len(calls) == 1
+    request, request_id = calls[0]
+    assert request.wazuh_case_id == UUID(response.json()["review_case"]["id"])
+    assert request.rule_ttl_seconds == 60
+    assert str(request_id).endswith(":auto-investigation")
 
 
 def test_operator_explicitly_starts_one_case_bound_agent_run(

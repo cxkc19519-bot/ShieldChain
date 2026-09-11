@@ -8,7 +8,6 @@ import socket
 import struct
 from pathlib import Path
 
-
 CLIENT_IP = "10.10.0.1"
 SERVER_IP = "10.10.0.2"
 SERVER_PORT = 8080

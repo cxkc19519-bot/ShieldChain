@@ -7,10 +7,14 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID
+
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from shieldchain.rag.api_service import KnowledgeApiService, UploadedDocument
 from shieldchain.rag.schemas import CreateKnowledgeBaseRequest, Sensitivity
@@ -18,6 +22,8 @@ from shieldchain.rag.schemas import CreateKnowledgeBaseRequest, Sensitivity
 _MANIFEST_NAME = "manifest.json"
 _MAX_MANIFEST_BYTES = 256 * 1024
 _MAX_CURATED_DOCUMENT_BYTES = 32 * 1024 * 1024
+_MIN_PDF_EXTRACTED_CHARACTERS = 500
+_MIN_PDF_TEXT_PAGE_RATIO = 0.8
 _MEDIA_TYPES = {
     ".html": "text/html",
     ".md": "text/markdown",
@@ -31,20 +37,30 @@ _REQUIRED_CATEGORIES = frozenset(
         "vendor_security_research",
     }
 )
-_ALLOWED_CATEGORIES = _REQUIRED_CATEGORIES | {"maintenance_policy"}
+_ALLOWED_CATEGORIES = _REQUIRED_CATEGORIES | {
+    "maintenance_policy",
+    "network_security_fundamentals",
+    "security_operations_foundations",
+    "incident_response_foundations",
+}
 _ALLOWED_SOURCE_HOSTS = frozenset(
     {
         "attack.mitre.org",
         "cac.gov.cn",
         "cisa.gov",
         "github.com",
+        "csrc.nist.gov",
+        "cheatsheetseries.owasp.org",
         "download.sangfor.com.cn",
+        "nvlpubs.nist.gov",
         "sangfor.com.cn",
         "sec.sangfor.com.cn",
         "support.sangfor.com.cn",
         "www.cac.gov.cn",
         "www.cisa.gov",
         "www.sangfor.com.cn",
+        "www.nist.gov",
+        "www.rfc-editor.org",
     }
 )
 
@@ -173,6 +189,25 @@ def _source(value: object, *, field: str, verified_at: date) -> CuratedSource:
     )
 
 
+def _validate_pdf_content(content: bytes, *, field: str) -> None:
+    """Reject PDFs that look intact but cannot provide useful searchable text."""
+
+    try:
+        reader = PdfReader(BytesIO(content), strict=False)
+        page_count = len(reader.pages)
+        extracted = [((page.extract_text() or "").strip()) for page in reader.pages]
+    except (PdfReadError, ValueError, TypeError, OSError) as error:
+        raise CuratedPackError(f"{field} cannot be parsed as PDF") from error
+    if page_count < 1:
+        raise CuratedPackError(f"{field} PDF has no pages")
+    text_page_count = sum(bool(text) for text in extracted)
+    if (
+        text_page_count / page_count < _MIN_PDF_TEXT_PAGE_RATIO
+        or sum(len(text) for text in extracted) < _MIN_PDF_EXTRACTED_CHARACTERS
+    ):
+        raise CuratedPackError(f"{field} PDF does not contain enough searchable text")
+
+
 def _document(
     value: object,
     *,
@@ -241,12 +276,14 @@ def _document(
         normalized = decoded.casefold()
         if "<html" not in normalized or "<title" not in normalized or "</html>" not in normalized:
             raise CuratedPackError(f"{field} is not structurally recognizable HTML")
-    elif (
-        not content.startswith(b"%PDF-")
-        or b"startxref" not in content
-        or b"%%EOF" not in content
-    ):
-        raise CuratedPackError(f"{field} is not a structurally recognizable PDF")
+    elif suffix == ".pdf":
+        if (
+            not content.startswith(b"%PDF-")
+            or b"startxref" not in content
+            or b"%%EOF" not in content
+        ):
+            raise CuratedPackError(f"{field} is not a structurally recognizable PDF")
+        _validate_pdf_content(content, field=field)
     category = _text(item["category"], field=f"{field}.category", maximum=64)
     if category not in _ALLOWED_CATEGORIES:
         raise CuratedPackError(f"{field}.category is unsupported")
@@ -407,6 +444,12 @@ def import_curated_pack(
     imported: list[str] = []
     skipped: list[str] = []
     for document in pack.documents:
+        # Governance records remain integrity-checked members of the pack, but
+        # publishing them into user-facing RAG pollutes answers with maintenance
+        # instructions such as review cadence and retrieval rules.
+        if document.category == "maintenance_policy":
+            skipped.append(document.filename)
+            continue
         if document.filename in existing:
             skipped.append(document.filename)
             continue

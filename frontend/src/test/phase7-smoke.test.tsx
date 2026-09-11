@@ -20,10 +20,7 @@ const pages = [
   ['/dashboard', '运营总览'],
   ['/operations-report', '安全运营报告'],
   ['/alerts', '实时告警'],
-  ['/agents', '智能体与 ReAct 工作台'],
-  ['/knowledge', '知识库工作台'],
-  ['/response', '处置中心'],
-  ['/reports', '历史报告'],
+  ['/knowledge', '知识库'],
 ] as const
 
 let fetchMock: ReturnType<typeof vi.fn>
@@ -50,9 +47,9 @@ describe('Phase 7 cross-page smoke', () => {
       expect(screen.queryByText(/raw_prompt|chain_of_thought|token_digest|tenant_id|principal_id/)).not.toBeInTheDocument()
       view.unmount()
     }
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/reports/history', expect.objectContaining({ method: 'GET' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/integrations/wazuh/false-positive-metrics', expect.any(Object))
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/operations/reports?limit=30', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     for (const [url] of fetchMock.mock.calls) {
       expect(url).toEqual(expect.stringMatching(/^\/api\/v1\//))
     }

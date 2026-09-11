@@ -42,7 +42,6 @@ RESPONSE_OPERATOR_CONTROLS_ENABLED=true
 ```bash
 docker compose \
   -f compose.yaml \
-  -f compose.local-llm.yaml \
   -f compose.server.yaml \
   up -d --build
 ```
@@ -64,7 +63,7 @@ docker compose \
 13. 接受文件计划后，只读查询可以自动执行，`quarantine_file` 必须等待独立人工审批；隔离后查询返回 `file_status=quarantined` 且 SHA-256 不变。
 14. 恢复文件后查询返回 `file_status=present`，SHA-256 与隔离前一致；路径穿越和非允许名单 ID 必须拒绝。
 
-完整 Wazuh 案件验收使用 `scripts/verify_wazuh_response_e2e.py`。脚本要求显式 `--execute`，每次生成唯一告警与规则 ID，目标固定为 `203.0.113.25`，并通过执行器 Unix socket 在 TTL 后独立确认规则已经自动清理。端点执行器底层验收使用 `scripts/verify_endpoint_response_e2e.py --execute --verify-ttl`；完整控制面验收使用 `scripts/verify_wazuh_endpoint_control_plane_e2e.py --execute --ttl 60`。文件链路验收使用 `scripts/verify_wazuh_file_response_e2e.py --execute`。详细命令及阶段输出见 [Wazuh 只读告警接入](wazuh-read-only-ingestion.md)。2026-09-05 的案件验收见 [Wazuh 案件真实处置闭环验收](../reports/wazuh-case-response-e2e-2026-09-05.md)，端点验收见 [真实连接器第二阶段](../reports/real-connectors-stage-2-2026-09-06.md)，文件验收见 [真实连接器第三阶段](../reports/real-connectors-stage-3-file-quarantine-2026-09-06.md)。
+完整 Wazuh 案件验收使用 `scripts/verify_wazuh_response_e2e.py`。脚本要求显式 `--execute`，每次生成唯一告警与规则 ID，目标固定为 `203.0.113.25`，并通过执行器 Unix socket 在 TTL 后独立确认规则已经自动清理。端点执行器底层验收使用 `scripts/verify_endpoint_response_e2e.py --execute --verify-ttl`；完整控制面验收使用 `scripts/verify_wazuh_endpoint_control_plane_e2e.py --execute --ttl 60`。文件链路验收使用 `scripts/verify_wazuh_file_response_e2e.py --execute`。详细命令及阶段输出见 [Wazuh 只读告警接入](wazuh-read-only-ingestion.md)。
 
 ## 扩大到真实地址前必须完成
 

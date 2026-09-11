@@ -48,6 +48,7 @@ class McpToolCallView(BaseModel):
     result_count: int = Field(ge=0)
     summary: str
     items: list[str] = Field(default_factory=list)
+    duration_ms: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_failure_shape(self) -> McpToolCallView:
@@ -70,24 +71,28 @@ class ResponsePlanReferenceView(BaseModel):
     plan_id: UUID
     revision_id: UUID
     revision: int = Field(ge=0)
-    status: Literal["proposed", "needs_review", "completed_advisory"]
+    status: Literal["proposed", "needs_review", "completed", "completed_advisory"]
     public_summary: str
     action_count: int = Field(ge=0, le=8)
     generation_status: Literal["model_compiled", "deterministic_fallback"]
     fallback_reason_code: str | None = None
-    execution_status: Literal["not_executed"] = "not_executed"
+    execution_status: Literal["not_executed", "verified_completed"] = "not_executed"
 
 
 class AgentRoleRunView(BaseModel):
     role: str
     label: str
     status: Literal["completed", "fallback"]
+    model: str | None = None
     summary: str
     handoff_to: str | None = None
     iteration: int = 0
     decision_reason: str = ""
     response_plan: ResponsePlanReferenceView | None = None
     evidence_domains: list[str] = Field(default_factory=list)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 class ReasoningStepView(BaseModel):
@@ -126,6 +131,51 @@ class ClosureLoopView(BaseModel):
     human_approval_required: bool = True
 
 
+class ResponseActionAuditView(BaseModel):
+    """Immutable public projection of one trusted response action."""
+
+    action_id: UUID
+    call_id: UUID | None = None
+    sequence: int = Field(ge=1, le=8)
+    tool_name: str
+    tool_version: str
+    target_type: str
+    target: str
+    assessed_risk: str
+    authorization: str
+    execution_status: str
+    attempt_outcomes: list[str] = Field(default_factory=list)
+    verification_outcome: str | None = None
+    evidence_ids: list[UUID] = Field(default_factory=list)
+    updated_at: datetime | None = None
+    approval_duration_ms: int | None = Field(default=None, ge=0)
+    execution_duration_ms: int | None = Field(default=None, ge=0)
+    verification_duration_ms: int | None = Field(default=None, ge=0)
+
+
+class ResponseReplanAuditView(BaseModel):
+    revision: int = Field(ge=0)
+    event_type: str
+    reason_code: str | None = None
+    summary: str
+    created_at: datetime
+
+
+class ResponseAuditView(BaseModel):
+    """Zero-touch authorization, execution, verification, and audit proof."""
+
+    mode: Literal["zero_touch_isolated_replay"]
+    plan_id: UUID
+    run_id: UUID
+    loop_id: UUID | None = None
+    policy_result: str
+    loop_status: str
+    reason_code: str
+    human_interventions: int = Field(default=0, ge=0)
+    actions: list[ResponseActionAuditView] = Field(default_factory=list)
+    replans: list[ResponseReplanAuditView] = Field(default_factory=list)
+
+
 class OperationsReportView(BaseModel):
     id: str
     run_id: UUID | None = None
@@ -151,6 +201,7 @@ class OperationsReportView(BaseModel):
             feedback="验证失败时应返回总控重新规划。",
         )
     )
+    response_audit: ResponseAuditView | None = None
     markdown: str
     html: str
 

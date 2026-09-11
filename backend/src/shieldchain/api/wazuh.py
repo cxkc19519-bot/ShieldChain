@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Request, status
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Header, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -14,7 +15,7 @@ from shieldchain.core.errors import ApiError
 from shieldchain.operations.persistence import OperationsRunRow
 from shieldchain.operations.schemas import OperationsReportRequest, OperationsReportView
 from shieldchain.operations.service import SecurityOperationsReportAgent
-from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhReviewCaseRow
+from shieldchain.wazuh.persistence import WazuhAlertRow, WazuhCaseRunRow, WazuhReviewCaseRow
 from shieldchain.wazuh.schemas import (
     WazuhAlertInput,
     WazuhAlertListResponse,
@@ -25,11 +26,13 @@ from shieldchain.wazuh.schemas import (
     WazuhInvestigationRequest,
     WazuhReviewCaseListResponse,
     WazuhReviewCaseView,
+    WazuhSuppressionPolicyView,
     WazuhTriageAssessmentView,
 )
 from shieldchain.wazuh.service import WazuhAlertService
 
 router = APIRouter(prefix="/integrations/wazuh", tags=["wazuh"])
+logger = structlog.get_logger(__name__)
 
 
 def _settings(request: Request) -> Settings:
@@ -93,19 +96,52 @@ def _authorized(request: Request, token: str | None) -> None:
         raise ApiError("wazuh_ingestion_unauthorized", "Wazuh webhook token is invalid", 401)
 
 
+async def _run_automatic_investigation(
+    agent: SecurityOperationsReportAgent,
+    *,
+    case_id: UUID,
+    occurred_at: datetime,
+    request_id: str,
+) -> None:
+    try:
+        await agent.generate(
+            OperationsReportRequest(
+                start_at=occurred_at - timedelta(minutes=5),
+                end_at=occurred_at + timedelta(minutes=5),
+                wazuh_case_id=case_id,
+                rule_ttl_seconds=60,
+            ),
+            request_id=request_id,
+        )
+        logger.info("wazuh_automatic_investigation_completed", case_id=str(case_id))
+    except ValueError as error:
+        # Correlated alerts may schedule the same case concurrently. The first
+        # run owns the case; later attempts stop at the unique case binding.
+        logger.info(
+            "wazuh_automatic_investigation_skipped",
+            case_id=str(case_id),
+            reason=str(error),
+        )
+    except Exception as error:
+        logger.error(
+            "wazuh_automatic_investigation_failed",
+            case_id=str(case_id),
+            error_type=type(error).__name__,
+            error=str(error)[:500],
+        )
+
+
 @router.post("/alerts", status_code=status.HTTP_202_ACCEPTED, response_model=WazuhAlertView)
 def ingest_alert(
     payload: WazuhAlertInput,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_shieldchain_wazuh_token: str | None = Header(default=None),
 ) -> WazuhAlertView:
-    """Accept normalized evidence and optionally open a review-only case.
-
-    This endpoint never launches an investigation runner or a trusted tool.
-    """
+    """Accept evidence and optionally queue a read-only agent investigation."""
     _authorized(request, x_shieldchain_wazuh_token)
     with _sessions(request).begin() as session:
-        return _service(request).ingest(
+        result = _service(request).ingest(
             session,
             payload,
             tenant_id=_tenant_id(request),
@@ -115,6 +151,20 @@ def ingest_alert(
                 request
             ).wazuh_review_correlation_window_seconds,
         )
+    if (
+        _settings(request).wazuh_auto_investigation_enabled
+        and result.created
+        and result.review_case is not None
+        and result.review_case.run_id is None
+    ):
+        background_tasks.add_task(
+            _run_automatic_investigation,
+            _operations_agent(request),
+            case_id=result.review_case.id,
+            occurred_at=_service(request)._utc(payload.occurred_at),
+            request_id=f"{request.state.request_id}:auto-investigation",
+        )
+    return result
 
 
 @router.get("/alerts", response_model=WazuhAlertListResponse)
@@ -151,6 +201,34 @@ def false_positive_metrics(request: Request) -> WazuhFalsePositiveMetricsView:
         return _service(request).false_positive_metrics(session, tenant_id=_tenant_id(request))
 
 
+@router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_review_case(case_id: UUID, request: Request) -> Response:
+    report_id: str | None = None
+    try:
+        with _sessions(request).begin() as session:
+            report_id = session.scalar(
+                select(OperationsRunRow.report_id)
+                .join(WazuhCaseRunRow, WazuhCaseRunRow.run_id == OperationsRunRow.run_id)
+                .where(
+                    WazuhCaseRunRow.case_id == str(case_id),
+                    WazuhCaseRunRow.tenant_id == str(_tenant_id(request)),
+                    OperationsRunRow.tenant_id == str(_tenant_id(request)),
+                )
+            )
+            deleted = _service(request).delete_review_case(
+                session,
+                case_id=case_id,
+                tenant_id=_tenant_id(request),
+            )
+            if not deleted:
+                raise ApiError("wazuh_case_not_found", "Wazuh review case not found", 404)
+    except ValueError as error:
+        raise ApiError("wazuh_case_delete_rejected", str(error), 409) from None
+    if report_id is not None:
+        _operations_agent(request).delete(report_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/cases/{case_id}/disposition",
     status_code=status.HTTP_201_CREATED,
@@ -178,6 +256,32 @@ def record_case_disposition(
 
 
 @router.post(
+    "/cases/{case_id}/suppression/approve",
+    status_code=status.HTTP_201_CREATED,
+    response_model=WazuhSuppressionPolicyView,
+)
+def approve_case_suppression(
+    case_id: UUID,
+    request: Request,
+) -> WazuhSuppressionPolicyView:
+    """Approve and activate the latest time-bounded false-positive proposal."""
+
+    try:
+        with _sessions(request).begin() as session:
+            return _service(request).approve_suppression(
+                session,
+                case_id=case_id,
+                tenant_id=_tenant_id(request),
+                approver_id=_principal_id(request),
+                now=datetime.now(UTC),
+            )
+    except LookupError:
+        raise ApiError("wazuh_case_not_found", "Wazuh review case not found", 404) from None
+    except ValueError as error:
+        raise ApiError("wazuh_suppression_rejected", str(error), 409) from None
+
+
+@router.post(
     "/cases/{case_id}/investigate",
     status_code=status.HTTP_201_CREATED,
     response_model=OperationsReportView,
@@ -187,7 +291,7 @@ async def investigate_review_case(
     payload: WazuhInvestigationRequest,
     request: Request,
 ) -> OperationsReportView:
-    """Start agents only after an explicit operator action; ingestion stays passive."""
+    """Manual fallback for cases that do not yet have an automatic run."""
 
     with _sessions(request)() as session:
         case = session.get(WazuhReviewCaseRow, str(case_id))

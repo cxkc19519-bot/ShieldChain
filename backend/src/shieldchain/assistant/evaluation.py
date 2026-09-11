@@ -9,7 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 
 _STATUSES = frozenset(
-    {"conversational", "grounded", "extractive_degraded", "refused"}
+    {"conversational", "model_knowledge", "grounded", "extractive_degraded", "refused"}
 )
 _REFUSALS = frozenset(
     {

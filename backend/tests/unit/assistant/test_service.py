@@ -81,7 +81,7 @@ class ConversationalAssistant(StableTitleAssistant):
     async def _answer_conversationally(self, message, history, memory_summary):
         del history, memory_summary
         self.conversational_calls += 1
-        return f"自然回应：{message}", "local-qwen"
+        return f"自然回应：{message}", "deepseek-test"
 
 
 def test_greeting_uses_model_conversation_without_rag_rejection(tmp_path) -> None:
@@ -91,7 +91,7 @@ def test_greeting_uses_model_conversation_without_rag_rejection(tmp_path) -> Non
     response = asyncio.run(service.chat(AssistantChatRequest(message="你好！")))
 
     assert response.answer == "自然回应：你好！"
-    assert response.model == "local-qwen"
+    assert response.model == "deepseek-test"
     assert response.citations == []
     assert service.conversational_calls == 1
     assert service.retrieval_calls == 0
@@ -150,7 +150,7 @@ class EvidenceAssistant(StableTitleAssistant):
         del message, history, memory_summary, citations
         if not self.generation_available:
             raise AssistantUnavailable("model unavailable")
-        return "隔离操作必须先完成人工审批。", "local-qwen"
+        return "隔离操作必须先完成人工审批。", "deepseek-test"
 
 
 def test_grounded_answer_persists_full_citation_provenance(tmp_path) -> None:
@@ -161,7 +161,7 @@ def test_grounded_answer_persists_full_citation_provenance(tmp_path) -> None:
 
     assert response.grounding_status == "grounded"
     assert response.refusal_reason is None
-    assert response.model == "local-qwen"
+    assert response.model == "deepseek-test"
     assert response.citations[0].document_version_id == service.hit.document_version_id
     assert response.citations[0].chunk_id == service.hit.chunk_id
     assert response.citations[0].page_number == 3

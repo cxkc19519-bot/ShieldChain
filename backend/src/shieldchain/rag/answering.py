@@ -68,6 +68,8 @@ _PROMPT_INJECTION_PATTERNS = tuple(
         r"忽略.{0,12}(之前|以上|系统).{0,8}(指令|提示词)",
         r"(reveal|print|泄露|输出).{0,20}(system prompt|api[ _-]?key|系统提示词|密钥)",
         r"(call|invoke|调用).{0,16}(tool|function|工具|函数).{0,16}(without|无需|绕过)",
+        r"(?:reveal|print|show).{0,30}(?:internal\s+rag|answer\s+rules|maintenance\s+instructions)",
+        r"(?:知识库.{0,10}(?:内部|维护).{0,10}(?:规范|规则)|rag.{0,10}(?:回答|检索).{0,10}(?:规则|指令)).{0,20}(?:完整|原样|逐字|告诉)",
         r"(?:^|[\n.!?])\s*(?:please\s+)?(?:execute|run)\s+.{0,12}(shell|command|powershell|cmd)",
         r"(?:请|立即|必须).{0,6}(?:执行|运行).{0,12}(?:shell|command|powershell|cmd|命令)",
     )

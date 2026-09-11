@@ -35,9 +35,20 @@ describe('application shell', () => {
 
     expect(screen.getByText('真实数据分析环境')).toBeVisible()
     expect(screen.getByRole('link', { name: '运营总览' })).toHaveAttribute('href', '/dashboard')
+    expect(screen.getByRole('link', { name: '在新窗口打开智能助手' })).toHaveAttribute('href', '/assistant')
+    expect(screen.getByRole('link', { name: '在新窗口打开智能助手' })).toHaveAttribute('target', '_blank')
+    const workspaceLinks = Array.from(document.querySelectorAll('.nav-dropdown-menu a')).map((link) => link.textContent)
+    expect(workspaceLinks).toEqual(['运营总览', '实时告警', '漏洞闭环', '安全运营报告', '知识库'])
     expect(screen.queryByRole('link', { name: 'MCP 服务状态' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '历史报告' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '智能体与 ReAct' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '模型测试' })).not.toBeInTheDocument()
+  })
+
+  it('does not render a redundant assistant launcher inside the assistant page', () => {
+    renderRoute('/assistant')
+
+    expect(screen.queryByRole('link', { name: '在新窗口打开智能助手' })).not.toBeInTheDocument()
   })
 
   it('supports keyboard navigation through visible links', async () => {
@@ -96,40 +107,24 @@ describe('dashboard health', () => {
 })
 
 describe('product routes', () => {
-  it('renders the read-only report workspace at /reports', () => {
-    renderRoute('/reports')
-    expect(screen.getByRole('heading', { name: '历史报告', level: 2 })).toBeVisible()
-    expect(screen.getByText('正在加载历史报告')).toBeVisible()
-    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
-  })
-
-  it('renders the trusted tool control center at /response', () => {
+  it('serves security operations reports at the retired response address', async () => {
     renderRoute('/response')
 
-    expect(screen.getByRole('heading', { name: '处置中心', level: 2 })).toBeVisible()
-    expect(screen.getByText(/不展示原始结果/)).toBeVisible()
-    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
-  })
-
-  it('renders the read-only agents workbench at /agents', () => {
-    renderRoute('/agents')
-
-    expect(screen.getByRole('heading', { name: '智能体与 ReAct 工作台', level: 2 })).toBeVisible()
-    expect(screen.getByText(/不展示私有上下文/)).toBeVisible()
-    expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '安全运营报告', level: 2 })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '处置中心' })).not.toBeInTheDocument()
   })
 
   it('renders the knowledge page at /knowledge', () => {
     renderRoute('/knowledge')
 
-    expect(screen.getByRole('heading', { name: '知识库工作台', level: 2 })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '知识库', level: 2 })).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 
   it('renders the security operations report page at /operations-report', () => {
     renderRoute('/operations-report')
     expect(screen.getByRole('heading', { name: '安全运营报告', level: 2 })).toBeVisible()
-    expect(screen.getByText('正在读取已生成的运营报告')).toBeVisible()
+    expect(screen.getByText('正在读取安全运营报告')).toBeVisible()
     expect(screen.queryByText('尚未进入该开发阶段')).not.toBeInTheDocument()
   })
 })

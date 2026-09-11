@@ -72,7 +72,9 @@ class WazuhCaseDispositionView(StrictModel):
     ]
     rationale: str
     suppression_scope: Literal["none", "same_rule_endpoint", "same_rule"] = "none"
-    suppression_status: Literal["not_requested", "proposed_only"] = "not_requested"
+    suppression_status: Literal[
+        "not_requested", "proposed_only", "active", "expired", "revoked"
+    ] = "not_requested"
     suppression_expires_at: datetime | None = None
     reviewer_id: UUID
     created_at: datetime
@@ -89,7 +91,7 @@ class WazuhCaseDispositionRequest(StrictModel):
         "insufficient_context",
         "other",
     ]
-    rationale: str = Field(min_length=10, max_length=1000)
+    rationale: str = Field(min_length=1, max_length=1000)
     suppression_scope: Literal["none", "same_rule_endpoint", "same_rule"] = "none"
     suppression_expires_at: datetime | None = None
 
@@ -129,6 +131,32 @@ class WazuhFalsePositiveMetricsView(StrictModel):
     needs_more_evidence: int = Field(ge=0)
     false_positive_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     proposed_suppressions: int = Field(ge=0)
+    active_suppressions: int = Field(ge=0)
+    suppressed_alerts: int = Field(ge=0)
+
+
+class WazuhSuppressionPolicyView(StrictModel):
+    id: UUID
+    source_case_id: UUID
+    source_disposition_id: UUID
+    rule_id: str
+    endpoint: str | None
+    scope: Literal["same_rule_endpoint", "same_rule"]
+    status: Literal["active", "expired", "revoked"]
+    rationale: str
+    expires_at: datetime
+    approved_by: UUID
+    approved_at: datetime
+
+
+class WazuhSuppressionMatchView(StrictModel):
+    id: UUID
+    policy_id: UUID
+    scope: Literal["same_rule_endpoint", "same_rule"]
+    rule_id: str
+    endpoint: str
+    matched_at: datetime
+    expires_at: datetime
 
 
 class WazuhReviewCaseView(StrictModel):
@@ -136,7 +164,9 @@ class WazuhReviewCaseView(StrictModel):
     tracking_id: str
     alert_id: UUID
     source: Literal["wazuh"] = "wazuh"
-    status: Literal["needs_review", "investigated"] = "needs_review"
+    status: Literal[
+        "needs_review", "investigating", "investigated", "investigation_failed"
+    ] = "needs_review"
     run_id: UUID | None = None
     severity: int
     rule_id: str
@@ -164,6 +194,7 @@ class WazuhAlertView(StrictModel):
     received_at: datetime
     created: bool = True
     review_case: WazuhReviewCaseView | None = None
+    suppression: WazuhSuppressionMatchView | None = None
 
 
 class WazuhAlertListResponse(StrictModel):
@@ -175,6 +206,6 @@ class WazuhReviewCaseListResponse(StrictModel):
 
 
 class WazuhInvestigationRequest(StrictModel):
-    """Explicit operator request; alert ingestion never starts agents automatically."""
+    """Manual fallback request for deployments without automatic investigation."""
 
     rule_ttl_seconds: int = Field(default=60, ge=60, le=86_400)

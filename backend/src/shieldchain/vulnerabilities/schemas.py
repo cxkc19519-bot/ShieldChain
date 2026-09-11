@@ -173,3 +173,20 @@ class VulnerabilityVerificationRequest(StrictModel):
 class VulnerabilityMutationView(StrictModel):
     finding: VulnerabilityFindingView
     event: VulnerabilityWorkflowEventView
+
+
+class VulnerabilityDemoToolCallView(StrictModel):
+    call_id: UUID
+    tool_name: str
+    status: Literal["succeeded", "failed"]
+    duration_ms: int = Field(ge=0)
+    summary: str
+
+
+class VulnerabilityDemoRunView(StrictModel):
+    finding: VulnerabilityFindingView
+    scenario: str
+    mode: Literal["isolated_simulation"] = "isolated_simulation"
+    human_interventions: Literal[0] = 0
+    total_duration_ms: int = Field(ge=0)
+    tool_calls: list[VulnerabilityDemoToolCallView]

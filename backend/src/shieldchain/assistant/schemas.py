@@ -49,6 +49,7 @@ class AssistantCitationView(StrictModel):
 AssistantGroundingStatus = Literal[
     "not_applicable",
     "conversational",
+    "model_knowledge",
     "grounded",
     "extractive_degraded",
     "refused",

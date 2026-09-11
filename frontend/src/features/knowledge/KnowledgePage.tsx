@@ -6,7 +6,6 @@ import {
   createKnowledgeBase,
   deleteDocument,
   deleteKnowledgeBase,
-  importSecurityVerticalPack,
   listDocumentChunks,
   listDocuments,
   listKnowledgeBases,
@@ -18,7 +17,6 @@ import {
   uploadDocument,
 } from './api'
 import type {
-  CuratedPackImportSummary,
   EvaluationSummary,
   KnowledgeBase,
   KnowledgeChunk,
@@ -75,7 +73,7 @@ function Documents({
                         ? '\u004c\u004c\u004d \u5206\u5757\u5931\u8d25\uff0c\u5df2\u4f7f\u7528\u89c4\u5219\u5206\u5757'
                         : version.chunking_failure_category}`
                     : version.chunking_strategy === 'deepseek-semantic-v1'
-                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u0044\u0065\u0065\u0070\u0053\u0065\u0065\u006b \u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
+                      ? '\u5206\u5757\u65b9\u5f0f\uff1a\u004c\u004c\u004d \u8bed\u4e49\u5206\u5757\uff08\u6210\u529f\uff09'
                       : `\u5206\u5757\u65b9\u5f0f\uff1a${version.chunking_strategy}`}
                 </small>                <div className="compact-actions">
                   <button disabled={busy} type="button" onClick={() => onAction('publish', document.id, version.id)}>发布</button>
@@ -197,7 +195,6 @@ export function KnowledgePage() {
   const [newBaseName, setNewBaseName] = useState('')
   const [result, setResult] = useState<RetrievalResult | null>(null)
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null)
-  const [importSummary, setImportSummary] = useState<CuratedPackImportSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -297,30 +294,15 @@ export function KnowledgePage() {
 
   return (
     <section aria-labelledby="knowledge-title" className="page-card knowledge-page">
-      <PageHeader id="knowledge-title" eyebrow="可信知识与检索" title="知识库工作台" description="管理本地文档生命周期，通过混合检索生成带引用答案；证据不足时明确拒答。" />
+      <PageHeader id="knowledge-title" title="知识库" centered />
 
       {error && <p className="knowledge-message knowledge-message--error" role="alert">{error}</p>}
       {notice && <p className="knowledge-message" role="status">{notice}</p>}
-      {importSummary && (
-        <p className="knowledge-message" data-testid="curated-pack-summary">
-          权威知识包 {importSummary.pack_version} · 核验 {importSummary.verified_at} ·
-          下次复核 {importSummary.review_due_at} · 新增 {importSummary.imported.length} ·
-          已存在 {importSummary.skipped.length}。{importSummary.usage_policy}
-        </p>
-      )}
-
       {initialLoading && <LoadingState title="正在加载知识库" detail="正在读取公开知识库与文档状态。" />}
       {!initialLoading && (
       <div className="knowledge-layout">
         <aside className="knowledge-bases" aria-label="知识库列表">
           <h3>知识库</h3>
-          <button disabled={busy} type="button" onClick={() => void execute(async (signal) => {
-            const summary = await importSecurityVerticalPack(signal)
-            setImportSummary(summary)
-            setSelectedId(summary.knowledge_base_id)
-          }, '安全垂直知识包已完成完整性校验并导入')}>
-            导入安全垂直知识包
-          </button>
           <form className="create-base" onSubmit={(event) => {
             event.preventDefault()
             const name = newBaseName.trim()

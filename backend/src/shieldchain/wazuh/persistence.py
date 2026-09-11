@@ -226,3 +226,71 @@ Index(
     WazuhCaseDispositionRow.case_id,
     WazuhCaseDispositionRow.created_at,
 )
+
+
+class WazuhSuppressionPolicyRow(Base):
+    """Human-approved, time-bounded filter derived from a false-positive disposition."""
+
+    __tablename__ = "wazuh_suppression_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "source_disposition_id",
+            name="uq_wazuh_suppression_tenant_disposition",
+        ),
+        CheckConstraint(
+            "scope IN ('same_rule_endpoint','same_rule')",
+            name="ck_wazuh_suppression_scope",
+        ),
+        CheckConstraint(
+            "status IN ('active','revoked')",
+            name="ck_wazuh_suppression_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_case_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_disposition_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    endpoint: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    rationale: Mapped[str] = mapped_column(String(1000), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+Index(
+    "ix_wazuh_suppression_tenant_active",
+    WazuhSuppressionPolicyRow.tenant_id,
+    WazuhSuppressionPolicyRow.status,
+    WazuhSuppressionPolicyRow.expires_at,
+)
+
+
+class WazuhSuppressionMatchRow(Base):
+    """Immutable proof that an inbound alert matched an approved suppression policy."""
+
+    __tablename__ = "wazuh_suppression_matches"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alert_id", name="uq_wazuh_suppression_match_alert"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    policy_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    alert_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(256), nullable=False)
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+Index(
+    "ix_wazuh_suppression_match_tenant_time",
+    WazuhSuppressionMatchRow.tenant_id,
+    WazuhSuppressionMatchRow.matched_at,
+    WazuhSuppressionMatchRow.id,
+)

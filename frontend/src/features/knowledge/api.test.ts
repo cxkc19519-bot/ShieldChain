@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createKnowledgeBase,
   deleteDocument,
-  importSecurityVerticalPack,
   retrieveKnowledge,
   runEvaluation,
   uploadDocument,
@@ -62,23 +61,6 @@ describe('knowledge API client', () => {
     expect([...(upload.body as FormData).keys()]).toEqual(['file', 'sensitivity', 'permission_tags'])
     expect([...(upload.body as FormData).keys()]).not.toContain('tenant_id')
     expect(fetchMock).toHaveBeenLastCalledWith(`/api/v1/documents/${ID}`, expect.objectContaining({ method: 'DELETE' }))
-  })
-
-  it('strictly decodes the bundled security knowledge import result', async () => {
-    const body = {
-      pack_id: 'shieldchain-security-vertical', pack_version: '2026.09.3',
-      usage_policy: '归档清单明确列出的官方公开 PDF 与 HTML 快照。',
-      knowledge_base_id: ID, verified_at: '2026-09-02', review_due_at: '2026-10-02',
-      imported: ['policy.md'], skipped: ['attack.md'],
-    }
-    const fetchMock = vi.fn().mockResolvedValue(response(body, 202))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(importSecurityVerticalPack()).resolves.toEqual(body)
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/knowledge-bases/imports/security-vertical',
-      expect.objectContaining({ method: 'POST', body: '{}' }),
-    )
   })
 
   it('runs the security vertical benchmark only against the selected base', async () => {

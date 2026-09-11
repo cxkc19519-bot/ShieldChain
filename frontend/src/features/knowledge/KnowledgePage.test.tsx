@@ -14,7 +14,7 @@ vi.mock('./api', () => api)
 const ID = '11111111-1111-4111-8111-111111111111'
 const NOW = '2026-07-19T00:00:00Z'
 const base = { id: ID, name: '安全规范', status: 'draft', default_sensitivity: 'internal', version_policy: 'immutable', created_at: NOW, updated_at: NOW }
-const version = { id: ID, document_id: ID, version_number: 1, parsing_status: 'succeeded', chunking_status: 'succeeded', index_status: 'succeeded', chunking_strategy: 'semantic', chunking_failure_category: null, created_at: NOW, published_at: null }
+const version = { id: ID, document_id: ID, version_number: 1, parsing_status: 'succeeded', chunking_status: 'succeeded', index_status: 'succeeded', chunking_strategy: 'deepseek-semantic-v1', chunking_failure_category: null, created_at: NOW, published_at: null }
 const document = { id: ID, knowledge_base_id: ID, original_filename: 'guide.pdf', media_type: 'application/pdf', status: 'draft', current_version_id: null, created_at: NOW, updated_at: NOW, versions: [version] }
 
 beforeEach(() => {
@@ -33,6 +33,7 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />)
 
     expect(await screen.findByText('guide.pdf')).toBeVisible()
+    expect(screen.getByText('分块方式：LLM 语义分块（成功）')).toBeVisible()
     expect(screen.getByRole('button', { name: '发布' })).toBeVisible()
     await user.type(screen.getByLabelText('检索知识库'), '恶意宏')
     await user.click(screen.getByRole('button', { name: '混合检索' }))
@@ -51,29 +52,6 @@ describe('KnowledgePage', () => {
     expect(input).toHaveAttribute('accept', '.pdf,.docx,.xlsx,.csv,.txt,.md,.html')
     expect(screen.getByRole('alert')).toHaveTextContent('请选择一个非空文档')
     expect(api.uploadDocument).not.toHaveBeenCalled()
-  })
-
-  it('imports the reviewed security vertical pack and shows its review window', async () => {
-    const user = userEvent.setup()
-    api.importSecurityVerticalPack.mockResolvedValue({
-      pack_id: 'shieldchain-security-vertical',
-      pack_version: '2026.09.3',
-      usage_policy: '归档清单明确列出的官方公开 PDF 与 HTML 快照。',
-      knowledge_base_id: ID,
-      verified_at: '2026-09-02',
-      review_due_at: '2026-10-02',
-      imported: ['policy.md', 'kev.md', 'attack.md'],
-      skipped: ['maintenance.md'],
-    })
-    render(<KnowledgePage />)
-    await screen.findByText('guide.pdf')
-
-    await user.click(screen.getByRole('button', { name: '导入安全垂直知识包' }))
-
-    expect(api.importSecurityVerticalPack).toHaveBeenCalledOnce()
-    expect(await screen.findByTestId('curated-pack-summary')).toHaveTextContent(
-      '权威知识包 2026.09.3 · 核验 2026-09-02 · 下次复核 2026-10-02 · 新增 3 · 已存在 1。归档清单明确列出的官方公开 PDF 与 HTML 快照。',
-    )
   })
 
   it('shows per-case RAG evaluation evidence and failure reasons', async () => {
@@ -136,8 +114,6 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />)
     await screen.findByText('guide.pdf')
 
-    await user.tab()
-    expect(screen.getByRole('button', { name: '导入安全垂直知识包' })).toHaveFocus()
     await user.tab()
     expect(screen.getByLabelText('新知识库名称')).toHaveFocus()
     await user.type(screen.getByLabelText('新知识库名称'), '应急手册')

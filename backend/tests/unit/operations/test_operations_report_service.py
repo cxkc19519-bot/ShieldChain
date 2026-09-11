@@ -19,9 +19,11 @@ from shieldchain.operations.react_collaboration import (
     RealDataAgentTeam,
 )
 from shieldchain.operations.schemas import (
+    ClosureLoopView,
     McpToolCallView,
     OperationsReportRequest,
     OperationsReportView,
+    ResponsePlanReferenceView,
 )
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
 
@@ -93,7 +95,7 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     Base.metadata.create_all(engine)
     agent = SecurityOperationsReportAgent(
         create_session_factory(engine),
-        settings=Settings(_env_file=None),
+        settings=Settings(_env_file=None, deepseek_api_key=""),
         tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
         store=OperationsReportStore(tmp_path),
         knowledge=None,  # type: ignore[arg-type]
@@ -125,6 +127,9 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     assert all(tool.calls == 1 for tool in tools)
     assert "<script>" not in report.html
     assert "&lt;script&gt;" in report.html
+    assert 'data-shieldchain-assistant-launcher="true"' in report.html
+    assert report.html.count('data-shieldchain-assistant-launcher="true"') == 1
+    assert agent.standalone_html(report) == report.html
     assert [step.phase for step in report.reasoning_trace[:2]] == ["observe", "correlate"]
     assert report.reasoning_trace[-1].phase == "close"
     assert {item.status for item in report.cross_domain} == {"observed", "not_observed"}
@@ -134,12 +139,45 @@ def test_report_agent_fallback_runs_safe_minimum_and_persists_html(tmp_path: Pat
     assert "尚未进入接受或审批流程" in report.closure.action
     assert "结构化推理链" in report.markdown
     assert agent.get(report.id) == report
+    report_root = tmp_path / "operations-reports"
+    assert (report_root / f"{report.id}.json").is_file()
+    assert (report_root / f"{report.id}.html").read_text(encoding="utf-8") == report.html
+    assert (report_root / f"{report.id}.md").read_text(encoding="utf-8") == report.markdown
+    assert agent.delete(report.id) is True
+    assert agent.get(report.id) is None
+    assert not (report_root / f"{report.id}.json").exists()
+    assert not (report_root / f"{report.id}.html").exists()
+    assert not (report_root / f"{report.id}.md").exists()
+    assert agent.delete(report.id) is False
+    engine.dispose()
+
+
+def test_strict_agent_mode_refuses_rule_fallback_report(tmp_path: Path) -> None:
+    engine = create_engine_from_url(f"sqlite:///{tmp_path / 'strict-operations.db'}")
+    Base.metadata.create_all(engine)
+    agent = SecurityOperationsReportAgent(
+        create_session_factory(engine),
+        settings=Settings(
+            _env_file=None,
+            deepseek_api_key="",
+            agent_require_live_model=True,
+        ),
+        tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
+        store=OperationsReportStore(tmp_path),
+        knowledge=None,  # type: ignore[arg-type]
+        principal_id=UUID("00000000-0000-4000-8000-000000000002"),
+        tools=_tools(),
+    )
+
+    with pytest.raises(RuntimeError, match="真实模型智能体执行未完成"):
+        asyncio.run(agent.generate(OperationsReportRequest()))
+    assert agent.list(10) == []
     engine.dispose()
 
 
 def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
-    store = OperationsReportStore(tmp_path)
     path = tmp_path / "operations-reports" / "reports.json"
+    path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps(
             [
@@ -161,6 +199,7 @@ def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    store = OperationsReportStore(tmp_path)
 
     report = store.list()[0]
 
@@ -168,6 +207,80 @@ def test_legacy_report_without_run_id_is_explicit(tmp_path: Path) -> None:
     assert report.run_id is None
     assert report.run_status == "legacy_without_run"
     assert report.response_plan is None
+    assert (tmp_path / "operations-reports" / "OPS-LEGACY.html").is_file()
+    assert (tmp_path / "operations-reports" / "OPS-LEGACY.md").is_file()
+
+
+def test_zero_touch_report_persists_action_receipts_and_audit_ids(tmp_path: Path) -> None:
+    run_id = UUID("00000000-0000-4000-8000-000000000101")
+    plan_id = UUID("00000000-0000-4000-8000-000000000102")
+    action_id = UUID("00000000-0000-4000-8000-000000000103")
+    call_id = UUID("00000000-0000-4000-8000-000000000104")
+    loop_id = UUID("00000000-0000-4000-8000-000000000105")
+    evidence_id = UUID("00000000-0000-4000-8000-000000000106")
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    action = SimpleNamespace(
+        id=action_id, sequence=1, tool_name="block_ip", tool_version="1",
+        target_type="ipv4", target="203.0.113.8", assessed_risk="critical",
+        evidence_ids=[evidence_id],
+    )
+    call = SimpleNamespace(
+        id=call_id, plan_action_id=action_id, policy_outcome="allow",
+        status="succeeded", attempt_outcomes=["succeeded"],
+        verification_outcome="verified", evidence_ids=[evidence_id], updated_at=now,
+    )
+
+    class FakeExecutor:
+        def plan_by_run(self, **_kwargs):
+            revision = SimpleNamespace(revision=0, actions=[action])
+            return SimpleNamespace(current_revision=0, revisions=[revision], events=[])
+
+        def trace(self, **_kwargs):
+            return SimpleNamespace(calls=[call])
+
+    agent = SecurityOperationsReportAgent(
+        None,  # type: ignore[arg-type]
+        settings=Settings(_env_file=None),
+        tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
+        store=OperationsReportStore(tmp_path),
+        knowledge=None,  # type: ignore[arg-type]
+        principal_id=UUID("00000000-0000-4000-8000-000000000002"),
+        tools=(), zero_touch_executor=FakeExecutor(),  # type: ignore[arg-type]
+    )
+    report = OperationsReportView(
+        id="OPS-ZERO", run_id=run_id, run_status="completed", generated_at=now,
+        start_at=now - timedelta(minutes=5), end_at=now, agent_name=agent.agent_name,
+        stages=[], collaboration=[], tool_calls=[],
+        response_plan=ResponsePlanReferenceView(
+            plan_id=plan_id, revision_id=plan_id, revision=0, status="proposed",
+            public_summary="计划已生成。", action_count=1,
+            generation_status="model_compiled",
+        ),
+        closure=ClosureLoopView(
+            status="awaiting_approval", observed="已观测。", decision="执行隔离。",
+            action="等待策略。", verification="等待验证。", feedback="失败时重规划。",
+        ),
+        markdown=(
+            "- 安全边界：智能体仅可自主选择受授权的只读工具；本报告不执行处置操作。\n"
+            "## 响应计划（建议，不是执行事实）\n"
+            "- 执行事实：未执行任何响应计划动作；计划生成不代表接受、审批或执行。\n"
+            "- 本报告仅供安全运营研判参考，未触发任何阻断、隔离或变更操作。"
+        ), html="",
+    )
+    outcome = SimpleNamespace(
+        plan_status="completed", reason_code="completed", loop_id=loop_id,
+        loop_status=SimpleNamespace(value="completed"),
+    )
+
+    completed = agent._zero_touch_completed_report(report, outcome)
+
+    assert completed.response_audit is not None
+    assert completed.response_audit.human_interventions == 0
+    assert completed.response_audit.loop_id == loop_id
+    assert completed.response_audit.actions[0].call_id == call_id
+    assert completed.response_audit.actions[0].verification_outcome == "verified"
+    assert "可信处置工具调用与回执" in completed.markdown
+    assert "本报告不执行处置操作" not in completed.markdown
 
 
 def test_react_superagent_controls_specialist_order() -> None:
@@ -205,8 +318,38 @@ def test_react_superagent_controls_specialist_order() -> None:
         "reporting",
     ]
     assert model == "deepseek-test"
+    assert all(item.model == "deepseek-test" for item in rows)
     assert calls == []
     assert [item.iteration for item in rows] == list(range(1, 8))
+
+
+def test_isolated_replay_can_require_complete_cross_domain_observations() -> None:
+    team = _team()
+    tools = _tools()
+    decisions = iter(_SPECIALISTS)
+
+    async def choose(remaining, _facts, _results):
+        role = next(decisions)
+        assert role in remaining
+        return role, f"选择 {role}", "deepseek-test"
+
+    async def run_role(definition, _broker, _results):
+        return f"{definition.label}完成", "deepseek-test", "工具决策：现有证据充分"
+
+    team._choose = choose  # type: ignore[method-assign]
+    team._run_role = run_role  # type: ignore[method-assign]
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    _rows, _model, calls = asyncio.run(
+        team.run(
+            tools,
+            now,
+            now,
+            required_observation_tools=tuple(tool.name for tool in tools),
+        )
+    )
+
+    assert [item.name for item in calls] == [tool.name for tool in tools]
+    assert all(tool.calls == 1 for tool in tools)
 
 
 def test_specialist_model_selects_only_needed_tool() -> None:
@@ -407,6 +550,44 @@ def test_rag_catalog_explains_query_and_does_not_expose_unallowed_tools() -> Non
     assert "当前事件的已确认事实" in catalog[0]["do_not_use_when"]
 
 
+def test_rag_report_summary_excludes_governance_rules_and_raw_chunks() -> None:
+    team = _team()
+    governance = SimpleNamespace(
+        document_title="ShieldChain 知识库规范",
+        heading_path=["RAG 回答规则"],
+        excerpt="RAG 回答规则：用户询问时先引用一级权威来源。失效条件如下。",
+    )
+    relevant = SimpleNamespace(
+        document_title="Web 攻击调查手册",
+        heading_path=["命令注入", "终端关联"],
+        excerpt="检测到命令注入流量后，应核对目标服务的父进程、服务账号与后续外联。这是不应展示的第二句。",
+    )
+    response = SimpleNamespace(citations=[governance, relevant], hits=[], answer="完整分块原文")
+
+    summary = team._public_knowledge_summary(response, "命令注入告警如何关联终端")
+
+    assert "知识库辅助研判" in summary
+    assert "Web 攻击调查手册" in summary
+    assert "父进程" in summary
+    assert "RAG 回答规则" not in summary
+    assert "失效条件" not in summary
+    assert "完整分块原文" not in summary
+    assert "第二句" not in summary
+
+
+def test_rag_report_summary_declines_governance_only_matches() -> None:
+    record = SimpleNamespace(
+        document_title="知识库管理手册",
+        heading_path=["失效条件"],
+        excerpt="来源过期时拒答。",
+    )
+    response = SimpleNamespace(citations=[record], hits=[], answer="不应采用")
+
+    summary = _team()._public_knowledge_summary(response, "攻击调查")
+
+    assert summary == "未检索到与当前事件直接相关的知识依据。"
+
+
 @pytest.mark.parametrize(
     ("start_at", "end_at"),
     [
@@ -516,13 +697,13 @@ def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(
             captured["system"] = request.messages[0].content
             return SimpleNamespace(
                 content="概括总结：存在待复核线索。\n\n处置建议：人工补充证据。",
-                model="local-qwen",
+                model="deepseek-test",
             )
 
     monkeypatch.setattr(service_module, "DeepSeekClient", FakeClient)
     agent = SecurityOperationsReportAgent(
         None,  # type: ignore[arg-type]
-        settings=Settings(_env_file=None, deepseek_api_key="local-vllm"),
+        settings=Settings(_env_file=None, deepseek_api_key="test-key"),
         tenant_id=UUID("00000000-0000-4000-8000-000000000001"),
         store=OperationsReportStore(tmp_path),
         knowledge=None,  # type: ignore[arg-type]
@@ -547,5 +728,5 @@ def test_synthesis_prompt_is_adapted_to_shieldchain_capabilities(
     assert "人工复核" in prompt
     assert "不得声称已自动封禁" in prompt
     assert synthesis.startswith("概括总结：")
-    assert model == "local-qwen"
+    assert model == "deepseek-test"
     assert fallback is False

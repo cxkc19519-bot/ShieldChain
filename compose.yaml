@@ -42,7 +42,11 @@ x-backend-environment: &backend-environment
   RESPONSE_WAZUH_ALLOWED_AGENT_IDS: ${RESPONSE_WAZUH_ALLOWED_AGENT_IDS:-002}
   RESPONSE_ALLOWED_FILE_IDS: ${RESPONSE_ALLOWED_FILE_IDS:-demo-suspicious-marker}
   RESPONSE_OPERATOR_CONTROLS_ENABLED: ${RESPONSE_OPERATOR_CONTROLS_ENABLED:-false}
+  AGENT_REQUIRE_LIVE_MODEL: ${AGENT_REQUIRE_LIVE_MODEL:-true}
   VULNERABILITY_SCANNER_TOKEN: ${VULNERABILITY_SCANNER_TOKEN:-}
+  NTA_DEMO_REPLAY_ENABLED: ${NTA_DEMO_REPLAY_ENABLED:-false}
+  NTA_DEMO_REPLAY_RUNNER_URL: ${NTA_DEMO_REPLAY_RUNNER_URL:-}
+  NTA_DEMO_REPLAY_RUNNER_TOKEN: ${NTA_DEMO_REPLAY_RUNNER_TOKEN:-}
 
 x-backend-security: &backend-security
   read_only: true
@@ -83,6 +87,7 @@ services:
     environment: *backend-environment
     volumes:
       - shieldchain-data:/var/lib/shieldchain
+      - ./data/operations-reports:/var/lib/shieldchain/assistant/operations-reports
       - shieldchain-executor-socket:/run/shieldchain-executor
       - shieldchain-wazuh-executor-socket:/run/shieldchain-wazuh-executor
       - ./scripts:/app/scripts:ro

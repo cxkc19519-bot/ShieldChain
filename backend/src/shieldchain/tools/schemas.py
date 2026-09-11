@@ -120,6 +120,9 @@ class ToolTraceItem(BaseModel):
     evidence_ids: list[UUID]
     created_at: datetime
     updated_at: datetime
+    approval_duration_ms: int | None = Field(default=None, ge=0)
+    execution_duration_ms: int | None = Field(default=None, ge=0)
+    verification_duration_ms: int | None = Field(default=None, ge=0)
 
 
 class ToolTraceView(BaseModel):

@@ -55,7 +55,7 @@ CI_RUNTIME_TESTED=False
 - TypeScript 类型检查、ESLint 与 Vite 生产构建通过；
 
 - `compose.yaml + compose.server.yaml` 配置检查通过；
-- `compose.yaml + compose.local-llm.yaml` 配置检查通过；
+- `compose.yaml + compose.server.yaml` 的 DeepSeek API 配置检查通过；
 - 交付清单支持区分 `available` 与 `planned`，并检查未完成的 PPT、视频、ZIP 和校验和不会提前出现在仓库；
 - 当前不宣称最终交付 smoke 已通过，最终版本冻结后需要重新执行完整门禁。
 
@@ -74,9 +74,8 @@ PowerShell 四个门禁脚本通过 AST 语法解析。当前 Windows PowerShell
 ## 实时链路状态
 
 - Wazuh/OpenSearch 与 ShieldChain Docker 服务已在学校服务器环境实际运行；
-- vLLM 镜像和 Compose 配置已验证；
-- Qwen3-30B-A3B 权重下载和推理服务启动尚受共享 GPU 可用性约束；
-- 2026-07-28 的 DeepSeek 与真实 RAG 验收见历史快照报告；
+- 生成模型统一调用 DeepSeek API，不部署本地推理服务或模型权重；
+- DeepSeek 与真实 RAG 仍需在每次最终版本冻结后重新执行验收；
 - 真实处置设备链路仍未进行授权执行验收。
 
 ## 最终门禁边界标记

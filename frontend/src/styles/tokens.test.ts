@@ -81,7 +81,11 @@ describe('application styles', () => {
 
   it('defines every CSS custom property referenced across feature styles', () => {
     const definitions = new Set([...allCss.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((match) => match[1]))
-    const references = new Set([...allCss.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)].map((match) => match[1]))
+    const references = new Set(
+      [...allCss.matchAll(/var\(\s*(--[a-z0-9-]+)([^)]*)\)/gi)]
+        .filter((match) => !match[2].includes(','))
+        .map((match) => match[1]),
+    )
     const missing = [...references].filter((name) => !definitions.has(name)).sort()
 
     expect(missing).toEqual([])

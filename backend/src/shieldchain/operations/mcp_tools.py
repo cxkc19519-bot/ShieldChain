@@ -171,17 +171,42 @@ class AlertMcpTool(_BaseWazuhTool):
         for row in rows:
             behaviors = _behavior_categories(row.evidence_json)
             behavior_text = f"｜行为 {', '.join(behaviors)}" if behaviors else ""
+            network_text = (
+                (
+                    f"｜网络 {row.source_ip or '未知源'} → {row.destination_ip or '未知目标'}"
+                    + (f":{row.destination_port}" if row.destination_port else "")
+                )
+                if row.source_ip or row.destination_ip
+                else ""
+            )
+            endpoint_process = str(row.evidence_json.get("endpoint_process") or "").strip()
+            parent_process = str(row.evidence_json.get("endpoint_parent_process") or "").strip()
+            endpoint_text = (
+                f"｜端点演示映射 {row.agent_id or row.agent_name or '未知端点'}："
+                f"{parent_process or '未知父进程'} → {endpoint_process}"
+                if endpoint_process
+                else ""
+            )
             items.append(
-                f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}{behavior_text}"
+                f"等级 {row.severity}｜规则 {row.rule_id}｜{_short(row.title)}"
+                f"{network_text}{endpoint_text}{behavior_text}"
             )
         critical = sum(1 for row in rows if row.severity >= 12)
+        replay_contexts = sum(
+            1
+            for row in rows
+            if row.evidence_json.get("source_kind") == "nta_pcap_isolated_replay"
+        )
         return self._view(
             name=self.name,
             label=self.label,
             start_at=start_at,
             end_at=end_at,
             items=items,
-            summary=f"时间范围内接收 {len(items)} 条告警，其中 {critical} 条为高风险告警。",
+            summary=(
+                f"时间范围内接收 {len(items)} 条告警，其中 {critical} 条为高风险告警；"
+                f"{replay_contexts} 条包含隔离回放网络与端点演示关联上下文。"
+            ),
         )
 
 
@@ -249,6 +274,15 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
                 )
                 if len(findings) == 50:
                     break
+            indicator = str(row.evidence_json.get("vulnerability_indicator") or "").strip()
+            if indicator:
+                key = f"indicator:{indicator.casefold()}"
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(
+                        f"攻击面线索｜{_short(indicator, 80)}｜关联规则 {row.rule_id}｜"
+                        "仅来自检测签名，资产版本尚未确认"
+                    )
             if len(findings) == 50:
                 break
         return self._view(
@@ -258,8 +292,8 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
             end_at=end_at,
             items=findings,
             summary=(
-                f"从告警标题和已规范化证据字段中识别出 {len(findings)} 个 CVE 标识；"
-                "这不等同于资产已确认受影响，需结合资产版本复核。"
+                f"从告警标题和规范化证据中识别出 {len(findings)} 条漏洞或攻击面线索；"
+                "检测签名不等同于资产已确认受影响，仍需结合资产版本复核。"
             ),
         )
 
@@ -267,7 +301,7 @@ class VulnerabilityMcpTool(_BaseWazuhTool):
 class WeakPasswordMcpTool(_BaseWazuhTool):
     identity = UUID("00000000-0000-4000-8000-000000001004")
     name = "security.weak_passwords.list"
-    label = "弱口令 MCP"
+    label = "身份认证 MCP"
 
     def call(self, start_at: datetime, end_at: datetime) -> McpToolCallView:
         with self._session_factory() as session:
@@ -285,9 +319,16 @@ class WeakPasswordMcpTool(_BaseWazuhTool):
         for row in rows:
             source = f"{row.title}\n{json.dumps(row.evidence_json, ensure_ascii=False)}"
             if _WEAK_PASSWORD.search(source):
-                findings.append(f"等级 {row.severity}｜{_short(row.title)}")
-                if len(findings) == 50:
-                    break
+                findings.append(f"认证风险关键词｜等级 {row.severity}｜{_short(row.title)}")
+            else:
+                account = str(row.evidence_json.get("identity_account") or "").strip()
+                activity = str(row.evidence_json.get("identity_activity") or "").strip()
+                if account and activity:
+                    findings.append(
+                        f"账号上下文 {account}｜{_short(activity, 120)}｜关联规则 {row.rule_id}"
+                    )
+            if len(findings) == 50:
+                break
         return self._view(
             name=self.name,
             label=self.label,
@@ -295,8 +336,8 @@ class WeakPasswordMcpTool(_BaseWazuhTool):
             end_at=end_at,
             items=findings,
             summary=(
-                f"从本时间段告警元数据中发现 {len(findings)} 条弱口令或暴力破解线索。"
-                "未发现不代表资产不存在弱口令。"
+                f"从本时间段告警元数据中发现 {len(findings)} 条身份认证或账号关联线索；"
+                "演示映射不等同于生产身份系统日志，也不证明弱密码真实存在。"
             ),
         )
 

@@ -1,16 +1,17 @@
 import type { ReactNode } from 'react'
 
-export function PageHeader({ id, eyebrow, title, description, actions }: {
+export function PageHeader({ id, eyebrow, title, description, actions, centered = false }: {
   id?: string
-  eyebrow: string
+  eyebrow?: string
   title: string
   description?: string
   actions?: ReactNode
+  centered?: boolean
 }) {
   return (
-    <div className="page-header">
+    <div className={`page-header${centered ? ' page-header--centered' : ''}`}>
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h2 id={id}>{title}</h2>
         {description && <p className="page-header__description">{description}</p>}
       </div>

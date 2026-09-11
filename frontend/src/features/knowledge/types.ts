@@ -118,14 +118,3 @@ export interface EvaluationSummary {
   case_results: EvaluationCaseResult[]
   quality_gate_passed: boolean
 }
-
-export interface CuratedPackImportSummary {
-  pack_id: string
-  pack_version: string
-  usage_policy: string
-  knowledge_base_id: string
-  verified_at: string
-  review_due_at: string
-  imported: string[]
-  skipped: string[]
-}

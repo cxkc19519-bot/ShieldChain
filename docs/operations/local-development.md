@@ -25,7 +25,7 @@ Copy-Item .env.example .env
 - `RAG_EVALUATION_ROOT`：只读固定 RAG 评测集目录，默认 `sample_docs/security_vertical/evaluation`；
 - `ASSISTANT_DATA_ROOT`：助手会话和记忆目录；
 - `WAZUH_WEBHOOK_TOKEN`：Wazuh 转发鉴权；
-- `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_API_KEY`：OpenAI 兼容模型接口；使用本地 vLLM 时由 Compose 覆盖。
+- `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_API_KEY`：统一的 DeepSeek API 配置。
 
 ## 2. 一键启动
 
@@ -54,13 +54,7 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 
 ## 4. 模型配置
 
-### 外部 API
-
-在 `.env` 中配置 OpenAI 兼容基础地址、模型名和 API Key。密钥只通过环境或密钥服务注入，不写入测试夹具或日志。
-
-### 本地 vLLM
-
-本地模型由服务器 Docker 覆盖配置提供，业务代码仍使用相同的 OpenAI 兼容客户端。不要同时让多个服务争用同一组 GPU。
+在 `.env` 中配置 DeepSeek API 基础地址、模型名和 API Key。所有需要 LLM 的模块使用同一配置；密钥只通过环境或密钥服务注入，不写入测试夹具或日志。应用不启动本地生成模型。
 
 ## 5. RAG
 
@@ -74,7 +68,7 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 4. 混合检索返回来源、块号和分数；
 5. 重启应用后知识库仍存在。
 
-导入内置知识包后，选中对应知识库并点击“运行评测”，系统会执行 `shieldchain-security-vertical-v1`，而不是返回示例指标。未启动本地 BGE/Milvus/Reranker 时允许得到 BM25 降级结果，但失败率会进入门禁，不能视为完整链路通过。2026-09-03 的首份真实降级基线见 `docs/reports/rag-security-vertical-baseline-2026-09-03.md`。
+导入内置知识包后，选中对应知识库并点击“运行评测”，系统会执行 `shieldchain-security-vertical-v1`，而不是返回示例指标。未启动本地 BGE/Milvus/Reranker 时允许得到 BM25 降级结果，但失败率会进入门禁，不能视为完整链路通过。
 
 无需启动前端也可重复执行两套固定评测：
 
@@ -85,7 +79,7 @@ conda run -n ShieldChain python scripts/run_assistant_evaluation.py --offline --
 
 第一条会真实探测当前配置的 BGE/Milvus/Reranker，并在不可用时记录失败后降级；第二条专门验证生成模型不可用时的抽取式助手路径。去掉 `--offline` 可测试当前配置的 OpenAI 兼容生成模型。脚本默认使用隔离临时目录，不污染日常知识库和助手会话。
 
-两个脚本都支持 `--output <文件>` 保存纯 JSON 结果，并可用相同的 `--data-root` 复用已导入资料。完整 BGE/Reranker 与 Qwen 同机联调时，使用 `LOCAL_LLM_HOST_PORT=8002` 避免 Qwen 与默认位于 `8001` 的 BGE 服务发生主机端口冲突。服务器复验清单见 `docs/delivery/security-knowledge-rag-assistant-validation-handoff-20260904.md`。
+两个脚本都支持 `--output <文件>` 保存纯 JSON 结果，并可用相同的 `--data-root` 复用已导入资料。
 
 Milvus 或模型不可用时，界面必须显示真实降级状态，不能写成云 RAG 成功。
 
@@ -132,7 +126,6 @@ Docker 配置检查：
 
 ```powershell
 docker compose -f compose.yaml -f compose.server.yaml config --quiet
-docker compose -f compose.yaml -f compose.local-llm.yaml config --quiet
 ```
 
 旧阶段 smoke 中仍可能描述已退役的固定仿真；它们属于历史合同，不应作为当前真实数据链路的验收依据。

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from queue import Empty, Queue
 from threading import Thread
 from typing import Protocol
@@ -343,7 +343,9 @@ class TrustedToolGateway:
             )
         store.commit()
         while True:
+            execution_started_at = datetime.now(UTC)
             execution = _invoke_adapter(adapter, bound)
+            execution_completed_at = datetime.now(UTC)
             attempt = ToolExecutionAttempt(
                 uuid4(),
                 call.request.id,
@@ -351,8 +353,8 @@ class TrustedToolGateway:
                 execution.outcome,
                 execution.result_summary,
                 execution.error_category,
-                context.now,
-                context.now,
+                execution_started_at,
+                execution_completed_at,
             )
             definition = bound.registration.definition
             retry = (
@@ -456,14 +458,14 @@ class TrustedToolGateway:
     ) -> ToolVerification:
         try:
             verification = _call_with_deadline(
-                lambda: adapter.verify(bound, execution, now=context.now),
+                lambda: adapter.verify(bound, execution, now=datetime.now(UTC)),
                 timeout_seconds=bound.registration.definition.timeout_seconds,
             )
             if not isinstance(verification, ToolVerification):
                 raise TypeError("adapter returned an invalid verification result")
             if verification.request_id != call.request.id:
                 raise ValueError("verification belongs to another request")
-            return verification
+            return replace(verification, verified_at=datetime.now(UTC))
         except Exception:
             return ToolVerification(
                 uuid4(),
@@ -472,7 +474,7 @@ class TrustedToolGateway:
                 {"verification_status": "unavailable"},
                 call.request.evidence,
                 PolicyReason.VERIFICATION_FAILED,
-                context.now,
+                datetime.now(UTC),
             )
 
 

@@ -16,18 +16,18 @@ export type ReportStage = {
   detail: string
 }
 
-export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; summary: string; handoff_to: string | null; iteration: number; decision_reason: string; response_plan: ResponsePlanReference | null; evidence_domains: string[] }
+export type AgentRoleRun = { role: string; label: string; status: 'completed' | 'fallback'; model: string | null; summary: string; handoff_to: string | null; iteration: number; decision_reason: string; response_plan: ResponsePlanReference | null; evidence_domains: string[] }
 
 export type ResponsePlanReference = {
   plan_id: string
   revision_id: string
   revision: number
-  status: 'proposed' | 'needs_review' | 'completed_advisory'
+  status: 'proposed' | 'needs_review' | 'completed' | 'completed_advisory'
   public_summary: string
   action_count: number
   generation_status: 'model_compiled' | 'deterministic_fallback'
   fallback_reason_code: string | null
-  execution_status: 'not_executed'
+  execution_status: 'not_executed' | 'verified_completed'
 }
 
 export type ReasoningStep = {
@@ -60,6 +60,23 @@ export type ClosureLoop = {
   human_approval_required: boolean
 }
 
+export type ResponseActionAudit = {
+  action_id: string; call_id: string | null; sequence: number; tool_name: string; tool_version: string
+  target_type: string; target: string; assessed_risk: string; authorization: string
+  execution_status: string; attempt_outcomes: string[]; verification_outcome: string | null
+  evidence_ids: string[]; updated_at: string | null
+}
+
+export type ResponseReplanAudit = {
+  revision: number; event_type: string; reason_code: string | null; summary: string; created_at: string
+}
+
+export type ResponseAudit = {
+  mode: 'zero_touch_isolated_replay'; plan_id: string; run_id: string; loop_id: string | null
+  policy_result: string; loop_status: string; reason_code: string; human_interventions: number
+  actions: ResponseActionAudit[]; replans: ResponseReplanAudit[]
+}
+
 export type OperationsReport = {
   id: string
   run_id: string | null
@@ -76,6 +93,7 @@ export type OperationsReport = {
   reasoning_trace: ReasoningStep[]
   cross_domain: CrossDomainEvidence[]
   closure: ClosureLoop
+  response_audit?: ResponseAudit | null
   markdown: string
   html: string
 }
@@ -132,12 +150,12 @@ function responsePlan(value: unknown): ResponsePlanReference {
     plan_id: text(item.plan_id),
     revision_id: text(item.revision_id),
     revision: integer(item.revision),
-    status: choice(item.status, ['proposed', 'needs_review', 'completed_advisory'] as const),
+    status: choice(item.status, ['proposed', 'needs_review', 'completed', 'completed_advisory'] as const),
     public_summary: text(item.public_summary),
     action_count: integer(item.action_count, 8),
     generation_status: choice(item.generation_status, ['model_compiled', 'deterministic_fallback'] as const),
     fallback_reason_code: nullableText(item.fallback_reason_code),
-    execution_status: choice(item.execution_status, ['not_executed'] as const),
+    execution_status: choice(item.execution_status, ['not_executed', 'verified_completed'] as const),
   }
 }
 
@@ -181,6 +199,7 @@ function agentRole(value: unknown): AgentRoleRun {
     role: text(item.role),
     label: text(item.label),
     status: choice(item.status, ['completed', 'fallback'] as const),
+    model: item.model === undefined ? null : nullableText(item.model),
     summary: text(item.summary),
     handoff_to: nullableText(item.handoff_to),
     iteration: integer(item.iteration),
@@ -229,6 +248,38 @@ function closureLoop(value: unknown): ClosureLoop {
   }
 }
 
+function responseActionAudit(value: unknown): ResponseActionAudit {
+  const item = record(value)
+  return {
+    action_id: text(item.action_id), call_id: nullableText(item.call_id), sequence: integer(item.sequence, 8),
+    tool_name: text(item.tool_name), tool_version: text(item.tool_version), target_type: text(item.target_type),
+    target: text(item.target), assessed_risk: text(item.assessed_risk), authorization: text(item.authorization),
+    execution_status: text(item.execution_status), attempt_outcomes: list(item.attempt_outcomes, text),
+    verification_outcome: nullableText(item.verification_outcome), evidence_ids: list(item.evidence_ids, text),
+    updated_at: item.updated_at === null ? null : dateText(item.updated_at),
+  }
+}
+
+function responseReplanAudit(value: unknown): ResponseReplanAudit {
+  const item = record(value)
+  return {
+    revision: integer(item.revision), event_type: text(item.event_type), reason_code: nullableText(item.reason_code),
+    summary: text(item.summary), created_at: dateText(item.created_at),
+  }
+}
+
+function responseAudit(value: unknown): ResponseAudit | null {
+  if (value === undefined || value === null) return null
+  const item = record(value)
+  return {
+    mode: choice(item.mode, ['zero_touch_isolated_replay'] as const), plan_id: text(item.plan_id),
+    run_id: text(item.run_id), loop_id: nullableText(item.loop_id), policy_result: text(item.policy_result),
+    loop_status: text(item.loop_status), reason_code: text(item.reason_code),
+    human_interventions: integer(item.human_interventions), actions: list(item.actions, responseActionAudit),
+    replans: list(item.replans, responseReplanAudit),
+  }
+}
+
 function operationsReport(value: unknown): OperationsReport {
   const item = record(value)
   const runId = nullableText(item.run_id)
@@ -250,6 +301,7 @@ function operationsReport(value: unknown): OperationsReport {
     reasoning_trace: item.reasoning_trace === undefined ? [] : list(item.reasoning_trace, reasoningStep),
     cross_domain: item.cross_domain === undefined ? [] : list(item.cross_domain, crossDomain),
     closure: closureLoop(item.closure),
+    response_audit: responseAudit(item.response_audit),
     markdown: text(item.markdown),
     html: text(item.html),
   }
@@ -286,4 +338,13 @@ export async function listOperationsReports(signal?: AbortSignal): Promise<Opera
   const items = (data as Record<string, unknown>).items
   if (!Array.isArray(items)) throw new Error('运营报告服务返回了无效数据')
   try { return items.map(operationsReport) } catch { throw new Error('运营报告服务返回了无效数据') }
+}
+
+export async function deleteOperationsReport(reportId: string): Promise<void> {
+  const response = await fetch(`/api/v1/operations/reports/${encodeURIComponent(reportId)}`, {
+    method: 'DELETE',
+  })
+  if (response.ok) return
+  const data = await decode(response)
+  throw apiError(data, '删除安全运营报告失败')
 }

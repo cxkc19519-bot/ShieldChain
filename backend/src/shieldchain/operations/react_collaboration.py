@@ -42,6 +42,16 @@ _ALERTS = "security.alerts.list"
 _VULNERABILITIES = "security.vulnerabilities.list"
 _WEAK_PASSWORDS = "security.weak_passwords.list"
 _RAG = "knowledge.rag.retrieve"
+_RAG_GOVERNANCE_MARKERS = (
+    "RAG 回答规则",
+    "RAG回答规则",
+    "回答规则",
+    "失效条件",
+    "RAG 与智能体本身也是防护对象",
+    "知识库治理",
+    "来源治理",
+    "本库只归档",
+)
 AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
     _EVENTS: {
         "label": "事件 MCP",
@@ -86,7 +96,7 @@ AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
     _VULNERABILITIES: {
         "label": "漏洞 MCP",
         "description": (
-            "从指定时间范围的告警标题和规范化证据中提取 CVE 标识及关联告警线索。"
+            "从指定时间范围的告警标题和规范化证据中提取 CVE、漏洞攻击面及关联告警线索。"
             "只读，不进行漏洞扫描或修复。"
         ),
         "use_when": "告警或事件可能涉及公开漏洞，需要整理 CVE 线索并安排资产版本复核时使用。",
@@ -104,9 +114,9 @@ AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
         ),
     },
     _WEAK_PASSWORDS: {
-        "label": "弱口令 MCP",
+        "label": "身份认证 MCP",
         "description": (
-            "从指定时间范围的告警中筛选弱口令、密码喷洒、暴力破解等认证风险线索。"
+            "从指定时间范围的告警中筛选账号关联、弱口令、密码喷洒、暴力破解等认证风险线索。"
             "只读，不读取或展示真实密码。"
         ),
         "use_when": "出现异常登录、认证失败、密码喷洒或暴力破解迹象，需要汇总身份认证风险时使用。",
@@ -122,7 +132,7 @@ AGENT_TOOL_CATALOG: dict[str, dict[str, object]] = {
         ),
     },
     _RAG: {
-        "label": "本地知识库 RAG",
+        "label": "知识库辅助研判",
         "description": (
             "使用自然语言问题检索 ShieldChain 本地知识库，"
             "返回最多 3 个相关片段形成的可引用回答。只读。"
@@ -254,6 +264,9 @@ class AgentToolBroker:
         tool = self._tools.get(name)
         return tool.label if tool is not None else name
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
     async def call(self, name: str, *, role: str | None = None) -> McpToolCallView:
         if name not in self._tools:
             raise ValueError("tool is not registered")
@@ -324,14 +337,18 @@ class AgentToolBroker:
                     items=[],
                 )
             if call_id is not None and self._audit_store is not None:
+                duration_ms = round((perf_counter() - started_at) * 1000)
                 self._audit_store.finish(
                     call_id,
                     result,
-                    duration_ms=round((perf_counter() - started_at) * 1000),
+                    duration_ms=duration_ms,
                     now=datetime.now(UTC),
                     result_bytes=result_bytes,
                     truncated=truncated,
                 )
+            else:
+                duration_ms = round((perf_counter() - started_at) * 1000)
+            result = result.model_copy(update={"duration_ms": duration_ms})
             self._cache[name] = result
             self._history.append(result)
         return self._cache[name]
@@ -392,6 +409,7 @@ class RealDataAgentTeam:
         target_endpoint_id: str | None = None,
         target_file_id: str | None = None,
         rule_ttl_seconds: int = 60,
+        required_observation_tools: tuple[str, ...] = (),
     ) -> tuple[list[AgentRoleRunView], str | None, list[McpToolCallView]]:
         broker = AgentToolBroker(
             tools,
@@ -400,27 +418,39 @@ class RealDataAgentTeam:
             audit_store=audit_store,
             audit_context=audit_context,
         )
+        for tool_name in required_observation_tools:
+            if broker.has_tool(tool_name):
+                await broker.call(tool_name, role="superagent")
         remaining = set(_SPECIALISTS)
         results: list[AgentRoleRunView] = []
         model: str | None = None
+        super_started_at = datetime.now(UTC)
+        super_started_counter = perf_counter()
         selected, reason, planner_model = await self._choose(
             remaining, broker.public_facts(), results
         )
+        super_finished_at = datetime.now(UTC)
         model = planner_model
         results.append(
             AgentRoleRunView(
                 role=_SUPERAGENT.key,
                 label=_SUPERAGENT.label,
                 status="completed" if planner_model else "fallback",
+                model=planner_model,
                 summary=f"总控决策：{reason}",
                 handoff_to=_SPECIALISTS[selected].label,
                 iteration=1,
                 decision_reason=reason,
+                started_at=super_started_at,
+                finished_at=super_finished_at,
+                duration_ms=round((perf_counter() - super_started_counter) * 1000),
             )
         )
         iteration = 2
         while remaining and iteration <= 8:
             definition = _SPECIALISTS[selected]
+            role_started_at = datetime.now(UTC)
+            role_started_counter = perf_counter()
             response_plan = None
             if definition.key == "response_planning" and self._response_plan_agent is not None:
                 if run_id is None or now is None:
@@ -452,16 +482,20 @@ class RealDataAgentTeam:
                 role_model = preparation_model or plan_result.model
                 tool_reason = f"{preparation_reason}；规划决策：{plan_result.decision_reason}"
                 response_plan = plan_result.reference
-                role_fallback = plan_result.used_fallback
+                # A live model response can still require a server-owned, deterministic
+                # schema repair. The role did run; generation_status records the repair.
+                role_fallback = plan_result.model is None
             else:
                 summary, role_model, tool_reason = await self._run_role(definition, broker, results)
                 role_fallback = role_model is None
+            role_finished_at = datetime.now(UTC)
             model = model or role_model
             remaining.remove(selected)
             current = AgentRoleRunView(
                 role=definition.key,
                 label=definition.label,
                 status="fallback" if role_fallback else "completed",
+                model=role_model,
                 summary=summary,
                 handoff_to=None,
                 iteration=iteration,
@@ -472,6 +506,9 @@ class RealDataAgentTeam:
                     for name in definition.allowed_tools
                     if name in AGENT_TOOL_CATALOG
                 ],
+                started_at=role_started_at,
+                finished_at=role_finished_at,
+                duration_ms=round((perf_counter() - role_started_counter) * 1000),
             )
             results.append(current)
             next_role: str | None = None
@@ -557,13 +594,20 @@ class RealDataAgentTeam:
             )
             try:
                 response = await self._chat(
-                    f"你是{definition.label}。你要在受限 ReAct 循环中自主选择工具。"
-                    "每轮只能输出一个 JSON 动作。需要数据时输出："
+                    f"你是{definition.label}。你正在执行受控的观察—决策—行动协议。"
+                    "每轮输入包含你的职责、当前可用工具、前序公开交接和已有工具观察。"
+                    "必须先检查已有 observations，再且只能输出一个 JSON 动作。"
+                    "需要补充证据时输出："
                     '{"action":"call_tool","tool":"工具名","query":"仅RAG可用的检索问题","public_reason":"中文理由"}；信息足够时输出：'
                     '{"action":"finish","summary":"不超过280字的中文公开结论","public_reason":"中文理由"}。'
+                    "工具执行后，系统会把真实结果加入下一轮 observations；"
+                    "必须依据新增观察决定下一步。"
+                    "public_reason 只填写简短、可公开审计的决策依据，不得填写隐藏思维过程；"
                     "选择工具前必须阅读其 description、use_when、do_not_use_when 和 limitations；"
-                    "只能选择 available_tools 中的工具；允许运行时不调用任何工具；"
-                    "不得输出思维链、命令或虚构事实。",
+                    "只能选择 available_tools 中的工具，不得重复调用已使用的工具；"
+                    "工具失败或空结果表示证据不可用或未命中，不能据此断言没有风险；"
+                    "只有现有观察足以完成本角色职责时才能 finish；允许运行时不调用任何工具；"
+                    "不得输出 Thought、思维链、命令或虚构事实。",
                     prompt,
                     max_tokens=420,
                 )
@@ -683,9 +727,33 @@ class RealDataAgentTeam:
                 tenant_id=self._tenant_id,
                 principal_id=self._principal_id,
             )
-            return response.answer[:1800] if response.answer else "未检索到可引用片段。"
+            return self._public_knowledge_summary(response, query)
         except Exception:
             return "RAG 暂不可用；不得据此扩写事实。"
+
+    @staticmethod
+    def _public_knowledge_summary(response, query: str) -> str:
+        """Expose retrieval status only; knowledge text is never event evidence."""
+
+        records = list(response.citations or response.hits)
+        retained = 0
+        for record in records:
+            title = " ".join(str(record.document_title).split())[:100]
+            headings = [" ".join(str(item).split()) for item in record.heading_path]
+            excerpt = " ".join(str(record.excerpt).split())
+            searchable = " ".join([title, *headings, excerpt])
+            if any(
+                marker.casefold() in searchable.casefold() for marker in _RAG_GOVERNANCE_MARKERS
+            ):
+                continue
+            if excerpt:
+                retained += 1
+        if retained == 0:
+            return "知识库检索完成，但未获得可用于当前事件定性的可靠参考。"
+        return (
+            f"知识库检索返回 {retained} 条候选参考；因相关性和来源质量尚未达到事件"
+            "证据门槛，具体内容不写入报告，也不进入主证据链。"
+        )
 
     @staticmethod
     def _tool_observation(item: McpToolCallView) -> str:

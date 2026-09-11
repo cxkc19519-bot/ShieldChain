@@ -37,7 +37,7 @@ ShieldChain 将 300 个正常场景按相关变体分组后固定划分为：
 服务器数据根目录：
 
 ```text
-/home/user/jhk/nta-benign-corpus-v10
+/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10
 ```
 
 每种协议目录包含 `pcap/` 和 `<protocol>-development-captures.jsonl`。JSONL 记录场景 ID、匿名 PCAP 名、SHA-256、字节数和执行时间。原始 PCAP、标签清单和引擎日志不提交 Git。
@@ -58,7 +58,7 @@ ShieldChain 将 300 个正常场景按相关变体分组后固定划分为：
 ```bash
 cd /home/user/jhk/project/ShieldChain
 python3 scripts/nta/benign_lab/scenario_catalog.py \
-  /home/user/jhk/nta-benign-corpus-v10/manifests
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/manifests
 ```
 
 ## 采集命令
@@ -67,22 +67,22 @@ HTTP 使用独立入口：
 
 ```bash
 python3 scripts/nta/benign_lab/run_http_lab.py \
-  /home/user/jhk/nta-benign-corpus-v10/http-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/http-development
 ```
 
 其他真实协议使用统一入口：
 
 ```bash
 python3 scripts/nta/benign_lab/run_service_lab.py database \
-  /home/user/jhk/nta-benign-corpus-v10/database-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/database-development
 python3 scripts/nta/benign_lab/run_service_lab.py mail \
-  /home/user/jhk/nta-benign-corpus-v10/mail-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/mail-development
 python3 scripts/nta/benign_lab/run_service_lab.py dns \
-  /home/user/jhk/nta-benign-corpus-v10/dns-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/dns-development
 python3 scripts/nta/benign_lab/run_service_lab.py ssh \
-  /home/user/jhk/nta-benign-corpus-v10/ssh-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/ssh-development
 python3 scripts/nta/benign_lab/run_service_lab.py smb \
-  /home/user/jhk/nta-benign-corpus-v10/smb-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/smb-development
 ```
 
 先用 `--limit 1` 做冒烟测试。若结果 JSONL 已存在，工具会拒绝覆盖。
@@ -139,7 +139,7 @@ wix build `
 ```bash
 python3 scripts/nta/benign_lab/import_windows_captures.py \
   /home/user/jhk/incoming/windows-development \
-  /home/user/jhk/nta-benign-corpus-v10/windows-development
+  /home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/windows-development
 ```
 
 导入器校验 18 个场景、匿名文件名、大小和 SHA-256，拒绝重复、缺失、篡改或覆盖。`validation` 与 `final_blind` 各 6 条，只有规则冻结后才能显式添加 `--allow-held-out` 生成计划和导入。
@@ -154,30 +154,30 @@ python3 scripts/nta/benign_lab/import_windows_captures.py \
 - 协议：18/18 个文件均含 TCP/5985 WinRM 流量，每文件 14–382 个 WinRM 数据包；
 - 清理：临时文件、远端 MSI、测试计划任务、测试注册表值、已安装 fixture 文件残留均为 0；
 - 本地目录：`D:\ShieldChainLab\captures\windows-development-20260823-b`；
-- 服务器正式目录：`/home/user/jhk/nta-benign-corpus-v10/windows-development`；
+- 服务器正式目录：`/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/windows-development`；
 - 当前边界：只覆盖隔离实验室中的 WinRM HTTP（TCP/5985）管理操作，不覆盖 WinRM HTTPS、自定义端口、RDP、域环境横向管理或真实生产管理流量。
 
 ### Windows 首轮误报、修正与回归
 
-首轮运行目录为 `/home/user/jhk/nta-benign-corpus-v10/windows-development-analysis/run-20260823-125455`。18/18 个样本的两台引擎均成功，但全部样本被判为含安全告警，共计 330 条安全告警：
+首轮运行目录为 `/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/windows-development-analysis/run-20260823-125455`。18/18 个样本的两台引擎均成功，但全部样本被判为含安全告警，共计 330 条安全告警：
 
 - 318 条 ET SID `2026850`（`WinRM User Agent Detected - Possible Lateral Movement`）；
 - 12 条自定义 SID `9000005`（异常大的 HTTP POST）。
 
 诊断确认两者均由合法 WinRM 管理造成。SID `2026850` 只能证明出现 WinRM 客户端特征，不能单独证明横向移动，因此流水线继续保留原始事件，但将它单列为“上下文观察”，不再直接升级为安全结论。SID `9000005` 的通用 HTTP 大请求规则会命中 WinRM SOAP/MSI 传输，现仅排除标准 WinRM 端口 5985/5986；其他端口上的大 HTTP POST 仍由该规则检测。
 
-修正后的规则文件 SHA-256 为 `e4ee9be7800b2a39d3bf227c63d783186c8f7b2be6100d0af709dd1dea181d2b`。第二轮运行目录为 `/home/user/jhk/nta-benign-corpus-v10/windows-development-analysis-v2/run-20260823-131029`，结果为：
+修正后的规则文件 SHA-256 为 `e4ee9be7800b2a39d3bf227c63d783186c8f7b2be6100d0af709dd1dea181d2b`。第二轮运行目录为 `/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/windows-development-analysis-v2/run-20260823-131029`，结果为：
 
 - Suricata 成功 18/18，Zeek 成功 18/18；
 - 安全告警样本 0/18，安全告警 0；
 - 原始 Suricata 事件 4,020 条，其中信息/解码事件 3,702 条，上下文观察 318 条；
 - 结果分类均为“网络行为待研判”，不会把合法 WinRM 自动判成攻击。
 
-为防止降低攻击检测能力，使用 development 攻击集中的 12 个代表性 PCAP 做规则回归（未使用 validation 或 final_blind 调参）。结果目录为 `/home/user/jhk/nta-dataset/results-winrm-rule-regression/run-20260823-131813`：12/12 个样本双引擎执行成功，12/12 仍被检测为“数据库攻击与数据提取”，累计产生 15 条安全告警。该回归只证明本次修正没有破坏这 12 个已选样本，不能替代冻结集验收。
+为防止降低攻击检测能力，使用 development 攻击集中的 12 个代表性 PCAP 做规则回归（未使用 validation 或 final_blind 调参）。结果目录为 `/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset/results-winrm-rule-regression/run-20260823-131813`：12/12 个样本双引擎执行成功，12/12 仍被检测为“数据库攻击与数据提取”，累计产生 15 条安全告警。该回归只证明本次修正没有破坏这 12 个已选样本，不能替代冻结集验收。
 
 ## 2026-08-23 validation 实测结果
 
-规则和流水线冻结后，重新采集并一次性分析了 60 条 validation 正常流量：HTTP、MariaDB、SMTP 各 12 条，DNS、SSH、SMB、Windows 管理各 6 条。Windows validation 位于本地 `D:\ShieldChainLab\captures\windows-validation-20260823-v10` 和服务器 `/home/user/jhk/nta-benign-corpus-v10/windows-validation`。
+规则和流水线冻结后，重新采集并一次性分析了 60 条 validation 正常流量：HTTP、MariaDB、SMTP 各 12 条，DNS、SSH、SMB、Windows 管理各 6 条。Windows validation 位于本地 `D:\ShieldChainLab\captures\windows-validation-20260823-v10` 和服务器 `/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/windows-validation`。
 
 - Suricata 成功 60/60，Zeek 成功 60/60；
 - 安全告警样本 0/60，安全告警 0；
@@ -185,14 +185,14 @@ python3 scripts/nta/benign_lab/import_windows_captures.py \
 - 信息/解码事件 2,183 条；
 - 零事件的单侧 95% 精确上界约为 4.87%；该值只描述本轮隔离场景，不是生产误报率。
 
-运行目录为 `/home/user/jhk/nta-benign-corpus-v10/validation-all-v10-analysis/run-20260823-134702`。只读锁定摘要为 `/home/user/jhk/nta-dataset-blind/evaluation/benign-validation-v10-locked-result.json`，SHA-256 为 `ab6f3461730ff389577067c1ab1b0758334c9ad2b1141cdbe3688a89d087b3a6`。`final_blind` 仍未运行。
+运行目录为 `/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/validation-all-v10-analysis/run-20260823-134702`。只读锁定摘要为 `/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset-blind/evaluation/benign-validation-v10-locked-result.json`，SHA-256 为 `ab6f3461730ff389577067c1ab1b0758334c9ad2b1141cdbe3688a89d087b3a6`。`final_blind` 仍未运行。
 ## 离线误报评估
 
 将正式 development PCAP 放入单独输入目录，使用现有离线链路运行 Suricata 与 Zeek：
 
 ```bash
-export SHIELDCHAIN_NTA_PCAP_ROOT=/home/user/jhk/nta-benign-corpus-v10/development-linux
-export SHIELDCHAIN_NTA_RESULT_ROOT=/home/user/jhk/nta-benign-corpus-v10/development-linux-analysis
+export SHIELDCHAIN_NTA_PCAP_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/development-linux
+export SHIELDCHAIN_NTA_RESULT_ROOT=/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/development-linux-analysis
 python3 scripts/nta/nta_offline_pipeline.py --all
 ```
 
@@ -240,7 +240,7 @@ Linux 协议评测使用的规则文件 SHA-256：`0c87908e60f5b3d1f082292d55c3a
 - SMB 修复回归：`smb-development-analysis-v3/run-20260822-201106`；
 - Windows 首轮：`windows-development-analysis/run-20260823-125455`；
 - Windows 修复回归：`windows-development-analysis-v2/run-20260823-131029`；
-- 攻击样本规则回归：`/home/user/jhk/nta-dataset/results-winrm-rule-regression/run-20260823-131813`。
+- 攻击样本规则回归：`/home/user/jhk/project/ShieldChain/.local/nta/nta-dataset/results-winrm-rule-regression/run-20260823-131813`。
 
 ## 测试
 
@@ -261,7 +261,7 @@ python3 -m unittest \
 - 样本：180/180；
 - Suricata/Zeek 引擎失败：0；
 - 安全告警样本：0/180；
-- 合并事件：`/home/user/jhk/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
+- 合并事件：`/home/user/jhk/project/ShieldChain/.local/nta/nta-benign-corpus-v10/development-all-v11-analysis/benign-development-v11-events.jsonl`；
 - 事件 SHA-256：`36c4619af618e7fb752c84af3bf972c25d440e2a60d9ca5194ccb5eb6f5589c7`。
 
 该回归只约束当前隔离实验室场景，不能外推为生产误报率为零。v11 攻击 development 与正常 development 的联合结果见 `docs/reports/xdr-probe-rule-evaluation-v11-20260823.md`。

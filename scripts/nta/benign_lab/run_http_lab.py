@@ -10,7 +10,6 @@ import subprocess
 import sys
 import time
 import urllib.parse
-from dataclasses import asdict
 from pathlib import Path
 
 from scenario_catalog import Scenario, build_catalog, validate_catalog

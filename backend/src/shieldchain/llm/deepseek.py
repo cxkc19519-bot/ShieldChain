@@ -65,6 +65,10 @@ class DeepSeekClient:
             ],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
+            # ShieldChain requires short, public, schema-validated outputs.  The
+            # provider's optional hidden reasoning can consume the entire token
+            # budget before a JSON action is emitted, so keep it disabled here.
+            "thinking": {"type": "disabled"},
             "stream": False,
         }
 

@@ -20,8 +20,8 @@ from shieldchain.api.mcp import router as mcp_router
 from shieldchain.api.operations import router as operations_router
 from shieldchain.api.react import router as react_router
 from shieldchain.api.tools import router as tools_router
-from shieldchain.api.wazuh import router as wazuh_router
 from shieldchain.api.vulnerabilities import router as vulnerabilities_router
+from shieldchain.api.wazuh import router as wazuh_router
 from shieldchain.assistant.api import router as assistant_router
 from shieldchain.assistant.service import GroundedAssistantService
 from shieldchain.assistant.store import LocalConversationStore
@@ -49,8 +49,6 @@ from shieldchain.mcp_remote.runtime import McpRemoteRuntime
 from shieldchain.mcp_server import create_mcp_http_app, create_mcp_server
 from shieldchain.operations.audit import AgentToolAuditStore
 from shieldchain.operations.service import OperationsReportStore, SecurityOperationsReportAgent
-from shieldchain.qwen_experience.api import router as qwen_experience_router
-from shieldchain.qwen_experience.service import QwenExperienceService
 from shieldchain.rag.api_service import KnowledgeApiService
 from shieldchain.rag.local_service import LocalKnowledgeService
 from shieldchain.react.api_service import ReactApiService
@@ -62,9 +60,9 @@ from shieldchain.react.safety_loop import (
 from shieldchain.tools.api_service import TrustedToolApiService
 from shieldchain.tools.firewall_connector import NftablesAdapterProvider
 from shieldchain.tools.wazuh_connector import WazuhAdapterProvider
-from shieldchain.wazuh.service import WazuhAlertService
 from shieldchain.vulnerabilities.agent import VulnerabilityTriageAgent
 from shieldchain.vulnerabilities.service import VulnerabilityWorkflowService
+from shieldchain.wazuh.service import WazuhAlertService
 
 logger = structlog.get_logger(__name__)
 _SAFETY_RECOVERY_INTERVAL_SECONDS = 5.0
@@ -105,7 +103,6 @@ def create_app(
     knowledge_api_service: KnowledgeApiService | None = None,
     react_api_service: ReactApiService | None = None,
     trusted_tool_api_service: TrustedToolApiService | None = None,
-    qwen_experience_service: QwenExperienceService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.environment)
@@ -212,7 +209,6 @@ def create_app(
     app.state.mcp_remote_runtime = mcp_remote_runtime
     app.state.mcp_remote_discovery_outcomes = ()
     app.state.agent_tool_audit_store = agent_tool_audit_store
-    app.state.qwen_experience_service = qwen_experience_service or QwenExperienceService(settings)
     app.state.database_engine = engine
     app.state.accepting_requests = False
     app.state.agent_trajectory_query = agent_trajectory_query or CollaborationTrajectoryQuery(
@@ -221,24 +217,15 @@ def create_app(
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(demo_replay_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
-    app.include_router(qwen_experience_router, prefix="/api/v1")
     app.state.incident_session_factory = session_factory
     app.state.incident_repository = repository
     app.state.incident_query_service = query_service
     app.state.knowledge_api_service = knowledge_service
-    app.state.grounded_assistant_service = GroundedAssistantService(
-        knowledge_service,
-        query_service,
-        settings=settings,
-        tenant_id=settings.rag_demo_tenant_id,
-        principal_id=settings.rag_demo_principal_id,
-        store=LocalConversationStore(settings.assistant_data_root),
-    )
     app.state.trusted_tool_api_service = trusted_tools
     app.state.rag_demo_tenant_id = settings.rag_demo_tenant_id
     app.state.react_api_service = react_api_service or ReactApiService(session_factory)
     app.state.wazuh_alert_service = WazuhAlertService()
-    app.state.vulnerability_workflow_service = VulnerabilityWorkflowService(
+    vulnerability_workflow_service = VulnerabilityWorkflowService(
         session_factory,
         VulnerabilityTriageAgent(
             settings,
@@ -250,7 +237,8 @@ def create_app(
         tenant_id=settings.rag_demo_tenant_id,
         principal_id=settings.rag_demo_principal_id,
     )
-    app.state.security_operations_report_agent = SecurityOperationsReportAgent(
+    app.state.vulnerability_workflow_service = vulnerability_workflow_service
+    operations_report_agent = SecurityOperationsReportAgent(
         session_factory,
         settings=settings,
         tenant_id=settings.rag_demo_tenant_id,
@@ -259,6 +247,18 @@ def create_app(
         principal_id=settings.rag_demo_principal_id,
         audit_store=agent_tool_audit_store,
         remote_runtime=mcp_remote_runtime,
+        zero_touch_executor=trusted_tools,
+    )
+    app.state.security_operations_report_agent = operations_report_agent
+    app.state.grounded_assistant_service = GroundedAssistantService(
+        knowledge_service,
+        query_service,
+        settings=settings,
+        tenant_id=settings.rag_demo_tenant_id,
+        principal_id=settings.rag_demo_principal_id,
+        store=LocalConversationStore(settings.assistant_data_root),
+        operations_reports=operations_report_agent,
+        vulnerability_workflow=vulnerability_workflow_service,
     )
     app.state.rag_demo_principal_id = settings.rag_demo_principal_id
     app.add_middleware(

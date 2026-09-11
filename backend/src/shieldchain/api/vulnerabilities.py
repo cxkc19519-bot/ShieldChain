@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, Request, Response, status
 
 from shieldchain.core.config import Settings
 from shieldchain.core.errors import ApiError
 from shieldchain.vulnerabilities.schemas import (
     VulnerabilityChangeRequest,
     VulnerabilityDecisionRequest,
+    VulnerabilityDemoRunView,
     VulnerabilityFindingIngestRequest,
     VulnerabilityFindingIngestResponse,
     VulnerabilityFindingListResponse,
@@ -41,6 +42,15 @@ def _require_operator_control(request: Request) -> None:
             "Vulnerability workflow changes require an authenticated administrator boundary",
             403,
         )
+
+
+@router.post("/demo/run", response_model=VulnerabilityDemoRunView, status_code=201)
+async def run_demo(request: Request) -> VulnerabilityDemoRunView:
+    _require_operator_control(request)
+    try:
+        return await _service(request).run_demo_closed_loop()
+    except VulnerabilityWorkflowError as error:
+        raise ApiError("vulnerability_demo_failed", str(error), 409) from None
 
 
 def _call(action):
@@ -76,6 +86,13 @@ def list_findings(request: Request) -> VulnerabilityFindingListResponse:
 @router.get("/findings/{finding_id}", response_model=VulnerabilityFindingView)
 def get_finding(finding_id: UUID, request: Request) -> VulnerabilityFindingView:
     return _call(lambda: _service(request).get(finding_id))
+
+
+@router.delete("/findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_finding(finding_id: UUID, request: Request) -> Response:
+    _require_operator_control(request)
+    _call(lambda: _service(request).delete(finding_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/metrics", response_model=VulnerabilityMetricsView)

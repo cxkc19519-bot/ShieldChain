@@ -1,62 +1,78 @@
 import React from 'react'
-import { Shield, Brain, Workflow } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  BookOpenCheck, Bug, FileCheck2, Radar, Route, SearchCheck, ShieldCheck,
+  Sparkles, Workflow,
+} from 'lucide-react'
+import './help.css'
+
+const agents = [
+  { name: '总控智能体', tag: 'ORCHESTRATOR', icon: Workflow, description: '理解运营目标，拆解调查任务，协调专业智能体，并依据每轮观测结果决定继续调查、处置、重规划或结束。' },
+  { name: '告警分诊智能体', tag: 'TRIAGE', icon: Radar, description: '接收 Wazuh 等来源的告警，完成去重、优先级判断与初步分类，把真正需要调查的事件送入闭环。' },
+  { name: '威胁研判智能体', tag: 'INVESTIGATION', icon: SearchCheck, description: '关联流量、端点、身份与日志证据，还原攻击路径，形成可展示、可核验的调查结论与证据时间线。' },
+  { name: '知识检索智能体', tag: 'KNOWLEDGE', icon: BookOpenCheck, description: '从已发布的本地知识库中检索与当前事件相关的规则、漏洞和处置依据，为研判提供引用证据。' },
+  { name: '响应规划智能体', tag: 'RESPONSE', icon: Route, description: '根据风险、资产和策略授权生成处置计划，选择防火墙封禁、端点隔离等受控工具及其参数。' },
+  { name: '验证智能体', tag: 'VERIFICATION', icon: ShieldCheck, description: '检查工具回执和威胁状态；若处置未生效，则把失败原因反馈给总控智能体，触发重新规划。' },
+  { name: '报告智能体', tag: 'REPORTING', icon: FileCheck2, description: '汇总调查、授权、执行、验证和重规划轨迹，生成可独立查看、下载和审计的安全运营报告。' },
+  { name: '漏洞研判智能体', tag: 'VULNERABILITY', icon: Bug, description: '关联扫描发现、资产风险与知识库建议，跟踪漏洞从发现、修复到复测关闭的完整生命周期。' },
+]
+
+const pages = [
+  ['运营总览', '查看告警、闭环处置、智能体运行和证据覆盖的总体态势。'],
+  ['实时告警', '观察随机流量回放触发的告警，以及智能体自动调查后的结论。'],
+  ['安全运营报告', '按次查看完整调查报告、工具调用回执、验证结果与审计证据。'],
+  ['漏洞闭环', '展示漏洞发现、研判、修复建议、复测与关闭状态。'],
+  ['知识库', '管理供智能体检索引用的本地安全知识和文档版本。'],
+  ['智能助手', '用自然语言查询当前安全态势、证据和历史运营结果。'],
+]
 
 export function HelpPage() {
   return (
-    <div style={{ maxWidth: '800px', margin: '3rem auto', padding: '0 1.5rem', animation: 'fade-in 0.6s ease-out' }}>
-      <header className="page-header" style={{ display: 'block', textAlign: 'center', marginBottom: '3rem' }}>
-        <h2 style={{ fontSize: '2.5rem', margin: '0 0 1rem 0' }}>关于 ShieldChain</h2>
-        <p className="page-header__description" style={{ margin: '0 auto', fontSize: '1.2rem' }}>
-          下一代大模型驱动的自动安全运营中枢
-        </p>
+    <article className="help-guide">
+      <header className="help-guide__hero">
+        <div className="help-guide__eyebrow"><Sparkles size={16} /> 项目说明</div>
+        <h1>ShieldChain 使用说明</h1>
+        <p>ShieldChain 是一个面向安全运营的多智能体演示平台。它以随机流量回放产生的真实告警为入口，自动完成跨域调查、响应规划、模拟工具处置、效果验证和报告归档，集中展示智能体如何应对安全异常。</p>
+        <div className="help-guide__actions">
+          <Link className="button" to="/dashboard">进入运营总览</Link>
+          <Link className="button button-secondary" to="/operations-report">查看运营报告</Link>
+        </div>
       </header>
-      
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        
-        <section className="page-card" style={{ padding: '2rem', minHeight: 'auto' }}>
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
-            <Shield className="nav-icon" size={20} /> 
-            项目定位
-          </h3>
-          <p style={{ color: 'var(--color-text-muted)', lineHeight: '1.7', margin: 0 }}>
-            盾链智御（ShieldChain）是一个面向网络安全运营（SecOps）的智能体（AI Agent）研究与演示项目。
-            它的核心目标是将传统高度依赖人工的安全分析、事件调查和响应处置流程自动化，由大语言模型（LLM）扮演“超级安全分析师”的角色，自动闭环处理海量安全告警。
-          </p>
-        </section>
 
-        <section className="page-card" style={{ padding: '2rem', minHeight: 'auto' }}>
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
-            <Workflow className="nav-icon" size={20} /> 
-            核心能力
-          </h3>
-          <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            <li>
-              <strong>多场景威胁模拟：</strong> 支持钓鱼攻击、勒索软件、挖矿木马、数据窃取等多种安全事件剧本的自动化模拟生成。
-            </li>
-            <li>
-              <strong>智能证据收集与研判：</strong> 系统通过 RAG（检索增强生成）技术，赋予智能体查询企业内网资产、关联多源日志证据链的能力。
-            </li>
-            <li>
-              <strong>ReAct 复杂推理闭环：</strong> 遇到阻力或异常（如防火墙封禁失败）时，智能体会利用 “观察-分类-重规划-验证” 的 ReAct 机制自动调整策略并调用网关执行备选方案。
-            </li>
-            <li>
-              <strong>人工接管 API：</strong> 在触及敏感权限（安全边界）或大模型算力预算耗尽时，系统可无缝切换至人工审查和接管。
-            </li>
-          </ul>
-        </section>
+      <section className="help-guide__section" aria-labelledby="help-core-title">
+        <div className="help-guide__section-heading"><span>01</span><div><h2 id="help-core-title">项目核心</h2><p>从威胁发现到可信验证的零人工闭环。</p></div></div>
+        <div className="help-flow" aria-label="自动安全运营流程">
+          {['发现', '调查', '规划', '执行', '验证', '报告'].map((step, index) => (
+            <React.Fragment key={step}>
+              <div className="help-flow__step"><strong>{String(index + 1).padStart(2, '0')}</strong><span>{step}</span></div>
+              {index < 5 && <span className="help-flow__arrow" aria-hidden="true">→</span>}
+            </React.Fragment>
+          ))}
+        </div>
+        <p className="help-guide__note">页面展示的是智能体可公开审计的证据、决策摘要和工具轨迹，不暴露模型的隐藏推理过程；可信工具网关属于执行基础设施，不单独算作智能体。</p>
+      </section>
 
-        <section className="page-card" style={{ padding: '2rem', minHeight: 'auto' }}>
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', color: 'var(--color-text)', fontSize: '1.25rem', marginTop: 0 }}>
-            <Brain className="nav-icon" size={20} /> 
-            技术架构
-          </h3>
-          <p style={{ color: 'var(--color-text-muted)', lineHeight: '1.7', margin: 0 }}>
-            本项目采用 Python (FastAPI) 作为核心调度后端，前端界面使用 React 构建。
-            内置了多智能体编排引擎和可信工具调用网关，通过将复杂的安全编排抽象为工作流节点（Workflow），实现了 LLM 规划与确定性工程逻辑的有机结合。当前前端处于离线仿真模式展示，无需连网即可体验完整的防御闭环。
-          </p>
-        </section>
+      <section className="help-guide__section" aria-labelledby="help-agents-title">
+        <div className="help-guide__section-heading"><span>02</span><div><h2 id="help-agents-title">智能体团队</h2><p>一个总控智能体协调七个专业智能体。</p></div></div>
+        <div className="help-agent-grid">
+          {agents.map(({ name, tag, icon: Icon, description }) => (
+            <article className="help-agent" key={name}>
+              <div className="help-agent__icon"><Icon size={22} /></div>
+              <div className="help-agent__content"><span>{tag}</span><h3>{name}</h3><p>{description}</p></div>
+            </article>
+          ))}
+        </div>
+      </section>
 
-      </div>
-    </div>
+      <section className="help-guide__section" aria-labelledby="help-pages-title">
+        <div className="help-guide__section-heading"><span>03</span><div><h2 id="help-pages-title">页面导航</h2><p>每个页面只承担一个清晰的演示职责。</p></div></div>
+        <div className="help-page-list">
+          {pages.map(([name, description], index) => (
+            <div className="help-page-list__item" key={name}><strong>{String(index + 1).padStart(2, '0')}</strong><h3>{name}</h3><p>{description}</p></div>
+          ))}
+        </div>
+      </section>
+
+    </article>
   )
 }

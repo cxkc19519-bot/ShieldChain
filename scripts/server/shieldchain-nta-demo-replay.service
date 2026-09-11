@@ -5,8 +5,8 @@ After=docker.service
 [Service]
 Type=simple
 WorkingDirectory=/home/user/jhk/project/ShieldChain
-EnvironmentFile=/home/user/jhk/shieldchain-private/demo-replay.env
-ExecStart=/usr/bin/sg docker -c '/home/user/jhk/shieldchain-validation/20260905/venv/bin/python /home/user/jhk/project/ShieldChain/scripts/nta/replay/demo_runner.py --manifest /home/user/jhk/shieldchain-private/demo-replay-samples.json --pcap-root /home/user/jhk/nta-dataset/pcap --runtime-root /home/user/jhk/shieldchain-runtime/demo-replay --host 172.18.0.1 --port 18082'
+EnvironmentFile=/home/user/jhk/project/ShieldChain/.local/private/demo-replay.env
+ExecStart=/usr/bin/sg docker -c '/home/user/jhk/project/ShieldChain/.local/validation/20260905/venv/bin/python /home/user/jhk/project/ShieldChain/scripts/nta/replay/demo_runner.py --manifest /home/user/jhk/project/ShieldChain/.local/private/demo-replay-samples.json --pcap-root /home/user/jhk/project/ShieldChain/.local/nta/nta-dataset/pcap --runtime-root /home/user/jhk/project/ShieldChain/.local/runtime/demo-replay --host 172.18.0.1 --port 18082'
 Restart=on-failure
 RestartSec=5
 PrivateTmp=true

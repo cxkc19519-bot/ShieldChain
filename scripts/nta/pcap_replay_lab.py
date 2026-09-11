@@ -278,6 +278,46 @@ def build_events(
         suricata_severity = int(alert.get("severity") or 3)
         severity = {1: 12, 2: 9, 3: 6}.get(suricata_severity, 6)
         signature_hash = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:12]
+        source_identity = hashlib.sha256(
+            f"{capture_hash}:{signature_id}:{signature}".encode("utf-8")
+        ).hexdigest()
+        # Use an RFC 5737 documentation address which is stable for one
+        # capture/signature pair, but distinct across different replay samples.
+        simulated_source_ip = f"198.51.100.{101 + (int(source_identity[:8], 16) % 154)}"
+        signature_lower = signature.casefold()
+        if any(token in signature_lower for token in ("thinkphp", "php")):
+            process_name, parent_process, account, attack_surface = (
+                "php-fpm", "nginx", "www-data", "ThinkPHP/PHP Web 应用入口"
+            )
+        elif any(token in signature_lower for token in ("spel", "log4j", "java")):
+            process_name, parent_process, account, attack_surface = (
+                "java", "containerd-shim", "svc-app-demo", "Java 应用表达式/反序列化入口"
+            )
+        elif any(token in signature_lower for token in ("smb", "eternalblue")):
+            process_name, parent_process, account, attack_surface = (
+                "smbd", "init", "svc-file-demo", "SMB 文件服务入口"
+            )
+        elif any(token in signature_lower for token in ("sql", "mysql")):
+            process_name, parent_process, account, attack_surface = (
+                "mysqld", "systemd", "svc-db-demo", "数据库应用入口"
+            )
+        else:
+            process_name, parent_process, account, attack_surface = (
+                "replay-target", "containerd-shim", "svc-replay-demo", "网络暴露服务入口"
+            )
+        destination_ip = str(row.get("dest_ip") or "172.18.0.10")[:64]
+        raw_destination_port = int(row.get("dest_port") or 8080)
+        destination_port = raw_destination_port if 1 <= raw_destination_port <= 65535 else 8080
+        behavior_findings = json.dumps(
+            [
+                {"category": "network_exploit", "provenance": "suricata_alert"},
+                {"category": "endpoint_process_context", "provenance": "demo_scenario_mapping"},
+                {"category": "identity_context", "provenance": "demo_scenario_mapping"},
+                {"category": "vulnerability_indicator", "provenance": "suricata_signature"},
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         events.append(
             {
                 "external_id": (
@@ -288,8 +328,12 @@ def build_events(
                 "severity": severity,
                 "rule_id": f"suricata:{signature_id}",
                 "title": f"NTA 隔离回放：{signature}",
+                "agent_id": "002",
                 "agent_name": "nta-isolated-replay-suricata",
-                "mitre_ids": [],
+                "source_ip": simulated_source_ip,
+                "destination_ip": destination_ip,
+                "destination_port": destination_port,
+                "mitre_ids": ["T1190"],
                 "evidence": {
                     "source_kind": "nta_pcap_isolated_replay",
                     "capture_name": pcap.name[:512],
@@ -299,6 +343,21 @@ def build_events(
                     "replay_packets_per_second": pps,
                     "replay_loops": loops,
                     "isolated_docker_network": True,
+                    "simulated_response_target": True,
+                    "network_protocol": str(row.get("proto") or "TCP")[:32],
+                    "endpoint_asset": "nta-demo-endpoint-002",
+                    "endpoint_process": process_name,
+                    "endpoint_parent_process": parent_process,
+                    "endpoint_context_provenance": "demo_scenario_mapping_not_endpoint_telemetry",
+                    "identity_account": account,
+                    "identity_activity": "服务账号与同一回放运行关联；属于演示映射，不是生产身份日志",
+                    "identity_context_provenance": "demo_scenario_mapping_not_identity_telemetry",
+                    "vulnerability_indicator": attack_surface,
+                    "vulnerability_evidence_level": (
+                        "suricata_signature_only_asset_version_unconfirmed"
+                    ),
+                    "attack_technique": "T1190 Exploit Public-Facing Application",
+                    "behavior_findings": behavior_findings,
                 },
             }
         )

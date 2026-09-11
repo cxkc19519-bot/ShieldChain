@@ -49,11 +49,13 @@ class Settings(BaseSettings):
     deepseek_base_url: AnyHttpUrl = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
     deepseek_api_key: SecretStr = SecretStr("")
+    agent_require_live_model: bool = False
     simulation_step_delay_ms: int = Field(600, ge=0, le=2000)
     simulation_shutdown_timeout_seconds: float = Field(5.0, ge=1.0, le=30.0)
     wazuh_webhook_token: SecretStr = SecretStr("")
     wazuh_review_min_severity: int = Field(12, ge=0, le=15)
     wazuh_review_correlation_window_seconds: int = Field(900, ge=60, le=86_400)
+    wazuh_auto_investigation_enabled: bool = False
     nta_demo_replay_enabled: bool = False
     nta_demo_replay_runner_url: AnyHttpUrl | None = None
     nta_demo_replay_runner_token: SecretStr = SecretStr("")

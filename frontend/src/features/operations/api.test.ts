@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { listOperationsReports } from './api'
+import { deleteOperationsReport, listOperationsReports } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -33,6 +33,17 @@ function report() {
 }
 
 describe('operations report runtime contract', () => {
+  it('deletes one report through the report resource endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await deleteOperationsReport('OPS-20260824-0001')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/operations/reports/OPS-20260824-0001', {
+      method: 'DELETE',
+    })
+  })
+
   it('rebuilds the public projection and drops extra private fields', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ items: [report()] })))
 
@@ -76,6 +87,16 @@ describe('operations report runtime contract', () => {
         status: 'analysis_complete', observed: '已观测', decision: '复核', action: '未执行',
         verification: '未验证', feedback: '补证', human_approval_required: true, credentials: 'hidden',
       },
+      response_audit: {
+        mode: 'zero_touch_isolated_replay', plan_id: 'plan-1', run_id: report().run_id,
+        loop_id: 'loop-1', policy_result: '隔离回放白名单自动授权', loop_status: 'completed',
+        reason_code: 'completed', human_interventions: 0, replans: [], actions: [{
+          action_id: 'action-1', call_id: 'call-1', sequence: 1, tool_name: 'block_ip', tool_version: '1',
+          target_type: 'ipv4', target: '203.0.113.8', assessed_risk: 'critical', authorization: 'allow',
+          execution_status: 'succeeded', attempt_outcomes: ['succeeded'], verification_outcome: 'verified',
+          evidence_ids: ['evidence-1'], updated_at: '2026-08-24T00:00:00Z', private_prompt: 'hidden',
+        }],
+      },
     }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ items: [payload] })))
     const [result] = await listOperationsReports()
@@ -85,6 +106,7 @@ describe('operations report runtime contract', () => {
     expect(result.reasoning_trace[0].confidence).toBe(0.7)
     expect(result.cross_domain[0].status).toBe('observed')
     expect(result.closure.human_approval_required).toBe(true)
+    expect(result.response_audit?.actions[0].verification_outcome).toBe('verified')
     expect(JSON.stringify(result)).not.toContain('hidden')
   })
 

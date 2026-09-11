@@ -2,9 +2,9 @@
   "schema_version": "1.0",
   "pack_id": "shieldchain-security-vertical",
   "name": "ShieldChain 高质量安全垂直知识库",
-  "version": "2026.09.3",
+  "version": "2026.09.7",
   "usage_policy": "本知识包保存项目组整理的防御性摘要，并归档清单明确列出的官方公开 PDF 与 HTML 快照供比赛项目离线检索；不批量镜像第三方网站，原始资料的知识产权、许可与使用条件以发布机构页面为准。",
-  "verified_at": "2026-09-02",
+  "verified_at": "2026-09-09",
   "review_due_at": "2026-10-02",
   "documents": [
     {
@@ -12,10 +12,10 @@
       "title": "安全垂直知识库维护规范（2026-07）",
       "category": "maintenance_policy",
       "media_type": "text/markdown",
-      "sha256": "4712347197ba9289e0363184dc00286b4f358146aeec7a803b5d8df730cd48e0",
+      "sha256": "1fbb1a6c89fd992ec2de8aa650e58d0821be49a6a79acd98e7276e5cf5a6ad5d",
       "sensitivity": "internal",
       "permission_tags": ["security-vertical", "knowledge-governance", "source-primary-authority"],
-      "reviewed_at": "2026-09-02",
+      "reviewed_at": "2026-09-09",
       "review_due_at": "2026-10-02",
       "reviewer_role": "知识库管理员",
       "sources": [
@@ -54,10 +54,10 @@
       "title": "中国网络与数据安全合规控制基线（2026-07）",
       "category": "regulatory_policy",
       "media_type": "text/markdown",
-      "sha256": "1cf45d62e272cbf77f927ac7bb47c8226bb9be7360534af49f13598d338fa578",
+      "sha256": "cc55fb22466e0c94b9180bc84422c3c5c1be99e966866d9508217dd91d12d621",
       "sensitivity": "internal",
       "permission_tags": ["security-vertical", "regulatory-policy", "china", "source-primary-authority"],
-      "reviewed_at": "2026-09-02",
+      "reviewed_at": "2026-09-09",
       "review_due_at": "2026-10-02",
       "reviewer_role": "合规知识库管理员",
       "sources": [
@@ -180,11 +180,11 @@
       "title": "0day 与在野利用漏洞响应作战手册（2026-07）",
       "category": "vulnerability_intelligence",
       "media_type": "text/markdown",
-      "sha256": "c985a272b45d84c4aa2eb385d9a8c22e96e8285c317c73fd405213a7d73b66d6",
+      "sha256": "1ddea4e9b43452f579f27a39e83ba82974ee5cc5dd1530eb270602bb0186f41c",
       "sensitivity": "internal",
       "permission_tags": ["security-vertical", "vulnerability-intelligence", "blue-team", "source-primary-authority"],
-      "reviewed_at": "2026-09-02",
-      "review_due_at": "2026-09-09",
+      "reviewed_at": "2026-09-09",
+      "review_due_at": "2026-09-16",
       "reviewer_role": "漏洞情报管理员",
       "sources": [
         {
@@ -192,7 +192,7 @@
           "source_tier": "primary_authority",
           "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
           "published_at": "2021-11-03",
-          "accessed_at": "2026-09-02"
+          "accessed_at": "2026-09-09"
         },
         {
           "publisher": "CISA",
@@ -264,10 +264,10 @@
       "title": "深信服官方安全研究与知识运营基线（2026-09）",
       "category": "vendor_security_research",
       "media_type": "text/markdown",
-      "sha256": "74d9b763c3cfde6705b3e24093f92ef15e4e902a65ffb17b71cff313a75d26d6",
+      "sha256": "a68916f69a6c8de20f09acbf81aa1d749055c354f67e0c2daa250293c0519d8f",
       "sensitivity": "internal",
       "permission_tags": ["security-vertical", "sangfor-official", "vendor-research", "source-official-vendor"],
-      "reviewed_at": "2026-09-02",
+      "reviewed_at": "2026-09-09",
       "review_due_at": "2026-10-02",
       "reviewer_role": "厂商安全研究管理员",
       "sources": [
@@ -326,6 +326,111 @@
           "url": "https://www.sangfor.com.cn/AIfirst/AIsec",
           "published_at": null,
           "accessed_at": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "filename": "05_网络协议与流量分析基础_2026-09.md",
+      "title": "网络协议与流量分析基础（2026-09）",
+      "category": "network_security_fundamentals",
+      "media_type": "text/markdown",
+      "sha256": "31b1c207342fa7d88ce756ae4955206c853bc1ceefe10674f7f621d115e7856f",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "network-security", "traffic-analysis", "source-primary-authority"],
+      "reviewed_at": "2026-09-09",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "网络检测知识库管理员",
+      "sources": [
+        {
+          "publisher": "IETF RFC Editor",
+          "source_tier": "primary_authority",
+          "url": "https://www.rfc-editor.org/rfc/rfc9293.html",
+          "published_at": null,
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "IETF RFC Editor",
+          "source_tier": "primary_authority",
+          "url": "https://www.rfc-editor.org/rfc/rfc1035.html",
+          "published_at": null,
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "IETF RFC Editor",
+          "source_tier": "primary_authority",
+          "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+          "published_at": null,
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "IETF RFC Editor",
+          "source_tier": "primary_authority",
+          "url": "https://www.rfc-editor.org/rfc/rfc8446.html",
+          "published_at": null,
+          "accessed_at": "2026-09-09"
+        }
+      ]
+    },
+    {
+      "filename": "06_安全设备日志与检测运营基础_2026-09.md",
+      "title": "安全设备日志与检测运营基础（2026-09）",
+      "category": "security_operations_foundations",
+      "media_type": "text/markdown",
+      "sha256": "a9a35649d0c44a0298f9e66384d2f48cceba219ffa4c806d845153fbe09fd40f",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "security-operations", "log-management", "source-primary-authority"],
+      "reviewed_at": "2026-09-09",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "安全运营知识库管理员",
+      "sources": [
+        {
+          "publisher": "NIST",
+          "source_tier": "primary_authority",
+          "url": "https://csrc.nist.gov/pubs/sp/800/94/final",
+          "published_at": "2007-02-20",
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "NIST",
+          "source_tier": "primary_authority",
+          "url": "https://csrc.nist.gov/pubs/sp/800/92/final",
+          "published_at": "2006-09-13",
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "OWASP Foundation",
+          "source_tier": "primary_authority",
+          "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+          "published_at": null,
+          "accessed_at": "2026-09-09"
+        }
+      ]
+    },
+    {
+      "filename": "07_事件响应与证据闭环基础_2026-09.md",
+      "title": "事件响应与证据闭环基础（2026-09）",
+      "category": "incident_response_foundations",
+      "media_type": "text/markdown",
+      "sha256": "0b00ee1a4e4a89fba36c4eb34d6302a453947767c2343d031a425eb357359e0b",
+      "sensitivity": "internal",
+      "permission_tags": ["security-vertical", "incident-response", "evidence-closure", "source-primary-authority"],
+      "reviewed_at": "2026-09-09",
+      "review_due_at": "2026-10-02",
+      "reviewer_role": "事件响应知识库管理员",
+      "sources": [
+        {
+          "publisher": "NIST",
+          "source_tier": "primary_authority",
+          "url": "https://csrc.nist.gov/pubs/sp/800/61/r3/final",
+          "published_at": "2025-04-03",
+          "accessed_at": "2026-09-09"
+        },
+        {
+          "publisher": "NIST",
+          "source_tier": "primary_authority",
+          "url": "https://www.nist.gov/cyberframework",
+          "published_at": "2024-02-26",
+          "accessed_at": "2026-09-09"
         }
       ]
     },
